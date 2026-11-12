@@ -1,0 +1,87 @@
+; Clean-room 80C851/83C851 include for emu51.
+; Derived from public device documentation:
+; - Intel MCS-51 Family User's Manual (standard 8051 SFRs and bit layout)
+; - Philips Semiconductors 80C851/83C851 datasheet (1998-07-03)
+; This file is project-authored and was not copied from MetaLink materials.
+
+; Special function registers
+P0      DATA 080H  ; Port 0 latch
+SP      DATA 081H  ; Stack pointer
+DPL     DATA 082H  ; Data pointer, low byte
+DPH     DATA 083H  ; Data pointer, high byte
+PCON    DATA 087H  ; Power control
+TCON    DATA 088H  ; Timer and external interrupt control
+TMOD    DATA 089H  ; Timer mode selection
+TL0     DATA 08AH  ; Timer 0 low byte
+TL1     DATA 08BH  ; Timer 1 low byte
+TH0     DATA 08CH  ; Timer 0 high byte
+TH1     DATA 08DH  ; Timer 1 high byte
+P1      DATA 090H  ; Port 1 latch
+SCON    DATA 098H  ; Serial control
+SBUF    DATA 099H  ; Serial data buffer
+P2      DATA 0A0H  ; Port 2 latch
+IE      DATA 0A8H  ; Interrupt enable
+P3      DATA 0B0H  ; Port 3 latch
+IP      DATA 0B8H  ; Interrupt priority
+PSW     DATA 0D0H  ; Program status word
+ACC     DATA 0E0H  ; Accumulator
+B       DATA 0F0H  ; B register
+EADRL   DATA 0F2H  ; EEPROM address, low byte
+EADRH   DATA 0F3H  ; EEPROM address, high byte / security byte select
+EDAT    DATA 0F4H  ; EEPROM data
+ETIM    DATA 0F5H  ; EEPROM erase/write timing
+ECNTRL  DATA 0F6H  ; EEPROM control
+
+; TCON bits
+IT0     BIT  088H  ; External interrupt 0 type select
+IE0     BIT  089H  ; External interrupt 0 request flag
+IT1     BIT  08AH  ; External interrupt 1 type select
+IE1     BIT  08BH  ; External interrupt 1 request flag
+TR0     BIT  08CH  ; Timer 0 run control
+TF0     BIT  08DH  ; Timer 0 overflow flag
+TR1     BIT  08EH  ; Timer 1 run control
+TF1     BIT  08FH  ; Timer 1 overflow flag
+
+; SCON bits
+RI      BIT  098H  ; Receive interrupt flag
+TI      BIT  099H  ; Transmit interrupt flag
+RB8     BIT  09AH  ; Received ninth data bit
+TB8     BIT  09BH  ; Transmitted ninth data bit
+REN     BIT  09CH  ; Serial receiver enable
+SM2     BIT  09DH  ; Serial mode bit 2
+SM1     BIT  09EH  ; Serial mode bit 1
+SM0     BIT  09FH  ; Serial mode bit 0
+
+; IE bits
+EX0     BIT  0A8H  ; Enable external interrupt 0
+ET0     BIT  0A9H  ; Enable timer 0 interrupt
+EX1     BIT  0AAH  ; Enable external interrupt 1
+ET1     BIT  0ABH  ; Enable timer 1 interrupt
+ES      BIT  0ACH  ; Enable serial interrupt
+EA      BIT  0AFH  ; Global interrupt enable
+
+; P3 bits
+RXD     BIT  0B0H  ; Serial receive pin
+TXD     BIT  0B1H  ; Serial transmit pin
+INT0    BIT  0B2H  ; External interrupt 0 pin
+INT1    BIT  0B3H  ; External interrupt 1 pin
+T0      BIT  0B4H  ; Timer 0 input pin
+T1      BIT  0B5H  ; Timer 1 input pin
+WR      BIT  0B6H  ; External data memory write strobe
+RD      BIT  0B7H  ; External data memory read strobe
+
+; IP bits
+PX0     BIT  0B8H  ; Priority for external interrupt 0
+PT0     BIT  0B9H  ; Priority for timer 0
+PX1     BIT  0BAH  ; Priority for external interrupt 1
+PT1     BIT  0BBH  ; Priority for timer 1
+PS      BIT  0BCH  ; Priority for serial interrupt
+
+; PSW bits
+P       BIT  0D0H  ; Accumulator parity
+OV      BIT  0D2H  ; Overflow flag
+RS0     BIT  0D3H  ; Register bank select bit 0
+RS1     BIT  0D4H  ; Register bank select bit 1
+F0      BIT  0D5H  ; User flag 0
+AC      BIT  0D6H  ; Auxiliary carry
+CY      BIT  0D7H  ; Carry flag

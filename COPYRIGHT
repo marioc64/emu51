@@ -1,0 +1,12 @@
+emu51 — Intel 8051 emulator
+Copyright (C) 2001–2026 Mariusz Kasolik
+
+Project code, documentation, and examples authored for emu51 are licensed under
+the GNU General Public License, version 2 only (GPL-2.0-only). See LICENSE for
+the full terms. This program is distributed without any warranty; without even
+the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Vendored code and assets retain their respective licenses. In particular,
+third_party/ and the embedded Codicons font data in
+emu51/imgui/emu51_imgui_codicons_data.cpp are covered by the notices described in
+THIRD_PARTY_NOTICES.md. Preserve those notices and license texts.

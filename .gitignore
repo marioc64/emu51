@@ -1,0 +1,16 @@
+.DS_Store
+/build
+/build-*/
+/dist/
+/.vscode
+
+# Local working notes.
+/.local/
+
+# Local state and material excluded from public sources.
+/.*/
+!/.github/
+progs/**/avt*
+progs/**/mtask2250*
+progs/**/bios.inc
+progs/**/const.inc

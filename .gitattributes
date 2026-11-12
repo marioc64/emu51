@@ -1,0 +1,9 @@
+# Exclude private board-specific material from git archive / source releases.
+/.local export-ignore
+/progs/avt.bin export-ignore
+/progs/hex/avt2250.hex export-ignore
+/progs/asm/demo/bios.inc export-ignore
+/progs/asm/demo/const.inc export-ignore
+/progs/asm/demo/mtask2250.asm export-ignore
+/progs/asm/mtask2250.asm export-ignore
+/progs/hex/mtask2250.hex export-ignore

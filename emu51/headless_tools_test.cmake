@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-2.0-only
+file(REMOVE_RECURSE "${TEST_DIR}")
+file(MAKE_DIRECTORY "${TEST_DIR}")
+file(WRITE "${TEST_DIR}/loop.asm" "org 0\nstart: nop\nsjmp start\nend\n")
+
+function(expect_success tool)
+    execute_process(COMMAND "${tool}" ${ARGN} WORKING_DIRECTORY "${TEST_DIR}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "${tool} ${ARGN} failed: ${result}\n${output}\n${error}")
+    endif()
+    set(tool_output "${output}" PARENT_SCOPE)
+endfunction()
+
+foreach(tool IN ITEMS "${RUNNER}" "${BENCH}")
+    expect_success("${tool}" --help)
+    foreach(value IN ITEMS 0 -1 999999999999999999999999 garbage)
+        execute_process(COMMAND "${tool}" --steps "${value}"
+            RESULT_VARIABLE result OUTPUT_QUIET ERROR_QUIET)
+        if(NOT result EQUAL 2)
+            message(FATAL_ERROR "${tool} accepted invalid count ${value}: ${result}")
+        endif()
+    endforeach()
+    execute_process(COMMAND "${tool}" "${TEST_DIR}/missing.hex"
+        RESULT_VARIABLE result OUTPUT_QUIET ERROR_QUIET)
+    if(NOT result EQUAL 1)
+        message(FATAL_ERROR "${tool} did not reject missing input: ${result}")
+    endif()
+endforeach()
+expect_success("${RUNNER}" --steps 100 "${TEST_DIR}/loop.asm")
+if(NOT tool_output MATCHES "instructions=100 cycles=150 PC=0000")
+    message(FATAL_ERROR "Unexpected runner result: ${tool_output}")
+endif()
+expect_success("${BENCH}" --steps 1000 --repeats 2 "${TEST_DIR}/loop.asm")
+if(NOT tool_output MATCHES "cycles=1500")
+    message(FATAL_ERROR "Unexpected benchmark result: ${tool_output}")
+endif()
+expect_success("${BENCH}" --steps 1000 --repeats 2)

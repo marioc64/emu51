@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.cxx }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cc: gcc
+            cxx: g++
+          - os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+          - os: macos-latest
+            cc: clang
+            cxx: clang++
+          - os: windows-latest
+            cc: cl
+            cxx: cl
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Audit public sources and history
+        run: python scripts/check_public_sources.py
+
+      - name: Install GLFW (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglfw3-dev libgl1-mesa-dev
+
+      - name: Install GLFW (macOS)
+        if: runner.os == 'macOS'
+        run: brew install glfw
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEMU51_WERROR=ON -DEMU51_CODESIGN_IDENTITY=-
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -C Release
+
+      - name: Package and verify relocation
+        run: python scripts/check_release.py --build build --output dist --config Release
+
+      - name: Upload checked binary archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: emu51-${{ matrix.os }}-${{ matrix.cxx }}
+          path: |
+            dist/emu51-*.tar.gz
+            dist/emu51-*.zip
+            dist/emu51-*.sha256
+
+  asan:
+    name: ubuntu-latest / asan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Audit public sources and history
+        run: python scripts/check_public_sources.py
+      - name: Install GLFW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglfw3-dev libgl1-mesa-dev
+      - name: Configure with ASan/UBSan
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-asan -DEMU51_ASAN=ON
+      - name: Build
+        run: cmake --build build-asan --parallel
+      - name: Test
+        run: ctest --test-dir build-asan --output-on-failure
