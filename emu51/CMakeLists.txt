@@ -235,6 +235,12 @@ elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 				IMPORTED_LOCATION "${EMU51_BUNDLED_GLFW_LIB}"
 				INTERFACE_INCLUDE_DIRECTORIES "${EMU51_BUNDLED_GLFW_DIR}/include"
 			)
+			# The bundled VS2010 library uses CRT symbols supplied by this
+			# compatibility library in VS2015 and later (as in the ImGui example).
+			if (MSVC AND MSVC_VERSION GREATER_EQUAL 1900)
+				set_property(TARGET emu51_glfw_bundled APPEND PROPERTY
+					INTERFACE_LINK_LIBRARIES legacy_stdio_definitions)
+			endif()
 			set(EMU51_GLFW_TARGET emu51_glfw_bundled)
 		endif()
 	endif()

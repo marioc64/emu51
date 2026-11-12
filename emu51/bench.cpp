@@ -89,8 +89,8 @@ int main(int argc, char** argv) {
         medians[mode] = times.size() % 2 ? times[middle] : (times[middle - 1] + times[middle]) / 2;
         const double duration = medians[mode];
         std::printf("%s: median=%.6fs %.3f MIPS %.3f Mcycles/s hash=%016llx cycles=%llu\n",
-                    mode ? "table " : "switch", duration, duration > 0 ? steps / duration / 1e6 : 0,
-                    duration > 0 ? reference->cycles / duration / 1e6 : 0,
+                    mode ? "table " : "switch", duration, duration > 0 ? static_cast<double>(steps) / duration / 1e6 : 0,
+                    duration > 0 ? static_cast<double>(reference->cycles) / duration / 1e6 : 0,
                     static_cast<unsigned long long>(reference->hash),
                     static_cast<unsigned long long>(reference->cycles));
     }

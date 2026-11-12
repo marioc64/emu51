@@ -920,7 +920,7 @@ void test_stack_xch_coverage() {
 }
 
 void test_mov_indirect_single_cycle_timing() {
-    for (const std::uint8_t op : {0x76, 0x77, 0xf6, 0xf7}) {
+    for (const std::uint8_t op : std::array<std::uint8_t, 4>{0x76, 0x77, 0xf6, 0xf7}) {
         mark(op);
         Fixture f;
         const int reg = op & 1;
@@ -955,7 +955,7 @@ void test_interrupt_entry_cycles() {
         {0x88, bit7, 0x001b}, // Timer 1
     };
     // NOP, SJMP, and MUL cover one-, two-, and four-cycle instructions.
-    for (const std::uint8_t op : {0x00, 0x80, 0xa4}) {
+    for (const std::uint8_t op : std::array<std::uint8_t, 3>{0x00, 0x80, 0xa4}) {
         const int instructionCycles = op == 0x00 ? 1 : (op == 0x80 ? 2 : 4);
         for (const InterruptCase& source : sources) {
             Fixture f;
@@ -983,7 +983,7 @@ void test_interrupt_entry_cycles() {
         }
     }
 
-    for (const std::uint8_t enable : {0x00, 0x01, 0x80}) {
+    for (const std::uint8_t enable : std::array<std::uint8_t, 3>{0x00, 0x01, 0x80}) {
         Fixture f;
         f.cpu.IE = enable; // No enables, global disabled, or source disabled.
         f.cpu.TMOD = 0x11;
@@ -1025,7 +1025,7 @@ void test_timer_overflow_during_interrupt_entry() {
 void test_timer_mode2_reload_timing() {
     // Compare batched instruction timing with an independent per-cycle model
     // for every reload/counter pair, including reload periods of 1, 2, and 3.
-    for (const std::uint8_t op : {0x00, 0x80, 0xa4}) {
+    for (const std::uint8_t op : std::array<std::uint8_t, 3>{0x00, 0x80, 0xa4}) {
         Fixture f;
         f.cpu.TMOD = 0x22; // Both timers in mode 2.
         const int expectedCycles = op == 0x00 ? 1 : (op == 0x80 ? 2 : 4);
@@ -2242,7 +2242,7 @@ void test_cycle_timing_frequency_and_frame_rate() {
               "cycle_timing_frequency", "fps=%d MHz=%.4f cycles=%llu expected=%llu",
               test.frames, test.mhz, static_cast<unsigned long long>(total),
               static_cast<unsigned long long>(test.expected));
-        check(std::abs(timing.cyclesPerSecond(start + seconds(1)) - test.expected) < 0.001,
+        check(std::abs(timing.cyclesPerSecond(start + seconds(1)) - static_cast<double>(test.expected)) < 0.001,
               "cycle_timing_measured_rate", "fps=%d MHz=%.4f measured=%.3f cycles/s",
               test.frames, test.mhz, timing.cyclesPerSecond(start + seconds(1)));
     }

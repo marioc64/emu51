@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -207,9 +208,8 @@ bool emu51::try_service_interrupt()
 		interrupt_source::t1
 	};
 
-	interrupt_source selected;
-	bool hasSelected = false;
-	for (int desiredPriority = 1; desiredPriority >= 0 && !hasSelected; desiredPriority--)
+	std::optional<interrupt_source> selected;
+	for (int desiredPriority = 1; desiredPriority >= 0 && !selected; desiredPriority--)
 	{
 		for (const interrupt_source src : pollOrder)
 		{
@@ -220,21 +220,20 @@ bool emu51::try_service_interrupt()
 			if (!can_service_priority(desiredPriority))
 				continue;
 			selected = src;
-			hasSelected = true;
 			break;
 		}
 	}
 
-	if (!hasSelected)
+	if (!selected)
 		return false;
 
 	SP = SP + 1;
 	SFR[SP] = static_cast<std::uint8_t>(PC & 0x00ff);
 	SP = SP + 1;
 	SFR[SP] = static_cast<std::uint8_t>(PC >> 8);
-	clear_interrupt_flag(selected);
-	push_interrupt_source(selected);
-	PC = interrupt_vector(selected);
+	clear_interrupt_flag(*selected);
+	push_interrupt_source(*selected);
+	PC = interrupt_vector(*selected);
 	return true;
 }
 

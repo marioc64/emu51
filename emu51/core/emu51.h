@@ -251,7 +251,7 @@ public:
 	int process();
 	int process_table();
 	std::uint16_t DPTR() {
-		return static_cast<std::uint16_t>(DPL) | (static_cast<std::uint16_t>(DPH) << 8);
+		return static_cast<std::uint16_t>(DPL | (DPH << 8));
 	}
 	std::uint8_t Ri(int i) {
 		if (i < 0 || i > 7)
