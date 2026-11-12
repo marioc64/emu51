@@ -1427,7 +1427,7 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 		const auto source = sourceLines_.find(rowAddress);
 		if (source != sourceLines_.end() && ImGui::IsItemHovered())
 			ImGui::SetTooltip("%s:%zu", source->second.file.c_str(), source->second.line);
-		const std::uint8_t advance = std::max<int>(1, opcode.lenght);
+		const int advance = std::max<int>(1, opcode.lenght);
 		pc = static_cast<std::uint16_t>(rowAddress + advance);
 		view.end = pc;
 		rangeComputed = true;
@@ -1988,7 +1988,7 @@ std::uint8_t Emu51ImguiApp::readProgramByte(std::uint16_t address) const
 std::uint16_t Emu51ImguiApp::nextInstructionAddress(std::uint16_t address)
 {
 	const std::uint8_t opcode = readProgramByte(address);
-	const std::uint8_t advance = std::max<int>(1, asm51[opcode].lenght);
+	const int advance = std::max<int>(1, asm51[opcode].lenght);
 	return static_cast<std::uint16_t>(address + advance);
 }
 

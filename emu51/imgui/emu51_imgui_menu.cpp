@@ -42,9 +42,7 @@ std::string recentProgramLabel(const std::string& path, int index)
 {
 	const std::filesystem::path filePath(path);
 	const std::string filename = filePath.filename().empty() ? path : filePath.filename().string();
-	char prefix[8];
-	std::snprintf(prefix, sizeof(prefix), "%d ", index + 1);
-	return std::string(prefix) + filename + "###recent_program_" + std::to_string(index);
+	return std::to_string(index + 1) + " " + filename + "###recent_program_" + std::to_string(index);
 }
 
 void drawRunButton(Emu51ImguiMenuTarget& target)

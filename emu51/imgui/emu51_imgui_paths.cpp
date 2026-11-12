@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 namespace {
@@ -17,8 +18,17 @@ constexpr const char* kSettingsFileName = "settings.json";
 
 std::string getEnvOrEmpty(const char* name)
 {
+#if defined(_MSC_VER)
+	char* value = nullptr;
+	std::size_t size = 0;
+	if (_dupenv_s(&value, &size, name) != 0)
+		return {};
+	const std::unique_ptr<char, decltype(&std::free)> ownedValue(value, &std::free);
+	return ownedValue != nullptr ? ownedValue.get() : "";
+#else
 	const char* value = std::getenv(name);
 	return value != nullptr ? value : "";
+#endif
 }
 
 fs::path getConfigDir()
