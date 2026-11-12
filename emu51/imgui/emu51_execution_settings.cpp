@@ -66,8 +66,11 @@ bool emu51SaveExecutionSettings(const std::filesystem::path& path, const Emu51Ex
 		return false;
 	const auto* schema = executionSettingsSchema();
 	StoredExecutionSettings stored{"cycle_exact", settings.crystalMHz, settings.stepsPerFrame};
-	if (!settings.cycleExact)
-		std::strcpy(stored.executionMode, "instructions_per_frame");
+	if (!settings.cycleExact) {
+		constexpr char mode[] = "instructions_per_frame";
+		static_assert(sizeof(mode) <= sizeof(stored.executionMode));
+		std::memcpy(stored.executionMode, mode, sizeof(mode));
+	}
 	char json[256];
 	kason_writer writer{};
 	if (!schema || kason_writer_init_buffer(&writer, json, sizeof(json)) != KaSON_SCHEMA_SUCCESS ||

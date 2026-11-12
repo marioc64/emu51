@@ -26,7 +26,7 @@ char* code_51::make_ds(emu51& env, std::uint16_t ram_pl, char* buffer) const
 	if ((code & 0x1f) == 0x01 || (code & 0x1f) == 0x11) {
 		const std::uint16_t target = static_cast<std::uint16_t>(((ram_pl + 2) & 0xf800) |
 			((code & 0xe0) << 3) |
-			env.readProg(ram_pl + 1));
+			env.readProg(static_cast<std::uint16_t>(ram_pl + 1)));
 		std::snprintf(operands, sizeof(operands), "%04x", target);
 	}
 	else if (!(datas[0] == '%' && datas[1] == '\0')) {
@@ -50,14 +50,14 @@ char* code_51::make_ds(emu51& env, std::uint16_t ram_pl, char* buffer) const
 				(datas[c + 2] == '1' || datas[c + 2] == '2')) {
 				const int arg = datas[c + 2] - '0';
 				const std::uint16_t base = static_cast<std::uint16_t>(ram_pl + arg + 1);
-				const signed char rel = static_cast<signed char>(env.readProg(ram_pl + arg));
+				const signed char rel = static_cast<signed char>(env.readProg(static_cast<std::uint16_t>(ram_pl + arg)));
 				append_hex4(static_cast<std::uint16_t>(base + rel));
 				c += 2;
 				continue;
 			}
 			if (datas[c] == '%' && c + 1 < datasLen && (datas[c + 1] == '1' || datas[c + 1] == '2')) {
 				const int arg = datas[c + 1] - '0';
-				append_hex2(env.readProg(ram_pl + arg));
+				append_hex2(env.readProg(static_cast<std::uint16_t>(ram_pl + arg)));
 				++c;
 				continue;
 			}
@@ -282,7 +282,7 @@ int emu51::finalize_instruction(std::uint8_t cycles)
 	else clr_P();
 
 	// setup Rx bank
-	tmpB = check_RS1() << 1 | check_RS0();
+	tmpB = static_cast<std::uint8_t>((check_RS1() ? 2 : 0) | (check_RS0() ? 1 : 0));
 	R = &SFR[tmpB << 3];
 
 	advance_cycles(cycles);
