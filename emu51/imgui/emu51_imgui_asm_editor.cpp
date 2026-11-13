@@ -118,7 +118,8 @@ const TextEditor::Language* emu51AsmEditorLanguage()
 			language.keywords.insert(lowerCopy(mnemonic));
 
 		static const char* const directives[] = {
-			"org", "db", "dw", "end", "equ", "data", "bit", "$mod851", "$include",
+			"org", "db", "dw", "end", "equ", "data", "bit", "$mod51", "$mod52",
+			"$mod8051", "$mod8052", "$mod851", "$mod89s51", "$mod89s52", "$mod89c2051", "$include",
 		};
 		for (const char* directive : directives)
 			language.declarations.insert(directive);

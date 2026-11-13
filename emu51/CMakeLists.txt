@@ -6,6 +6,11 @@ include(GNUInstallDirs)
 set(EMU51_CORE_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/core")
 set(EMU51_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/imgui")
 set(EMU51_ASM_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/asm")
+include("${PROJECT_SOURCE_DIR}/cmake/AssemblerModules.cmake")
+set(EMU51_ASM_MODULE_FILES "")
+foreach(module IN LISTS EMU51_ASM_MODULE_NAMES)
+	list(APPEND EMU51_ASM_MODULE_FILES "${EMU51_ASM_DIR}/${module}")
+endforeach()
 
 add_library(emu51_editor_files_lib "io/emu51_editor_files.cpp")
 target_include_directories(emu51_editor_files_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/io")
@@ -55,13 +60,15 @@ target_include_directories(emu51_asm PRIVATE "${EMU51_ASM_DIR}")
 # Standalone build targets (CLI, tests, and non-bundle GUI) share an output
 # directory. Generate a resource copy for every build configuration, and
 # refresh it on source changes without needing to relink an executable.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${EMU51_ASM_DIR}/mod851")
-file(GENERATE
-	OUTPUT "$<TARGET_FILE_DIR:emu51_asm>/resources/asm/mod851"
-	INPUT "${EMU51_ASM_DIR}/mod851"
-)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${EMU51_ASM_MODULE_FILES})
+foreach(module IN LISTS EMU51_ASM_MODULE_NAMES)
+	file(GENERATE
+		OUTPUT "$<TARGET_FILE_DIR:emu51_asm>/resources/asm/${module}"
+		INPUT "${EMU51_ASM_DIR}/${module}"
+	)
+endforeach()
 install(TARGETS emu51_asm RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(FILES "${EMU51_ASM_DIR}/mod851" DESTINATION "${CMAKE_INSTALL_DATADIR}/emu51/asm")
+install(FILES ${EMU51_ASM_MODULE_FILES} DESTINATION "${CMAKE_INSTALL_DATADIR}/emu51/asm")
 
 add_executable(emu51       "main.cpp")
 add_executable(emu51_tests "tests.cpp")
@@ -198,9 +205,9 @@ if (APPLE AND TARGET emu51_imgui_common)
 		MACOSX_BUNDLE TRUE
 		XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
 	)
-	set_source_files_properties("${EMU51_ASM_DIR}/mod851" PROPERTIES
+	set_source_files_properties(${EMU51_ASM_MODULE_FILES} PROPERTIES
 		MACOSX_PACKAGE_LOCATION "Resources/asm")
-	target_sources(emu51_imgui PRIVATE "${EMU51_ASM_DIR}/mod851")
+	target_sources(emu51_imgui PRIVATE ${EMU51_ASM_MODULE_FILES})
 elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 	find_package(OpenGL REQUIRED)
 	find_package(glfw3 CONFIG QUIET)
@@ -308,7 +315,7 @@ endif()
 add_test(NAME emu51_packaged_resources
 	COMMAND "${CMAKE_COMMAND}"
 		"-DEXECUTABLE=$<TARGET_FILE:emu51_asm>"
-		"-DRESOURCE=$<TARGET_FILE_DIR:emu51_asm>/resources/asm/mod851"
+		"-DRESOURCE_DIR=$<TARGET_FILE_DIR:emu51_asm>/resources/asm"
 		"-DINSTALLED_ASM_FROM_BINDIR=${EMU51_INSTALLED_ASM_FROM_BINDIR}"
 		"-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/packaged-resource-test/$<CONFIG>"
 		-P "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaged_resources.cmake"

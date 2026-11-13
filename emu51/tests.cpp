@@ -2092,6 +2092,94 @@ void test_atomic_editor_saves_and_recovery() {
     fs::remove_all(root);
 }
 
+void test_assembler_device_modules() {
+    struct ModuleCase {
+        const char* name;
+        const char* source;
+        std::vector<std::uint8_t> expected;
+        bool timer2;
+    };
+    const ModuleCase cases[] = {
+        {"mod51", "mov P0,#1\nsetb TR0\nmov A,ACC\n",
+            {0x75, 0x80, 0x01, 0xd2, 0x8c, 0xe5, 0xe0}, false},
+        {"mod8051", "mov P0,#1\nsetb TR0\nmov A,ACC\n",
+            {0x75, 0x80, 0x01, 0xd2, 0x8c, 0xe5, 0xe0}, false},
+        {"mod52", "mov T2CON,#0\nmov RCAP2L,#034h\nmov RCAP2H,#012h\n"
+                  "mov TL2,#056h\nmov TH2,#078h\nsetb TR2\nsetb ET2\nsetb PT2\n"
+                  "clr TF2\nsetb T2\nclr T2EX\n",
+            {0x75, 0xc8, 0, 0x75, 0xca, 0x34, 0x75, 0xcb, 0x12, 0x75, 0xcc, 0x56,
+             0x75, 0xcd, 0x78, 0xd2, 0xca, 0xd2, 0xad, 0xd2, 0xbd, 0xc2, 0xcf,
+             0xd2, 0x90, 0xc2, 0x91}, true},
+        {"mod8052", "setb CP_RL2\nsetb C_T2\nsetb EXEN2\nsetb TCLK\nsetb RCLK\nclr EXF2\n",
+            {0xd2, 0xc8, 0xd2, 0xc9, 0xd2, 0xcb, 0xd2, 0xcc, 0xd2, 0xcd, 0xc2, 0xce}, true},
+        {"mod851", "mov EADRL,#0\nmov EADRH,#1\nmov EDAT,#2\nmov ETIM,#3\nmov ECNTRL,#4\n",
+            {0x75, 0xf2, 0, 0x75, 0xf3, 1, 0x75, 0xf4, 2, 0x75, 0xf5, 3, 0x75, 0xf6, 4}, false},
+        {"mod89s51", "mov DP0L,#0\nmov DP0H,#1\nmov DP1L,#12h\nmov DP1H,#34h\n"
+                    "orl AUXR1,#DPS_MASK\norl AUXR,#WDIDLE_MASK\nmov WDTRST,#01Eh\n",
+            {0x75, 0x82, 0, 0x75, 0x83, 1, 0x75, 0x84, 0x12, 0x75, 0x85, 0x34,
+             0x43, 0xa2, 1, 0x43, 0x8e, 0x10, 0x75, 0xa6, 0x1e}, false},
+        {"mod89s52", "mov T2MOD,#T2OE_MASK\norl T2MOD,#DCEN_MASK\nsetb CP_RL2\n"
+                    "setb C_T2\nmov DP1L,#34h\nmov WDTRST,#0E1h\n",
+            {0x75, 0xc9, 2, 0x43, 0xc9, 1, 0xd2, 0xc8, 0xd2, 0xc9,
+             0x75, 0x84, 0x34, 0x75, 0xa6, 0xe1}, true},
+        {"mod89c2051", "mov P1,#55h\nsetb RXD\nclr TI\n",
+            {0x75, 0x90, 0x55, 0xd2, 0xb0, 0xc2, 0x99}, false},
+    };
+    emu51_asm::Assembler assembler;
+    for (const auto& test : cases) {
+        std::string mixed = test.name;
+        for (std::size_t i = 0; i < mixed.size(); i += 2)
+            mixed[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(mixed[i])));
+        const std::string directives[] = {"$" + std::string(test.name), "$" + mixed,
+            "$INCLUDE(" + std::string(test.name) + ")"};
+        for (const auto& directive : directives) {
+            const auto result = assembler.assemble_string("device.asm",
+                directive + "\norg 0\n" + test.source + "end\n");
+            check(result.success() && result.image.to_binary() == test.expected,
+                "assembler_device_module", "%s: incorrect encoding or %zu diagnostics",
+                directive.c_str(), result.diagnostics.size());
+            check(result.symbols.contains("T2CON") == test.timer2,
+                "assembler_device_timer2", "%s: incorrect Timer 2 symbol availability", test.name);
+            check(result.symbols.contains("ECNTRL") == (std::string_view(test.name) == "mod851"),
+                "assembler_device_eeprom", "%s: incorrect EEPROM symbol availability", test.name);
+            if (std::string_view(test.name) == "mod89c2051") {
+                for (const char* absent : {"P0", "P2", "WR", "RD", "AUXR", "WDTRST"})
+                    check(!result.symbols.contains(absent), "assembler_device_reduced_ports",
+                        "%s must not define %s", test.name, absent);
+            }
+            if (std::string_view(test.name) == "mod52" || std::string_view(test.name) == "mod8052")
+                check(!result.symbols.contains("T2MOD"), "assembler_generic_timer2",
+                    "generic 8052 must not define vendor-specific T2MOD");
+            for (const char* mask : {"DPS_MASK", "DCEN_MASK", "T2OE_MASK"}) {
+                const auto symbol = result.symbols.find(mask);
+                if (symbol != result.symbols.end())
+                    check(symbol->second.kind == emu51_asm::SymbolKind::equ,
+                        "assembler_device_mask_kind", "%s: %s is a mask, not a bit address", test.name, mask);
+            }
+        }
+    }
+
+    // New/custom module names use the existing -I mechanism and include diagnostics.
+    const auto root = std::filesystem::temp_directory_path() /
+        ("emu51-module-tests-" + std::to_string(Emu51CycleTiming::Clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "modcustom") << "CUSTOM DATA 0A5h\n";
+    emu51_asm::AssembleOptions options;
+    options.include_directories.push_back(root);
+    const auto custom = emu51_asm::Assembler(options).assemble_string("custom.asm",
+        "$MoDcUsToM\nmov CUSTOM,#42h\nend\n");
+    check(custom.success() && custom.image.to_binary() == std::vector<std::uint8_t>{0x75, 0xa5, 0x42},
+        "assembler_custom_module", "custom module did not resolve through the include path");
+    const auto missing = assembler.assemble_string("missing.asm", "$MODDOESNOTEXIST\nend\n");
+    check(!missing.success() && diagnostics_contain(missing.diagnostics, "unable to resolve include 'moddoesnotexist'")
+        && missing.diagnostics.front().file == "missing.asm" && missing.diagnostics.front().line == 1,
+        "assembler_missing_module", "missing module did not report its name and source location");
+    const auto malformed = assembler.assemble_string("malformed.asm", "$MOD51 extra\nend\n");
+    check(!malformed.success() && diagnostics_contain(malformed.diagnostics, "unsupported directive"),
+        "assembler_malformed_module", "module directive with trailing arguments was accepted");
+    std::filesystem::remove_all(root);
+}
+
 void test_assembler_relative_branch_and_binary_output() {
     static const char* source =
         "$mod851\n"
@@ -2512,6 +2600,7 @@ int main() {
     test_assembler_dw_and_hex_output();
     test_assembler_matches_existing_sample_hex();
     test_assembler_diagnostics();
+    test_assembler_device_modules();
     test_assembler_checked_expressions();
     test_atomic_editor_saves_and_recovery();
     test_parse_hex_input_helper();

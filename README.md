@@ -217,16 +217,23 @@ requesting HEX output. `-I` can be repeated. The assembler CLI currently has no
 `--help` option; invoking it without arguments prints its usage.
 
 Supported directives include `ORG`, `DB`, `DW`, `END`, `EQU`, `DATA`, `BIT`,
-`$mod851`, and `$INCLUDE(...)`. Diagnostics contain file/line locations.
+`$MOD51`, `$MOD52`, device-specific `$MOD...` forms, and `$INCLUDE(...)`.
+Diagnostics contain file/line locations.
 Expressions use checked signed 64-bit arithmetic with a nesting limit of 128;
 positive literals above `INT64_MAX` are rejected. Binary output starts at the
 image's lowest emitted address and zero-fills gaps, so load it at that original
 address if it is not zero. HEX retains addresses.
 
-Instruction metadata is compiled into the binaries. `mod851` is a packaged text
-include. Include lookup checks the current source file's directory, resources
-relative to the executable, then explicit `-I` directories. An application using
-`emu51_asm_lib` can supply `AssembleOptions::include_directories` itself.
+Packaged [device modules](emu51/asm/MODULES.md) cover standard 8051/8052,
+Philips 80C851, AT89S51, AT89S52 and AT89C2051 register symbols. The existing
+`$MOD851` remains compatible; `$MOD8051` and `$MOD8052` alias `$MOD51` and `$MOD52`.
+Choose one module per assembly unit. These are assembler definitions; including
+a variant does not add its peripherals to the emulator's 8051 runtime model.
+
+Instruction metadata is compiled into the binaries. The device modules are
+packaged text includes. Include lookup checks the current source file's directory,
+resources relative to the executable, then explicit `-I` directories. An application
+using `emu51_asm_lib` can supply `AssembleOptions::include_directories` itself.
 
 ## Console runner and benchmark
 
@@ -264,9 +271,9 @@ cmake --install build --config Debug --prefix /path/to/package
 ```
 
 The default layout contains `bin/emu51_asm`, `bin/emu51`, `bin/emu51_bench`, the
-GUI under `bin/` or as a root-level macOS `.app`, and
-`share/emu51/asm/mod851`. Windows tools have an `.exe` suffix. Documentation and
-licenses are under `share/doc/emu51/`; `SHA256SUMS` covers installed files. The
+GUI under `bin/` or as a root-level macOS `.app`, and the device modules under
+`share/emu51/asm/`. Windows tools have an `.exe` suffix. Documentation and licenses
+are under `share/doc/emu51/`; `SHA256SUMS` covers installed files. The
 macOS app has its own resource, license, and notice copies and can be moved by
 itself. GNUInstallDirs settings can change the install paths.
 

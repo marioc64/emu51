@@ -128,8 +128,10 @@ README lists preference filenames and platform directories.
 
 `cmake/Packaging.cmake` defines explicit binary install lists and CPack metadata.
 The project version comes from the top-level CMake `project()` declaration.
-`mod851` is copied to each build configuration's resource directory and to the
-macOS app; install lookup uses paths relative to executables.
+`cmake/AssemblerModules.cmake` explicitly lists the packaged device modules.
+They are copied to each build configuration's resource directory and to the
+macOS app; install lookup uses paths relative to executables. Module contents
+and manufacturer references are documented in `emu51/asm/MODULES.md`.
 
 `cmake/AppIcon.cmake` packages the shared application icon for macOS, embeds the
 Windows executable resource and GLFW window icons, and installs Linux desktop

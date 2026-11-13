@@ -1,0 +1,3 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; Explicit device-number alias for mod51.
+$MOD51

@@ -1,0 +1,22 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; Atmel/Microchip AT89S52, datasheet 1919D (June 2008), sections 5 and 10.
+; https://ww1.microchip.com/downloads/en/DeviceDoc/doc1919.pdf
+$MOD52
+
+DP0L    DATA 082H
+DP0H    DATA 083H
+DP1L    DATA 084H
+DP1H    DATA 085H
+AUXR    DATA 08EH
+AUXR1   DATA 0A2H
+WDTRST  DATA 0A6H
+T2MOD   DATA 0C9H
+
+; These registers are NOT bit addressable. Use masks with ANL/ORL, not SETB/CLR.
+DISALE_MASK EQU 001H  ; AUXR.0
+DISRTO_MASK EQU 008H  ; AUXR.3
+WDIDLE_MASK EQU 010H  ; AUXR.4
+DPS_MASK    EQU 001H  ; AUXR1.0
+POF_MASK    EQU 010H  ; PCON.4
+DCEN_MASK   EQU 001H  ; T2MOD.0
+T2OE_MASK   EQU 002H  ; T2MOD.1

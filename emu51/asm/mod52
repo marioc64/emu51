@@ -1,0 +1,26 @@
+; SPDX-License-Identifier: GPL-2.0-only
+; Standard 8052/80C52 symbols: 8051 plus Timer 2.
+; Register facts checked against Philips 8XC51_8XC52 and Atmel AT89S52
+; documentation; see MODULES.md. Vendor-specific T2MOD is not part of mod52.
+$MOD51
+
+T2CON   DATA 0C8H
+RCAP2L  DATA 0CAH
+RCAP2H  DATA 0CBH
+TL2     DATA 0CCH
+TH2     DATA 0CDH
+
+; Timer 2 control; underscores replace the slashes in CP/RL2 and C/T2.
+CP_RL2  BIT 0C8H
+C_T2    BIT 0C9H
+TR2     BIT 0CAH
+EXEN2   BIT 0CBH
+TCLK    BIT 0CCH
+RCLK    BIT 0CDH
+EXF2    BIT 0CEH
+TF2     BIT 0CFH
+
+ET2     BIT 0ADH
+PT2     BIT 0BDH
+T2      BIT 090H
+T2EX    BIT 091H

@@ -57,7 +57,7 @@ The default install/archive tree contains:
 | --- | --- |
 | `bin/` | Assembler, console runner, benchmark; desktop executable on Linux/Windows |
 | `emu51_imgui.app/` | Desktop app on macOS |
-| `share/emu51/asm/mod851` | Shared assembler include |
+| `share/emu51/asm/mod*` | Packaged 8051-family assembler modules |
 | `share/applications/emu51.desktop` | Linux desktop launcher |
 | `share/icons/hicolor/*/apps/emu51.png` | Linux application icons |
 | `share/doc/emu51/` | README, contributor/timing/release/history guides, LICENSE, COPYRIGHT, notices, and vendor license texts |
@@ -65,7 +65,7 @@ The default install/archive tree contains:
 
 Windows executables have an `.exe` suffix. GNUInstallDirs overrides can change
 these paths; the release-check wrapper assumes the defaults. The macOS app
-contains its own `mod851`, LICENSE, COPYRIGHT, and notices/licenses and can be
+contains its own device modules, LICENSE, COPYRIGHT, and notices/licenses and can be
 moved independently. The `progs/` examples and test executables are not installed
 in binary packages.
 

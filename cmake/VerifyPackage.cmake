@@ -42,6 +42,7 @@ if(NOT DEFINED GUI_EXPECTED)
     set(GUI_EXPECTED TRUE)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/AuditPackage.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/AssemblerModules.cmake")
 emu51_audit_package("${root}")
 
 # Exercise the rejection guard without modifying the staged package.
@@ -88,7 +89,7 @@ if(NOT listed STREQUAL files)
     message(FATAL_ERROR "Manifest does not match package contents")
 endif()
 foreach(path IN ITEMS README.md RELEASE.md THIRD_PARTY_NOTICES.md HISTORY.md LICENSE COPYRIGHT
-        CONTRIBUTING.md CYCLE_ACCURATE_EXECUTION.md
+        CONTRIBUTING.md CYCLE_ACCURATE_EXECUTION.md MODULES.md
         licenses/imgui/LICENSE.txt licenses/ImGuiColorTextEdit/LICENSE
         licenses/kason/LICENSE licenses/codicons/LICENSE
         licenses/portable-file-dialogs/portable-file-dialogs.COPYING licenses/glfw/COPYING.txt)
@@ -112,6 +113,22 @@ file(READ "${WORK_DIR}/program.bin" bytes HEX)
 if(NOT bytes STREQUAL "75905580fe")
     message(FATAL_ERROR "Packaged assembler produced incorrect bytes: ${bytes}")
 endif()
+foreach(module IN LISTS EMU51_ASM_MODULE_NAMES)
+    if(NOT EXISTS "${root}/${DATADIR}/emu51/asm/${module}")
+        message(FATAL_ERROR "Missing installed assembler module: ${module}")
+    endif()
+    file(WRITE "${WORK_DIR}/module.asm" "$${module}\norg 0\nmov P1,#055h\nsetb TR0\nend\n")
+    execute_process(COMMAND "${root}/${BINDIR}/emu51_asm${suffix}" "${WORK_DIR}/module.asm"
+        -o "${WORK_DIR}/module.bin" WORKING_DIRECTORY "${WORK_DIR}/unrelated cwd"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Installed ${module} failed: ${output}\n${error}")
+    endif()
+    file(READ "${WORK_DIR}/module.bin" bytes HEX)
+    if(NOT bytes STREQUAL "759055d28c")
+        message(FATAL_ERROR "Installed ${module} produced incorrect bytes: ${bytes}")
+    endif()
+endforeach()
 execute_process(COMMAND "${root}/${BINDIR}/emu51${suffix}" --steps 100 "${WORK_DIR}/program.asm"
     WORKING_DIRECTORY "${WORK_DIR}/unrelated cwd" RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if(NOT result EQUAL 0 OR NOT output MATCHES "instructions=100 cycles=200 PC=0003")
@@ -131,6 +148,11 @@ if(GUI_EXPECTED)
                 Contents/Resources/licenses/imgui/LICENSE.txt Contents/Resources/licenses/codicons/LICENSE)
             if(NOT EXISTS "${app}/${path}")
                 message(FATAL_ERROR "Missing bundle content: ${path}")
+            endif()
+        endforeach()
+        foreach(module IN LISTS EMU51_ASM_MODULE_NAMES)
+            if(NOT EXISTS "${app}/Contents/Resources/asm/${module}")
+                message(FATAL_ERROR "Missing bundled assembler module: ${module}")
             endif()
         endforeach()
         file(READ "${app}/Contents/Info.plist" plist)

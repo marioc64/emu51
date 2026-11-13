@@ -806,8 +806,15 @@ private:
 
         if (!stripped.empty() && stripped.front() == '$') {
             const std::string directive = to_upper_copy(trim_copy(std::string_view(stripped).substr(1)));
-            if (directive == "MOD851") {
-                process_include(location, "mod851", base_directory, include_stack);
+            if (directive.size() > 3 && directive.rfind("MOD", 0) == 0 &&
+                std::all_of(directive.begin() + 3, directive.end(), [](unsigned char ch) {
+                    return std::isalnum(ch) != 0 || ch == '_';
+                })) {
+                std::string module = directive;
+                std::transform(module.begin(), module.end(), module.begin(), [](unsigned char ch) {
+                    return static_cast<char>(std::tolower(ch));
+                });
+                process_include(location, module, base_directory, include_stack);
                 return;
             }
 
