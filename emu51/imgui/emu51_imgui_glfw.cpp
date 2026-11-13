@@ -14,6 +14,7 @@
 #include "emu51_imgui_app.h"
 #include "emu51_imgui_codicons.h"
 #include "emu51_imgui_paths.h"
+#include "emu51_app_icon.h"
 
 namespace {
 
@@ -31,12 +32,22 @@ int runEmu51ImguiGlfwApp()
 
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#if defined(GLFW_X11_CLASS_NAME)
+	glfwWindowHintString(GLFW_X11_CLASS_NAME, "emu51");
+	glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "emu51");
+#endif
+#if defined(GLFW_WAYLAND_APP_ID)
+	glfwWindowHintString(GLFW_WAYLAND_APP_ID, "emu51");
+#endif
 
 	GLFWwindow* window = glfwCreateWindow(kWindowWidth, kWindowHeight, kWindowTitle, nullptr, nullptr);
 	if (window == nullptr) {
 		glfwTerminate();
 		return 1;
 	}
+
+	const GLFWimage icons[] = {{32, 32, emu51_icon_32}, {64, 64, emu51_icon_64}};
+	glfwSetWindowIcon(window, 2, icons);
 
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(0); // Redraw cadence is independent of CPU service cadence.

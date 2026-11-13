@@ -36,6 +36,7 @@ is not a complete secret scanner or license audit.
 | `emu51/imgui/emu51_imgui_glfw.cpp` | Shared Linux/Windows GLFW/OpenGL frontend |
 | `emu51/io/` | Atomic source saves and editor recovery sessions |
 | `progs/` | Generic assembly, HEX, and binary examples |
+| `resources/` | Shared application artwork and Linux desktop integration |
 | `cmake/` | Packaging, deployment, manifest, and relocation checks |
 | `scripts/` | Public-source and release checks |
 | `third_party/` | Vendored dependencies and their upstream documentation |
@@ -129,6 +130,10 @@ README lists preference filenames and platform directories.
 The project version comes from the top-level CMake `project()` declaration.
 `mod851` is copied to each build configuration's resource directory and to the
 macOS app; install lookup uses paths relative to executables.
+
+`cmake/AppIcon.cmake` packages the shared application icon for macOS, embeds the
+Windows executable resource and GLFW window icons, and installs Linux desktop
+and hicolor theme entries. See `resources/icons/README.md` for asset regeneration.
 
 The finalization script signs staged macOS executables when configured, audits
 package paths, and creates `SHA256SUMS`. The installed-package test validates real

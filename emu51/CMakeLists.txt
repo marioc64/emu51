@@ -321,4 +321,5 @@ add_test(NAME emu51_headless_tools
         "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/headless-tools-test/$<CONFIG>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/headless_tools_test.cmake")
 
+include("${PROJECT_SOURCE_DIR}/cmake/AppIcon.cmake")
 include("${PROJECT_SOURCE_DIR}/cmake/Packaging.cmake")

@@ -58,6 +58,8 @@ The default install/archive tree contains:
 | `bin/` | Assembler, console runner, benchmark; desktop executable on Linux/Windows |
 | `emu51_imgui.app/` | Desktop app on macOS |
 | `share/emu51/asm/mod851` | Shared assembler include |
+| `share/applications/emu51.desktop` | Linux desktop launcher |
+| `share/icons/hicolor/*/apps/emu51.png` | Linux application icons |
 | `share/doc/emu51/` | README, contributor/timing/release/history guides, LICENSE, COPYRIGHT, notices, and vendor license texts |
 | `SHA256SUMS` | Checksums for installed files |
 
@@ -66,6 +68,12 @@ these paths; the release-check wrapper assumes the defaults. The macOS app
 contains its own `mod851`, LICENSE, COPYRIGHT, and notices/licenses and can be
 moved independently. The `progs/` examples and test executables are not installed
 in binary packages.
+
+The macOS bundle and Windows executable contain the same application icon.
+Linux installs the launcher and icons under the selected data directory. The
+launcher expects `emu51_imgui` on `PATH`; for an unpacked archive, add its `bin/`
+directory to `PATH` and copy the launcher and icons into the corresponding
+`~/.local/share/` directories for desktop-menu integration.
 
 For unsigned archives or a direct CPack invocation:
 

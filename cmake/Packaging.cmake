@@ -146,5 +146,6 @@ add_test(NAME emu51_installed_package
         "-DWORK_DIR=${PROJECT_BINARY_DIR}/installed-package-test/$<CONFIG>"
         "-DBINDIR=${CMAKE_INSTALL_BINDIR}"
         "-DDOCDIR=${CMAKE_INSTALL_DOCDIR}"
+        "-DDATADIR=${CMAKE_INSTALL_DATADIR}"
         "-DGUI_EXPECTED=$<TARGET_EXISTS:emu51_imgui>"
         -P "${PROJECT_SOURCE_DIR}/cmake/VerifyPackage.cmake")
