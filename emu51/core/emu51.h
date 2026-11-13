@@ -6,8 +6,10 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 
 inline constexpr std::uint8_t bit0 = 0x01;
@@ -201,6 +203,8 @@ private:
 	void exec_opcode_switch(std::uint8_t code);
 	int finalize_instruction(std::uint8_t cycles);
 	void advance_cycles(std::uint8_t cycles);
+	void advance_serial(std::uint8_t cycles, unsigned timer1Overflows);
+	void sync_serial_mode();
 	using opcode_handler_t = void(*)(emu51*);
 	template<std::uint8_t Op>
 	static void dispatch_opcode(emu51* cpu) { cpu->exec_opcode<Op>(Op); }
@@ -214,7 +218,8 @@ private:
 		ext0 = 0,
 		t0 = 1,
 		ext1 = 2,
-		t1 = 3
+		t1 = 3,
+		serial = 4
 	};
 	std::uint8_t irqStack[8] = { 0 };
 	int irqDepth = 0;
@@ -227,6 +232,39 @@ private:
 	void push_interrupt_source(interrupt_source src);
 	void pop_interrupt_source();
 	bool try_service_interrupt();
+
+public:
+	struct SerialByte {
+		std::uint8_t value = 0;
+		bool ninth = false;
+		bool stop = true;
+	};
+	static constexpr std::size_t kSerialQueueCapacity = 4096;
+	// Direct CPU/SFR writes must use this API to trigger peripherals. Raw SFR
+	// and SBUF references remain available for passive inspection/legacy setup.
+	std::uint8_t readDirect(std::uint8_t address) const { return SFR[address]; }
+	void writeDirect(std::uint8_t address, std::uint8_t value);
+	bool queueSerialReceive(std::uint8_t value, bool ninth = false, bool stop = true);
+	std::optional<SerialByte> takeSerialTransmit();
+	void clearSerialReceiveQueue();
+	std::size_t pendingSerialReceiveCount() const { return serialInput_.size() + (serialRx_ ? 1 : 0); }
+	unsigned serialMode() const { return SCON >> 6; }
+	bool serialTransmitBusy() const { return serialTx_.has_value(); }
+	std::uint64_t serialReceiveOverruns() const { return serialRxOverruns_; }
+	std::uint64_t serialTransmitOverwrites() const { return serialTxOverwrites_; }
+	std::uint64_t serialOutputDrops() const { return serialOutputDrops_; }
+
+private:
+	struct SerialFrame {
+		SerialByte byte;
+		std::uint64_t phase = 0;
+		bool flagged = false;
+	};
+	std::optional<SerialFrame> serialTx_, serialRx_;
+	std::optional<SerialByte> serialNextTx_;
+	std::deque<SerialByte> serialInput_, serialOutput_;
+	unsigned serialMode_ = 0;
+	std::uint64_t serialRxOverruns_ = 0, serialTxOverwrites_ = 0, serialOutputDrops_ = 0;
 
 public:
 	emu51(bool mixed_mode = false);

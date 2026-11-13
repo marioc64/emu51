@@ -61,6 +61,7 @@ public:
 	virtual void stepOut() = 0;
 	virtual void requestExecutionSettings() = 0;
 	virtual void showDebugger() = 0;
+	virtual void showSerialTerminal() = 0;
 	virtual bool unifiedMode() const = 0;
 	virtual void setUnifiedMode(bool unifiedMode) = 0;
 	virtual bool internalRamMonitorVisible() const = 0;

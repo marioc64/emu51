@@ -30,6 +30,7 @@ target_link_libraries(emu51_settings_lib PRIVATE emu51_kason emu51_editor_files_
 set(EMU51_CORE_SOURCES
 	"core/emu51.cpp"
 	"core/emu51_opcodes.cpp"
+	"core/emu51_serial.cpp"
 	"core/opcode_metadata.cpp"
 )
 
@@ -71,7 +72,7 @@ install(TARGETS emu51_asm RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES ${EMU51_ASM_MODULE_FILES} DESTINATION "${CMAKE_INSTALL_DATADIR}/emu51/asm")
 
 add_executable(emu51       "main.cpp")
-add_executable(emu51_tests "tests.cpp")
+add_executable(emu51_tests "tests.cpp" "serial_tests.cpp")
 add_executable(emu51_bench "bench.cpp")
 
 target_link_libraries(emu51       PRIVATE emu51_asm_lib emu51_warnings)
@@ -121,6 +122,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 		"imgui/emu51_imgui_paths.cpp"
 		"imgui/emu51_imgui_project.cpp"
 		"imgui/emu51_imgui_seg.cpp"
+		"imgui/emu51_imgui_serial.cpp"
 	)
 	target_include_directories(emu51_imgui_common SYSTEM PRIVATE
 		"${CMAKE_SOURCE_DIR}/third_party/imgui"

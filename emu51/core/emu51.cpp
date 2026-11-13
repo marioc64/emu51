@@ -129,6 +129,7 @@ int emu51::interrupt_priority(interrupt_source src)
 	case interrupt_source::t0:   return checkB(0xb9) ? 1 : 0; // PT0
 	case interrupt_source::ext1: return checkB(0xba) ? 1 : 0; // PX1
 	case interrupt_source::t1:   return checkB(0xbb) ? 1 : 0; // PT1
+	case interrupt_source::serial: return (IP & bit4) ? 1 : 0; // PS
 	default: return 0;
 	}
 }
@@ -141,6 +142,7 @@ bool emu51::interrupt_pending_enabled(interrupt_source src)
 	case interrupt_source::t0:   return checkB(0x8d) && checkB(0xa9); // TF0 && ET0
 	case interrupt_source::ext1: return checkB(0x8b) && checkB(0xaa); // IE1 && EX1
 	case interrupt_source::t1:   return checkB(0x8f) && checkB(0xab); // TF1 && ET1
+	case interrupt_source::serial: return (SCON & (bit0 | bit1)) && (IE & bit4);
 	default: return false;
 	}
 }
@@ -159,6 +161,7 @@ void emu51::clear_interrupt_flag(interrupt_source src)
 			clrB(0x8b);
 		break;
 	case interrupt_source::t1:   clrB(0x8f); break; // TF1
+	case interrupt_source::serial: break; // RI/TI are cleared only by software.
 	}
 }
 
@@ -170,6 +173,7 @@ std::uint16_t emu51::interrupt_vector(interrupt_source src)
 	case interrupt_source::t0:   return 0x000b;
 	case interrupt_source::ext1: return 0x0013;
 	case interrupt_source::t1:   return 0x001b;
+	case interrupt_source::serial: return 0x0023;
 	default: return 0x0000;
 	}
 }
@@ -205,7 +209,8 @@ bool emu51::try_service_interrupt()
 		interrupt_source::ext0,
 		interrupt_source::t0,
 		interrupt_source::ext1,
-		interrupt_source::t1
+		interrupt_source::t1,
+		interrupt_source::serial
 	};
 
 	std::optional<interrupt_source> selected;
@@ -242,6 +247,10 @@ void emu51::init()
 {
 	int i;
 	c_time = 0; // cycles counter
+	serialTx_.reset(); serialRx_.reset(); serialNextTx_.reset();
+	serialInput_.clear(); serialOutput_.clear();
+	serialMode_ = 0;
+	serialRxOverruns_ = serialTxOverwrites_ = serialOutputDrops_ = 0;
 	irqDepth = 0;
 	for (std::uint8_t &src : irqStack)
 		src = 0;
@@ -313,12 +322,14 @@ void emu51::advance_cycles(std::uint8_t cycles)
 	auto inc_mode0 = [cycles](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self) {
 		unsigned val = (static_cast<unsigned>(th) << 5) | (static_cast<unsigned>(tl) & 0x1f);
 		val += static_cast<unsigned>(cycles);
+		const unsigned overflows = val >> 13;
 		if (val > 0x1fff) {
 			val &= 0x1fff;
 			self->setB(tfBit);
 		}
 		th = static_cast<std::uint8_t>((val >> 5) & 0xff);
 		tl = static_cast<std::uint8_t>((tl & 0xe0) | (val & 0x1f));
+		return overflows;
 	};
 	auto inc_mode1 = [cycles](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self) {
 		const unsigned val = (static_cast<unsigned>(th) << 8) | static_cast<unsigned>(tl);
@@ -329,17 +340,21 @@ void emu51::advance_cycles(std::uint8_t cycles)
 		const unsigned wrapped = next & 0xffff;
 		th = static_cast<std::uint8_t>((wrapped >> 8) & 0xff);
 		tl = static_cast<std::uint8_t>(wrapped & 0xff);
+		return next >> 16;
 	};
 	auto inc_mode2 = [cycles](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self) {
 		const unsigned next = static_cast<unsigned>(tl) + static_cast<unsigned>(cycles);
+		unsigned overflows = 0;
 		if (next > 0xff) {
 			self->setB(tfBit);
 			const unsigned reloadPeriod = 0x100u - static_cast<unsigned>(th);
+			overflows = 1 + (next - 0x100u) / reloadPeriod;
 			tl = static_cast<std::uint8_t>(th + (next - 0x100u) % reloadPeriod);
 		}
 		else {
 			tl = static_cast<std::uint8_t>(next);
 		}
+		return overflows;
 	};
 	auto inc_mode3_counter = [cycles](std::uint8_t &counter, std::uint8_t tfBit, emu51* self) {
 		const unsigned next = static_cast<unsigned>(counter) + static_cast<unsigned>(cycles);
@@ -372,23 +387,25 @@ void emu51::advance_cycles(std::uint8_t cycles)
 			break;
 		}
 	}
+	unsigned timer1Overflows = 0;
 	if (modeT0 != 3 && runT1 && !ctT1)
 	{
 		switch (modeT1)
 		{
 		case 0:
-			inc_mode0(TH1, TL1, 0x8f, this);
+			timer1Overflows = inc_mode0(TH1, TL1, 0x8f, this);
 			break;
 		case 1:
-			inc_mode1(TH1, TL1, 0x8f, this);
+			timer1Overflows = inc_mode1(TH1, TL1, 0x8f, this);
 			break;
 		case 2:
-			inc_mode2(TH1, TL1, 0x8f, this);
+			timer1Overflows = inc_mode2(TH1, TL1, 0x8f, this);
 			break;
 		case 3:
 			break;
 		}
 	}
+	advance_serial(cycles, timer1Overflows);
 }
 
 int emu51::process_table()

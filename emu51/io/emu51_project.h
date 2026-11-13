@@ -32,6 +32,7 @@ struct Emu51ProjectEditor {
 
 struct Emu51Project {
     bool unified = true, debuggerOpen = false, traceEnabled = false;
+    bool serialTerminalOpen = false;
     Emu51ExecutionSettings execution;
     std::vector<Emu51ProjectProgram> programs;
     std::string reloadPath;

@@ -22,6 +22,7 @@ with a reusable emulation engine and a Dear ImGui interface. See
 - Save/discard/cancel protection, atomic source saves, and recovery drafts.
 - Saved layouts, Follow PC settings, and execution preferences.
 - Crystal-paced execution using the classic 12-clock 8051 timing model.
+- Serial modes 0–3, Timer 1/SMOD baud clocks, serial interrupts, and a byte-oriented terminal.
 - A standalone assembler, bounded console runner, and dispatch benchmark.
 
 The timing mode paces emulated machine cycles against wall time. It does not
@@ -214,6 +215,54 @@ bytes starting at PC, next PC, cycle cost, A, PSW, and SP. Step Over/Out run as
 cancelable batches with a one-million-instruction action limit. Pause or a
 debugger stop cancels the pending step. See [execution timing](CYCLE_ACCURATE_EXECUTION.md)
 for batching and main-thread limitations.
+
+## Serial terminal
+
+Open **Execution → Serial terminal** on any platform. The firmware configures
+SCON, PCON, and Timer 1; the terminal displays that configuration and sends bytes
+at its simulated baud rate. Mode 0 uses eight shift clocks; modes 1 and 3 use
+Timer 1 overflows; mode 2 uses the fixed oscillator-derived baud rate. Serial
+interrupts share vector `0023h`, with EA/ES enable and PS priority controls.
+Reading SBUF accesses received data; writes start transmission, including writes
+of the same value. Firmware must clear RI and TI itself.
+
+Send text or space-separated hexadecimal bytes such as `41 00 FF`. Select None,
+LF, CR, or CRLF endings and, for nine-bit modes, the receive ninth bit. **Send**
+queues input without starting the emulator. Input waits while paused, while
+REN is clear, or while the configured baud clock is stopped. **Clear pending
+input** cancels queued/in-flight host input without changing SBUF or RI.
+
+**Send file...** chooses a file to send into the UART. **File endings → Unchanged**
+(the default) sends every byte exactly as stored, including binary data. For text
+receivers that require specific line endings, select **LF**, **CR**, or **CRLF**
+before choosing the file. These modes normalize existing CRLF pairs, lone CR and
+lone LF, including pairs split across streaming chunks. The source file is never
+modified, and no extra ending is appended at EOF.
+
+File transfers ignore the manual input's Hex input and Ending controls, and
+capture File endings and the receive ninth bit when started. Large files stream
+through the bounded input queue as the emulator executes; progress reports source bytes queued,
+which may still be waiting for reception. Pausing, disabling REN, or stopping
+the baud clock eventually fills the queue and pauses file reading. Sending text
+is disabled until the entire file is queued or the transfer is canceled.
+**Cancel file** and **Clear pending input** stop file reading and clear all
+pending input. CPU reset or opening a program/project also cancels transfers;
+projects do not save or resume them. File selection does not start execution.
+Enter the firmware's receive command before sending. Clear pending input before
+a new transfer if a receiver stopped before consuming the preceding file.
+
+Output can be copied as text or hex; text hides CR, keeps LF/tab, and escapes
+other non-printable/non-ASCII bytes as `\xNN`. Hex output marks set ninth bits
+with `/1`. Input and the retained output transcript are bounded to 4,096 bytes.
+The window reports receive overruns, premature transmit writes, and core output
+queue drops. CPU reset clears pending serial state but keeps the transcript;
+opening a program/project clears it. Projects retain terminal visibility, while
+serial traffic and terminal input controls remain runtime state.
+
+Try [serial_echo.asm](progs/asm/demo/serial_echo.asm): open it, select an
+11.0592 MHz crystal for 9600 baud, open the terminal, and Run. It prints `>` and
+echoes input using serial interrupts. The serial model operates at instruction
+boundaries; see [timing limits](CYCLE_ACCURATE_EXECUTION.md#serial-model).
 
 ## Execution settings and shortcuts
 

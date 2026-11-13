@@ -714,6 +714,197 @@ struct Emu51ImguiAppTestAccess {
             "Clear recent projects persists an empty list without touching program recents, the current project or editor");
     }
 
+    static void test_serial_terminal(const fs::path& root)
+    {
+        auto app = create();
+        const auto sample = fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/serial_echo.asm";
+        check(app->loadProgram(sample.string().c_str(), true, true), "Serial echo example assembles and loads");
+        app->showSerialTerminal();
+        app->crystalMHz_ = 11.0592;
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "Hi");
+        check(app->sendSerialTerminalInput() && !app->running_ && app->cpu_.pendingSerialReceiveCount() == 2 &&
+            app->serialTerminalInput_[0] == '\0', "Sending serial input queues bytes without starting execution");
+        app->toggleRun(); app->runSteps(10000);
+        app->stopForDebugger("test");
+        check(app->serialTerminalDisplay() == ">Hi" && app->cpu_.serialReceiveOverruns() == 0 &&
+            app->cpu_.serialTransmitOverwrites() == 0,
+            "Interrupt-driven UART echo sends its greeting and echoes queued text without data loss");
+        app->serialHexInput_ = true;
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "00 0xFF 0A");
+        check(app->sendSerialTerminalInput(), "Terminal accepts hexadecimal input, including NUL and FF");
+        app->toggleRun(); app->runSteps(10000); app->stopForDebugger("test");
+        check(app->serialTerminalDisplay() == ">Hi\\x00\\xFF\n", "Text output escapes binary bytes without corrupting the terminal");
+        app->serialHexOutput_ = true;
+        check(app->serialTerminalDisplay() == "3E 48 69 00 FF 0A ", "Hexadecimal output preserves every transmitted byte");
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "41 ZZ");
+        const auto queued = app->cpu_.pendingSerialReceiveCount();
+        check(!app->sendSerialTerminalInput() && app->cpu_.pendingSerialReceiveCount() == queued &&
+            std::string(app->serialTerminalInput_) == "41 ZZ", "Malformed hex input cannot enqueue a partial message");
+        app->serialHexInput_ = false; app->serialLineEnding_ = 3;
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "X");
+        check(app->sendSerialTerminalInput() && app->cpu_.pendingSerialReceiveCount() == 3,
+            "Selected CRLF ending is appended to queued input");
+        app->cpu_.clearSerialReceiveQueue();
+        for (std::size_t i = 0; i < emu51::kSerialQueueCapacity; ++i) app->cpu_.queueSerialReceive(0);
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "Y");
+        check(!app->sendSerialTerminalInput() && app->cpu_.pendingSerialReceiveCount() == emu51::kSerialQueueCapacity,
+            "Full serial input queues reject whole messages without overflow");
+        app->resetCpuState(true);
+        check(!app->cpu_.pendingSerialReceiveCount() && app->serialTerminalOutput_.size() == 6,
+            "CPU reset clears pending UART state while preserving the terminal transcript");
+
+        const auto project = root / "serial.emu51";
+        check(app->saveProjectToPath(project), "Project saves serial terminal visibility");
+        auto restored = create();
+        check(restored->openProjectFromPath(project) && restored->serialTerminalOpen_ &&
+            restored->serialTerminalOutput_.empty() && !restored->cpu_.pendingSerialReceiveCount(),
+            "Projects restore terminal visibility without replaying runtime serial traffic");
+        std::string old = read(project);
+        const std::string field = "\"serial_terminal_open\":true,";
+        const auto at = old.find(field);
+        check(at != std::string::npos, "Project serial visibility field is present");
+        if (at != std::string::npos) {
+            old.erase(at, field.size()); write(root / "old-serial.emu51", old);
+            check(restored->openProjectFromPath(root / "old-serial.emu51") && !restored->serialTerminalOpen_,
+                "Projects created before UART support default to a closed terminal");
+        }
+        restored->showSerialTerminal();
+        ImGui::NewFrame(); restored->drawSerialTerminal(); ImGui::Render();
+    }
+
+    static void test_serial_file_send(const fs::path& root)
+    {
+        auto app = create();
+        const auto sample = fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/serial_echo.asm";
+        check(app->loadProgram(sample.string().c_str(), true, true), "File-send test loads the serial echo example");
+        app->toggleRun(); app->runSteps(10000); app->stopForDebugger("test");
+        // Speed up the example's timer for a large-file regression while
+        // retaining its real interrupt-driven receive/transmit handshake.
+        app->cpu_.TH1 = app->cpu_.TL1 = 0xff;
+        std::string payload;
+        for (std::size_t i = 0; i < emu51::kSerialQueueCapacity + 513; ++i)
+            payload.push_back(static_cast<char>(i & 255));
+        const auto path = root / "serial input.bin";
+        write(path, payload);
+        app->serialHexInput_ = true; app->serialLineEnding_ = 3;
+        app->serialFilePathPicker_ = [&] { return path; };
+        const auto beforeOutput = app->serialOutputGeneration_;
+        const auto beforeInstructions = app->instructionCount_;
+        app->requestSerialFileSend();
+        check(app->serialFileStream_.is_open() && app->serialFileQueued_ == emu51::kSerialQueueCapacity &&
+            app->cpu_.pendingSerialReceiveCount() == emu51::kSerialQueueCapacity && !app->running_ &&
+            app->instructionCount_ == beforeInstructions,
+            "Choosing a large file queues bounded input without starting execution");
+        const auto beforePath = app->serialFilePath_;
+        check(!app->startSerialFileSend(root / "other.bin") && app->serialFilePath_ == beforePath,
+            "An active file transfer cannot be replaced silently");
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "41");
+        check(!app->sendSerialTerminalInput() && std::string(app->serialTerminalInput_) == "41",
+            "Text/hex messages cannot interleave with an active file transfer");
+        app->toggleRun(); app->runSteps(900000); app->stopForDebugger("test");
+        check(!app->serialFileStream_.is_open() && app->serialFileQueued_ == payload.size() &&
+            !app->cpu_.pendingSerialReceiveCount() && app->serialOutputGeneration_ - beforeOutput == payload.size() &&
+            app->cpu_.serialReceiveOverruns() == 0 && app->cpu_.serialTransmitOverwrites() == 0,
+            "Large file transfers refill the queue while the hidden terminal's firmware echoes every byte");
+        bool matches = app->serialTerminalOutput_.size() == emu51::kSerialQueueCapacity;
+        for (std::size_t i = 0; matches && i < app->serialTerminalOutput_.size(); ++i)
+            matches = app->serialTerminalOutput_[i].value == static_cast<unsigned char>(payload[payload.size() - emu51::kSerialQueueCapacity + i]);
+        check(matches, "File sending preserves binary bytes and order without hex parsing or appended CRLF");
+
+        const auto completedPath = app->serialFilePath_;
+        const auto completedCount = app->serialFileQueued_;
+        app->serialFilePathPicker_ = [] { return fs::path{}; };
+        app->requestSerialFileSend();
+        check(app->serialFilePath_ == completedPath && app->serialFileQueued_ == completedCount,
+            "Canceling the file picker preserves transfer history");
+        check(!app->startSerialFileSend(root / "missing.bin") && !app->startSerialFileSend(root) &&
+            app->serialFilePath_ == completedPath && !app->cpu_.pendingSerialReceiveCount(),
+            "Missing files and directories cannot mutate serial input or the last transfer");
+        write(root / "empty.bin", "");
+        check(app->startSerialFileSend(root / "empty.bin") && !app->serialFileStream_.is_open() &&
+            app->serialFileQueued_ == 0 && !app->cpu_.pendingSerialReceiveCount(), "Empty files complete without injecting bytes");
+
+        check(app->startSerialFileSend(path), "A second file transfer starts after completion");
+        app->running_ = true;
+        app->cancelSerialFileSend();
+        app->serviceSerialFileSend();
+        check(!app->serialFileStream_.is_open() && !app->cpu_.pendingSerialReceiveCount() && app->running_,
+            "Cancel stops file reading and clears pending UART input without stopping the CPU");
+        app->stopForDebugger("test");
+        check(app->startSerialFileSend(path), "A canceled file can be selected again");
+        app->resetCpuState(true);
+        app->serviceSerialFileSend();
+        check(!app->serialFileStream_.is_open() && !app->cpu_.pendingSerialReceiveCount(),
+            "CPU reset cancels file transfers so they cannot inject data into the reset machine");
+
+        check(app->startSerialFileSend(path), "A file can be opened after reset");
+        app->serialFileStream_.setstate(std::ios::badbit);
+        app->cpu_.clearSerialReceiveQueue();
+        app->serviceSerialFileSend();
+        check(!app->serialFileStream_.is_open() && !app->cpu_.pendingSerialReceiveCount() &&
+            app->serialTerminalStatus_.find("read failed") != std::string::npos,
+            "Mid-transfer read errors stop the transfer without injecting an incomplete chunk");
+        check(app->startSerialFileSend(path), "File opening recovers from stream errors");
+        check(app->loadProgram(sample.string().c_str(), true, true) && !app->serialFileStream_.is_open() &&
+            app->serialFilePath_.empty() && !app->cpu_.pendingSerialReceiveCount(),
+            "Opening a new program cancels transfers and clears file progress");
+        app->showSerialTerminal();
+        check(app->startSerialFileSend(path), "Terminal rendering test has an active file transfer");
+        ImGui::NewFrame(); app->drawSerialTerminal(); ImGui::Render();
+    }
+
+    static void test_serial_file_endings(const fs::path& root)
+    {
+        // A CR at the end of the first CRLF-mode source chunk, mixed endings,
+        // an embedded NUL, worst-case expansion and a final lone CR.
+        std::string payload(2047, 'A');
+        payload += "\r\nB\nC\r";
+        payload.append("D\0E", 3);
+        payload += std::string(4096, '\n');
+        payload.append("\0tail", 5);
+        payload += '\r';
+        const auto path = root / "mixed endings.txt";
+        write(path, payload);
+        for (int mode = 0; mode <= 3; ++mode) {
+            auto app = create();
+            const auto sample = fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/serial_echo.asm";
+            check(app->loadProgram(sample.string().c_str(), true, true), "File-ending test loads UART echo firmware");
+            app->running_ = true; app->runSteps(10000);
+            app->cpu_.TH1 = app->cpu_.TL1 = 0xff;
+            app->serialFileLineEnding_ = mode;
+            app->serialHexInput_ = true; app->serialLineEnding_ = 2;
+            const auto before = app->serialOutputGeneration_;
+            check(app->startSerialFileSend(path), "Text or binary file transfer starts");
+            // Changing the control cannot alter a transfer already in progress.
+            app->serialFileLineEnding_ = (mode + 1) % 4;
+            const std::string ending = mode == 1 ? "\n" : mode == 2 ? "\r" : "\r\n";
+            std::string expected = payload;
+            if (mode) {
+                expected = std::string(2047, 'A') + ending + "B" + ending + "C" + ending;
+                expected.append("D\0E", 3);
+                for (unsigned i = 0; i < 4096; ++i) expected += ending;
+                expected.append("\0tail", 5);
+                expected += ending;
+            }
+            unsigned remaining = 3000000;
+            while (remaining-- && app->serialOutputGeneration_ - before < expected.size()) app->executeInstruction();
+            app->runSteps(1000);
+            check(!app->serialFileStream_.is_open() && app->serialFileQueued_ == payload.size() &&
+                !app->cpu_.pendingSerialReceiveCount() && app->serialOutputGeneration_ - before == expected.size() &&
+                app->cpu_.serialReceiveOverruns() == 0 && app->cpu_.serialTransmitOverwrites() == 0,
+                "All ending modes stream within queue bounds and preserve source progress without data loss");
+            bool matches = app->serialTerminalOutput_.size() == emu51::kSerialQueueCapacity;
+            for (std::size_t i = 0; matches && i < app->serialTerminalOutput_.size(); ++i)
+                matches = app->serialTerminalOutput_[i].value == static_cast<unsigned char>(
+                    expected[expected.size() - emu51::kSerialQueueCapacity + i]);
+            check(matches, "File ending conversion coalesces CRLF across chunks and preserves other bytes and order");
+            check(read(path) == payload, "Sending text never rewrites the source file");
+            app->serialFileLineEnding_ = 4;
+            check(!app->startSerialFileSend(path) && !app->cpu_.pendingSerialReceiveCount(),
+                "Invalid file ending settings do not inject input");
+        }
+    }
+
     static void test_execution_servicing()
     {
         using Clock = Emu51CycleTiming::Clock;
@@ -836,6 +1027,9 @@ int main()
     Emu51ImguiAppTestAccess::test_symbolic_debugging(root);
     Emu51ImguiAppTestAccess::test_project_sessions(root);
     Emu51ImguiAppTestAccess::test_recent_projects(root);
+    Emu51ImguiAppTestAccess::test_serial_terminal(root);
+    Emu51ImguiAppTestAccess::test_serial_file_send(root);
+    Emu51ImguiAppTestAccess::test_serial_file_endings(root);
     Emu51ImguiAppTestAccess::test_execution_servicing();
     Emu51ImguiAppTestAccess::test_recovery_integration(root);
     fs::remove_all(root);

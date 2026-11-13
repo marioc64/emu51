@@ -55,6 +55,7 @@ NSString* nsString(const std::string& value)
 - (IBAction)loadCompiledAssemblyEditorOutput:(id)sender;
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender;
 - (IBAction)showDebugger:(id)sender;
+- (IBAction)showSerialTerminal:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
@@ -100,6 +101,7 @@ NSString* nsString(const std::string& value)
 - (IBAction)loadCompiledAssemblyEditorOutput:(id)sender;
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender;
 - (IBAction)showDebugger:(id)sender;
+- (IBAction)showSerialTerminal:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
@@ -497,6 +499,12 @@ NSString* nsString(const std::string& value)
 	[self.mtkView setNeedsDisplay:YES];
 }
 
+- (IBAction)showSerialTerminal:(id)sender
+{
+	self.app->showSerialTerminal();
+	[self.mtkView setNeedsDisplay:YES];
+}
+
 - (IBAction)showDebugger:(id)sender
 {
 	self.app->showDebugger();
@@ -888,6 +896,11 @@ NSString* nsString(const std::string& value)
 	[self.viewController compileAndLoadAssemblyEditor:sender];
 }
 
+- (IBAction)showSerialTerminal:(id)sender
+{
+	[self.viewController showSerialTerminal:sender];
+}
+
 - (IBAction)showDebugger:(id)sender
 {
 	[self.viewController showDebugger:sender];
@@ -1182,6 +1195,10 @@ int main()
 			action:@selector(showDebugger:) keyEquivalent:@""];
 		debuggerItem.target = appDelegate;
 		[executionMenu addItem:debuggerItem];
+		NSMenuItem* serialItem = [[NSMenuItem alloc] initWithTitle:@"Serial terminal"
+			action:@selector(showSerialTerminal:) keyEquivalent:@""];
+		serialItem.target = appDelegate;
+		[executionMenu addItem:serialItem];
 		NSMenuItem* runItem = [[NSMenuItem alloc] initWithTitle:@"Run"
 			action:@selector(toggleRun:) keyEquivalent:functionKeyEquivalent(NSF9FunctionKey)];
 		runItem.target = appDelegate;

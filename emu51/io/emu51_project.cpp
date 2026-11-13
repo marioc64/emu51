@@ -27,6 +27,7 @@ struct StoredEditor {
 };
 struct StoredProject {
     int version, unified, debuggerOpen, traceEnabled, cycleExact, stepsPerFrame;
+    int serialTerminalOpen;
     double crystalMHz;
     StoredProgram programs[32];
     std::size_t programCount;
@@ -75,6 +76,7 @@ const kason_schema* projectSchema()
         KaSON_FIELD_BOOL(StoredProject, unified, "unified_memory", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, debuggerOpen, "debugger_open", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, traceEnabled, "trace_enabled", KaSON_REQUIRED),
+        KaSON_FIELD_BOOL(StoredProject, serialTerminalOpen, "serial_terminal_open", KaSON_DEFAULT_BOOL(false)),
         KaSON_FIELD_BOOL(StoredProject, cycleExact, "cycle_exact", KaSON_REQUIRED),
         KaSON_FIELD_DOUBLE(StoredProject, crystalMHz, "crystal_mhz", KaSON_REQUIRED),
         KaSON_FIELD_INT(StoredProject, stepsPerFrame, "instructions_per_frame", KaSON_REQUIRED),
@@ -123,6 +125,7 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
         throw std::runtime_error("invalid execution settings, cursor, or load address");
     Emu51Project p;
     p.unified = s.unified; p.debuggerOpen = s.debuggerOpen; p.traceEnabled = s.traceEnabled;
+    p.serialTerminalOpen = s.serialTerminalOpen;
     p.execution = {s.cycleExact != 0, s.crystalMHz, s.stepsPerFrame};
     p.reloadPath = resolvePath(s.reloadPath, base);
     p.reloadBinaryAddress = static_cast<std::uint16_t>(s.reloadBinaryAddress);
@@ -195,6 +198,7 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
             p.watches.size() > std::size(s->watches)) throw std::runtime_error("project has too many program loads or watches");
         const auto base = projectBase(path);
         s->version = 1; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
+        s->serialTerminalOpen = p.serialTerminalOpen;
         s->cycleExact = p.execution.cycleExact; s->crystalMHz = p.execution.crystalMHz; s->stepsPerFrame = p.execution.stepsPerFrame;
         copyText(s->reloadPath, portablePath(p.reloadPath, base)); s->reloadBinaryAddress = p.reloadBinaryAddress;
         auto& editor = s->editor;

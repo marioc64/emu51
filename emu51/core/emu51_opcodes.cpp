@@ -27,7 +27,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_op_mov_direct_direct();
 		break;
 	case 0xe5:  // mov A,(adress)
-		_mova(SFR[readProg(++PC)]);
+		_mova(readDirect(readProg(++PC)));
 		break;
 	case 0x92:  // mov (bit),C
 		_op_mov_bit_c();
@@ -140,7 +140,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_add_a(readProg(++PC));
 		break;
 	case 0x25:  // add A,(adres)
-		_add_a(SFR[readProg(++PC)]);
+		_add_a(readDirect(readProg(++PC)));
 		break;
 	case 0x26:  // add A,@R0
 		_add_a(SFR[R[0]]);
@@ -177,7 +177,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_addc_a(readProg(++PC));
 		break;
 	case 0x35:  // addc A,(adres)
-		_addc_a(SFR[readProg(++PC)]);
+		_addc_a(readDirect(readProg(++PC)));
 		break;
 	case 0x36:  // addc A,@R0
 		_addc_a(SFR[R[0]]);
@@ -247,7 +247,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_xrl(readProg(++PC));
 		break;
 	case 0x65:  // xrl A,(adress)
-		_xrl(SFR[readProg(++PC)]);
+		_xrl(readDirect(readProg(++PC)));
 		break;
 	case 0x66:  // xrl A,@R0
 		_xrl(SFR[R[0]]);
@@ -279,9 +279,14 @@ void emu51::exec_opcode(std::uint8_t fetched)
 	case 0x6f:  // xrl A,R7
 		_xrl(R[7]);
 		break;
-	case 0xc5:  // xch A,(adress)
-		_xch(SFR[readProg(++PC)]);
+	case 0xc5: { // xch A,direct: read RX buffer, write TX buffer for SBUF.
+		const auto addr = readProg(++PC);
+		const auto value = readDirect(addr);
+		writeDirect(addr, Acc);
+		Acc = value;
+		++PC;
 		break;
+	}
 	case 0xc6:  // xch A,@R0
 		_xch(SFR[R[0]]);
 		break;
@@ -473,7 +478,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_orl(readProg(++PC));
 		break;
 	case 0x45: // orl A,(adress)
-		_orl(SFR[readProg(++PC)]);
+		_orl(readDirect(readProg(++PC)));
 		break;
 	case 0x42: // orl (adress),A
 		_op_orl_direct_a();
@@ -512,7 +517,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_anl(readProg(++PC));
 		break;
 	case 0x55: // anl A,(adress)
-		_anl(SFR[readProg(++PC)]);
+		_anl(readDirect(readProg(++PC)));
 		break;
 	case 0x52: // anl (adress),A
 		_op_anl_direct_a();
@@ -600,7 +605,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_op_cjne(Acc, readProg(++PC));
 		break;
 	case 0xb5: // cjne A,(adress),offset
-		_op_cjne(Acc, SFR[readProg(++PC)]);
+		_op_cjne(Acc, readDirect(readProg(++PC)));
 		break;
 	case 0xb6: // cjne @R0,#(byte),offset
 		_op_cjne(SFR[R[0]], readProg(++PC));
@@ -635,7 +640,7 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_subb_a(readProg(++PC));
 		break;
 	case 0x95: // subb A,(adress)
-		_subb_a(SFR[readProg(++PC)]);
+		_subb_a(readDirect(readProg(++PC)));
 		break;
 	case 0x96: // subb A,@R0
 		_subb_a(SFR[R[0]]);
@@ -759,13 +764,13 @@ inline void emu51::_mov_reg_imm(int regIndex)
 
 inline void emu51::_mov_reg_direct(int regIndex)
 {
-	R[regIndex] = SFR[readProg(++PC)];
+	R[regIndex] = readDirect(readProg(++PC));
 	++PC;
 }
 
 inline void emu51::_mov_direct_reg(int regIndex)
 {
-	SFR[readProg(++PC)] = R[regIndex];
+	writeDirect(readProg(++PC), R[regIndex]);
 	++PC;
 }
 
@@ -777,7 +782,7 @@ inline void emu51::_mov_indirect_a(int indirectIndex)
 
 inline void emu51::_mov_indirect_direct(int indirectIndex)
 {
-	SFR[R[indirectIndex]] = SFR[readProg(++PC)];
+	SFR[R[indirectIndex]] = readDirect(readProg(++PC));
 	++PC;
 }
 
@@ -789,7 +794,7 @@ inline void emu51::_mov_indirect_imm(int indirectIndex)
 
 inline void emu51::_mov_direct_indirect(int indirectIndex)
 {
-	SFR[readProg(++PC)] = SFR[R[indirectIndex]];
+	writeDirect(readProg(++PC), SFR[R[indirectIndex]]);
 	++PC;
 }
 
@@ -890,19 +895,22 @@ inline void emu51::_op_ljmp()
 
 inline void emu51::_op_mov_direct_direct()
 {
-	SFR[readProg(PC + 2)] = SFR[readProg(PC + 1)];
+	const auto value = readDirect(readProg(PC + 1));
+	writeDirect(readProg(PC + 2), value);
 	PC = static_cast<std::uint16_t>(PC + 3);
 }
 
 inline void emu51::_op_inc_direct()
 {
-	++SFR[readProg(++PC)];
+	const auto addr = readProg(++PC);
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) + 1));
 	++PC;
 }
 
 inline void emu51::_op_dec_direct()
 {
-	--SFR[readProg(++PC)];
+	const auto addr = readProg(++PC);
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) - 1));
 	++PC;
 }
 
@@ -1008,13 +1016,13 @@ inline void emu51::_op_mov_direct_imm()
 	++PC;
 	const std::uint8_t addr = readProg(PC);
 	const std::uint8_t imm = readProg(PC + 1);
-	SFR[addr] = imm;
+	writeDirect(addr, imm);
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
 inline void emu51::_op_mov_direct_a()
 {
-	SFR[readProg(++PC)] = Acc;
+	writeDirect(readProg(++PC), Acc);
 	++PC;
 }
 
@@ -1028,13 +1036,13 @@ inline void emu51::_op_mov_bit_c()
 inline void emu51::_op_push_direct()
 {
 	SP = static_cast<std::uint8_t>(SP + 1);
-	SFR[SP] = SFR[readProg(++PC)];
+	SFR[SP] = readDirect(readProg(++PC));
 	++PC;
 }
 
 inline void emu51::_op_pop_direct()
 {
-	SFR[readProg(++PC)] = SFR[SP];
+	writeDirect(readProg(++PC), SFR[SP]);
 	SP = static_cast<std::uint8_t>(SP - 1);
 	++PC;
 }
@@ -1054,42 +1062,42 @@ inline void emu51::_op_clr_bit()
 inline void emu51::_op_xrl_direct_a()
 {
 	const std::uint8_t addr = readProg(++PC);
-	SFR[addr] = static_cast<std::uint8_t>(SFR[addr] ^ Acc);
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) ^ Acc));
 	++PC;
 }
 
 inline void emu51::_op_xrl_direct_imm()
 {
 	const std::uint8_t addr = readProg(++PC);
-	SFR[addr] = static_cast<std::uint8_t>(SFR[addr] ^ readProg(PC + 1));
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) ^ readProg(PC + 1)));
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
 inline void emu51::_op_orl_direct_a()
 {
 	const std::uint8_t addr = readProg(++PC);
-	SFR[addr] = static_cast<std::uint8_t>(SFR[addr] | Acc);
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) | Acc));
 	++PC;
 }
 
 inline void emu51::_op_orl_direct_imm()
 {
 	const std::uint8_t addr = readProg(++PC);
-	SFR[addr] = static_cast<std::uint8_t>(SFR[addr] | readProg(PC + 1));
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) | readProg(PC + 1)));
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
 inline void emu51::_op_anl_direct_a()
 {
 	const std::uint8_t addr = readProg(++PC);
-	SFR[addr] = static_cast<std::uint8_t>(SFR[addr] & Acc);
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) & Acc));
 	++PC;
 }
 
 inline void emu51::_op_anl_direct_imm()
 {
 	const std::uint8_t addr = readProg(++PC);
-	SFR[addr] = static_cast<std::uint8_t>(SFR[addr] & readProg(PC + 1));
+	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) & readProg(PC + 1)));
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
@@ -1097,8 +1105,9 @@ inline void emu51::_op_djnz_direct()
 {
 	const std::uint8_t addr = readProg(++PC);
 	++PC;
-	--SFR[addr];
-	if (SFR[addr] != 0)
+	const auto value = static_cast<std::uint8_t>(readDirect(addr) - 1);
+	writeDirect(addr, value);
+	if (value != 0)
 		PC = static_cast<std::uint16_t>(PC + static_cast<signed char>(readProg(PC)));
 	++PC;
 }

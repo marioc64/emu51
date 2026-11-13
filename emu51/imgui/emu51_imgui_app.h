@@ -6,6 +6,7 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <fstream>
 #include <iosfwd>
 #include <memory>
 #include <optional>
@@ -83,6 +84,7 @@ public:
 	void stepOut() override;
 	void requestExecutionSettings() override;
 	void showDebugger() override;
+	void showSerialTerminal() override;
 	bool unifiedMode() const override;
 	void setUnifiedMode(bool unifiedMode) override;
 	bool internalRamMonitorVisible() const override;
@@ -246,6 +248,28 @@ private:
 	int watchSpace_ = 1;
 	bool watchRead_ = false, watchWrite_ = true;
 	void drawDebugger();
+	void drawSerialTerminal();
+	bool sendSerialTerminalInput();
+	void requestSerialFileSend();
+	bool startSerialFileSend(const std::filesystem::path& path);
+	void serviceSerialFileSend();
+	void cancelSerialFileSend();
+	void collectSerialOutput();
+	std::string serialTerminalDisplay() const;
+	bool serialTerminalOpen_ = false, serialHexInput_ = false, serialHexOutput_ = false, serialRxNinth_ = false;
+	int serialLineEnding_ = 0;
+	char serialTerminalInput_[1024] = "";
+	std::string serialTerminalStatus_;
+	std::deque<emu51::SerialByte> serialTerminalOutput_;
+	std::uint64_t serialOutputGeneration_ = 0, serialDrawnGeneration_ = 0;
+	std::function<std::filesystem::path()> serialFilePathPicker_;
+	std::ifstream serialFileStream_;
+	std::filesystem::path serialFilePath_;
+	std::uintmax_t serialFileSize_ = 0, serialFileQueued_ = 0;
+	bool serialFileNinth_ = false;
+	// 0: unchanged, 1: LF, 2: CR, 3: CRLF. Capture the selection per transfer.
+	int serialFileLineEnding_ = 0, serialFileActiveLineEnding_ = 0;
+	bool serialFileSkipLf_ = false;
 	void toggleBreakpoint(std::uint16_t address);
 	void runToAddress(std::uint16_t address);
 	void runToEditorCursor();

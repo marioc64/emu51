@@ -2556,7 +2556,10 @@ void check_opcode_coverage() {
 
 } // namespace
 
+int emu51_serial_tests();
+
 int main() {
+    g_failures += emu51_serial_tests();
     test_dptr_roundtrip();
     test_parity_flag_odd_is_set();
     test_a5_advances_pc();

@@ -63,6 +63,33 @@ hashes and cycle totals; regression tests also compare intermediate behavior.
 
 ## Assembly and loading
 
+`core/emu51_serial.cpp` owns bounded byte queues and transmit/receive frame
+progress. Direct byte operands use `readDirect()`/`writeDirect()` so every SBUF
+destination triggers transmission without overwriting its receive register.
+Raw `SFR`/`SBUF` references are passive/legacy state access; host code must use
+`writeDirect(0x99, byte)` to transmit and `queueSerialReceive()` to offer input.
+Bit operands retain their distinct bit-address mapping (bit 99h is TI, not SBUF).
+Timer helpers report overflow counts independently of sticky TF flags. UART work
+advances after timers, including during interrupt entry, before the next poll.
+No host sleeps or worker threads are involved.
+
+`imgui/emu51_imgui_serial.cpp` drains completed output after each CPU instruction,
+including while the terminal is hidden. Input is parsed/size-checked completely
+before enqueueing, and inspection/drawing never advances the CPU. Optional
+`serial_terminal_open` project state defaults to false for existing version-1
+projects. Queues/transcripts are runtime state. See the timing document for
+frame accuracy limits and `serial_tests.cpp` for both-dispatch regression vectors.
+
+Serial file input uses a binary file stream, refilling the existing bounded
+receive queue in chunks before CPU instructions. It runs independently of panel
+visibility. The default preserves raw bytes without text/hex parsing. Optional
+file ending normalization snapshots the selected mode, coalesces CRLF across
+chunk boundaries, and reserves up to two output bytes per source byte so CRLF
+expansion cannot overflow the receive queue. Progress counts source bytes read;
+normalization never rewrites the source or appends an ending at EOF.
+File selection/validation does not mutate CPU state. Cancellation and CPU-reset
+paths close the stream; file progress and pending transfers are runtime state.
+
 `Assembler::assemble_file()` reads files. `Assembler::assemble_string()` supports
 in-memory buffers with a source name and optional base directory. Results carry
 bytes, symbols, diagnostics, and address-to-file/line mappings. Includes resolve

@@ -87,19 +87,18 @@ still suspends CPU servicing; no worker thread currently runs the CPU.
 Opcode sizes and cycle costs live in `emu51/core/opcode_metadata.cpp` and are
 shared by CPU dispatch, disassembly, and assembly. `process()` and
 `process_table()` apply the instruction, update parity/register-bank state,
-advance timers, and then arbitrate supported interrupts. Interrupt entry also
-advances timers. Timer mode 2 handles each overflow/reload within the elapsed
+advance timers/serial frames, and then arbitrate supported interrupts. Interrupt entry also
+advances timers/serial frames. Timer mode 2 handles each overflow/reload within the elapsed
 instruction and entry cycles.
 
 The following limits remain:
 
 - Instruction effects are atomic before timers advance. Register and port
   reads/writes have no modeled position within an instruction's machine cycles.
-- Supported external/timer interrupts are arbitrated after instructions. Detailed
+- Supported external/timer/serial interrupts are arbitrated after instructions. Detailed
   request sampling delays and inhibition following RETI or IE/IP access are not
   modeled.
-- UART timing, serial interrupts, idle mode, and power-down execution behavior
-  are not modeled.
+- Idle mode and power-down execution behavior are not modeled.
 - Counter mode suppresses automatic timer increments, but external input pulses
   are not sampled as counter events.
 - The core's `c_time` is an `unsigned long`; on Windows it is 32 bits and wraps
@@ -110,6 +109,35 @@ Frequency settings do not select other 8051 derivatives or 1T/6T timing profiles
 Applications requiring exact pin transitions or complete peripherals need a
 more detailed event/timing model.
 
+## Serial model
+
+The byte/frame model follows the classic 8051 serial modes described in chapter
+3 of the [Intel MCS-51 User's Manual](https://web.mit.edu/6.115/www/document/8051.pdf).
+Mode 0 shifts eight data bits at oscillator/12. Mode 1 frames contain ten bits;
+modes 2/3 contain eleven, including TB8/RB8. Mode 2 uses oscillator/64, or /32
+with SMOD. Modes 1/3 divide Timer 1 overflow events by 32, or by 16 with SMOD.
+Every overflow counts, even if several occur during one instruction. Existing
+counter-input and Timer 0 split-mode limitations also affect the baud clock;
+8052 Timer 2 baud generation is not implemented.
+
+TI is delivered at the modeled start of the stop bit (after eight bits in mode
+0); RI is delivered at the modeled midpoint of the stop bit (after eight bits
+in mode 0). Flags remain latched until software clears them. An uncleared RI
+drops a newly completed asynchronous frame, preserving the unread receive byte.
+SM2 filters invalid stop bits in mode 1 and clear ninth bits in modes 2/3.
+Serial interrupts use the shared RI/TI request at vector `0023h` and participate
+in the normal EA/ES and IP.PS priority arbitration.
+
+Frames begin on instruction service boundaries. The model does not reproduce
+oscillator phases, initial UART startup/sampling delays, RXD/TXD pin transitions,
+baud mismatch, noise, mode 0 pin arbitration, or an external serial device.
+Queued host bytes wait for REN and a usable clock. Writes after TI preserve the
+stop bit before the next frame; premature SBUF writes restart the active frame
+and increment an overwrite counter, rather than reproducing hardware corruption.
+Changing the serial mode aborts in-flight frames. Configure baud controls between
+frames for predictable timing. CPU reset clears the queues, active frames, and
+serial counters. Pin-level timing remains outside emu51's accuracy claims.
+
 ## Validation
 
 Regression tests cover opcode contracts and selected independent timing costs,
@@ -117,6 +145,12 @@ interrupt entry, timer modes and reload boundaries, pacing with injected time,
 fractional frequencies, irregular service intervals, retained debt, suspension,
 reset/resume, and bounded stepping. Both dispatch paths are compared for CPU,
 memory, cycle, and interrupt behavior.
+
+Serial tests independently check mode/SMOD flag boundaries, ninth/stop bits,
+read/write buffer separation, direct SBUF instruction forms, interrupt priority,
+overflow/queue bounds, reset, and interrupt-entry clocking in both dispatch paths.
+Application tests assemble and run the generic serial-interrupt echo example
+through the terminal input/output paths, including binary data and project compatibility.
 
 `emu51_bench` measures unpaced core throughput with a synthetic or supplied
 program; its results are workload/compiler dependent and exclude the GUI. Use

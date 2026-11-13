@@ -181,6 +181,7 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 	}
 
 	if (ImGui::BeginMenu("Execution")) {
+		if (ImGui::MenuItem("Serial terminal")) target.showSerialTerminal();
 		if (ImGui::MenuItem("Run", emu51ShortcutLabel(Emu51Action::ExecToggleRun), target.running()))
 			target.toggleRun();
 		if (ImGui::MenuItem("Reset", emu51ShortcutLabel(Emu51Action::ExecReset))) {

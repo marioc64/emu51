@@ -967,6 +967,7 @@ void Emu51ImguiApp::resetCpuState(bool stopRunning)
 	instructionCount_ = 0;
 	cycleCount_ = 0;
 	statusMessage_ = stopRunning ? "cpu reset and stopped" : "cpu reset";
+	cancelSerialFileSend();
 	cpu_.init();
 	updateDisassemblyFollowRange();
 	if (!stopRunning)
@@ -1162,6 +1163,7 @@ void Emu51ImguiApp::draw()
 	drawBinaryLoadDialog();
 	drawRegisters();
 	drawDebugger();
+	drawSerialTerminal();
 	drawAssemblyEditor();
 	drawDisassemblyViews();
 	drawMonitorViews();
@@ -1566,6 +1568,12 @@ void Emu51ImguiApp::drawRegisters()
 
 void Emu51ImguiApp::resetMachine()
 {
+	cancelSerialFileSend();
+	serialFilePath_.clear();
+	serialFileSize_ = serialFileQueued_ = 0;
+	serialTerminalOutput_.clear();
+	serialTerminalStatus_.clear();
+	++serialOutputGeneration_;
 	projectPrograms_.clear();
 	stepTask_.reset();
 	runToAddress_.reset();
@@ -1947,6 +1955,7 @@ void Emu51ImguiApp::clearMemory()
 	std::fill(romMemory_.begin(), romMemory_.end(), 0);
 	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
 	invalidateInstructionCache();
+	cancelSerialFileSend();
 	cpu_.init();
 }
 
@@ -1963,6 +1972,7 @@ void Emu51ImguiApp::clearRam()
 	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
 	if (unifiedMode_)
 		invalidateInstructionCache();
+	cancelSerialFileSend();
 	cpu_.init();
 }
 
@@ -1980,8 +1990,10 @@ void Emu51ImguiApp::clearRom()
 	std::fill(romMemory_.begin(), romMemory_.end(), 0);
 	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
 	invalidateInstructionCache();
-	if (unifiedMode_)
+	if (unifiedMode_) {
+		cancelSerialFileSend();
 		cpu_.init();
+	}
 }
 
 void Emu51ImguiApp::openFillRangeDialog(bool fillRom)
@@ -2010,8 +2022,10 @@ void Emu51ImguiApp::fillRange(bool fillRom, std::uint16_t start, std::uint16_t e
 		invalidateInstructionCache();
 	}
 	statusMessage_ = unifiedMode_ ? "filled memory range" : (fillRom ? "filled program memory range" : "filled data memory range");
-	if (unifiedMode_ || !fillRom)
+	if (unifiedMode_ || !fillRom) {
+		cancelSerialFileSend();
 		cpu_.init();
+	}
 	cycleTiming_.reset();
 }
 
@@ -2106,6 +2120,7 @@ int Emu51ImguiApp::backwardCandidateScore(std::uint16_t start, std::uint16_t end
 
 std::uint8_t Emu51ImguiApp::executeInstruction()
 {
+	serviceSerialFileSend();
 	const auto pc = cpu_.PC;
 	const std::uint8_t opcode = cpu_.readProg(pc);
 	TraceEntry entry;
@@ -2122,6 +2137,7 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 	instructionExecuting_ = true;
 	const auto cycles = static_cast<std::uint8_t>(cpu_.process());
 	instructionExecuting_ = false;
+	collectSerialOutput();
 	cycleCount_ += cycles;
 	++instructionCount_;
 	for (const auto& watch : watchpoints_) {
