@@ -18,6 +18,7 @@
 #include "assembler.h"
 #include "emu51_cycle_timing.h"
 #include "emu51_execution_settings.h"
+#include "emu51_project.h"
 #include "emu51_imgui_menu.h"
 
 class TextEditor;
@@ -37,6 +38,13 @@ public:
 	bool consumeQuitRequested();
 	bool prepareToQuit();
 	void requestOpenProgram() override;
+	void requestOpenProject() override;
+	void saveProject() override;
+	void saveProjectAs() override;
+	int recentProjectFileCount() const override;
+	const std::string& recentProjectFilePath(int index) const override;
+	void openRecentProjectFile(int index) override;
+	void clearRecentProjectFiles() override;
 	void requestLoadProgram() override;
 	bool hasLoadedProgram() const override;
 	void reloadProgram() override;
@@ -102,7 +110,7 @@ public:
 		int keyScrollDirection = 0;
 		float keyScrollRepeatTimer = 0.0f;
 		bool openGotoPopup = false;
-		char gotoAddress[5] = "";
+		char gotoAddress[128] = "";
 	};
 
 	struct MonitorView {
@@ -222,8 +230,19 @@ private:
 	std::optional<std::uint16_t> runToAddress_;
 	std::string pendingWatchpointStop_;
 	std::map<std::uint16_t, emu51_asm::AssemblyImage::SourceLine> sourceLines_;
+	std::map<std::string, emu51_asm::Symbol> loadedSymbols_;
+	std::map<std::uint16_t, std::string> loadedLabels_;
+	std::map<std::string, std::string> loadedSources_;
+	using SourceKey = std::pair<std::string, std::size_t>;
+	std::map<SourceKey, std::uint16_t> sourceAddresses_;
+	std::map<SourceKey, std::vector<std::uint16_t>> sourceLineBytes_;
+	std::set<std::string> symbolWatches_;
+	bool editorMatchesLoadedSource_ = false;
+	std::string editorDebugSourceName_;
+	std::string editorDebugSourceKey_;
 	std::vector<emu51_asm::Diagnostic> editorDiagnostics_;
-	char debugAddress_[5] = "0000";
+	char debugAddress_[128] = "0000";
+	char symbolFilter_[128] = "";
 	int watchSpace_ = 1;
 	bool watchRead_ = false, watchWrite_ = true;
 	void drawDebugger();
@@ -235,6 +254,16 @@ private:
 	void stopForDebugger(const std::string& reason);
 	void noteMemoryAccess(WatchSpace space, std::uint16_t address, bool write);
 	void setLoadedSourceMap(const emu51_asm::AssemblyImage& image);
+	void clearLoadedDebugInfo();
+	void invalidateSourceLocation(std::uint16_t address);
+	std::optional<std::uint16_t> resolveDebugAddress(const char* text) const;
+	std::string labelAtAddress(std::uint16_t address) const;
+	std::optional<unsigned> symbolValue(const std::string& name) const;
+	std::string editorSourceKey() const;
+	void updateEditorSourceMatch();
+	std::optional<std::uint16_t> editorLineAddress(std::size_t line) const;
+	void toggleEditorBreakpoint(std::size_t line);
+	void configureEditorDebugger();
 	struct StepTask {
 		std::uint16_t returnAddress = 0;
 		std::uint8_t returnSp = 0;
@@ -257,6 +286,19 @@ private:
 	Emu51CycleTiming::Clock::time_point recoverySaveDue_{};
 	std::unique_ptr<Emu51EditorRecovery> editorRecovery_;
 	std::string observedAssemblyEditorText_;
+	std::string untitledSourceBaseDirectory_;
+	std::string projectPath_;
+	std::vector<std::string> recentProjectPaths_;
+	void loadRecentProjectPaths();
+	void loadRecentProjectPaths(std::istream& in);
+	void saveRecentProjectPaths() const;
+	void saveRecentProjectPaths(std::ostream& out) const;
+	void rememberRecentProjectPath(const std::filesystem::path& path);
+	std::vector<Emu51ProjectProgram> projectPrograms_;
+	std::function<std::filesystem::path(bool save)> projectPathPicker_;
+	std::filesystem::path chooseProjectPath(bool save);
+	bool saveProjectToPath(const std::filesystem::path& path);
+	bool openProjectFromPath(const std::filesystem::path& path);
 	bool confirmAssemblyEditorChanges();
 	bool saveAssemblyEditorChanges();
 	void markAssemblyEditorChanged();

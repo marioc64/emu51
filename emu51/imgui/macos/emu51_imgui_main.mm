@@ -32,6 +32,11 @@ NSString* nsString(const std::string& value)
 }  // namespace
 
 @interface Emu51AppViewController : NSViewController <MTKViewDelegate, NSWindowDelegate>
+- (IBAction)openRecentProject:(id)sender;
+- (IBAction)clearRecentProjects:(id)sender;
+- (IBAction)openProject:(id)sender;
+- (IBAction)saveProject:(id)sender;
+- (IBAction)saveProjectAs:(id)sender;
 - (IBAction)openProgram:(id)sender;
 - (IBAction)loadProgram:(id)sender;
 - (IBAction)reloadProgram:(id)sender;
@@ -74,6 +79,9 @@ NSString* nsString(const std::string& value)
 
 @interface Emu51AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, assign) Emu51AppViewController* viewController;
+- (IBAction)openProject:(id)sender;
+- (IBAction)saveProject:(id)sender;
+- (IBAction)saveProjectAs:(id)sender;
 - (IBAction)openProgram:(id)sender;
 - (IBAction)loadProgram:(id)sender;
 - (IBAction)reloadProgram:(id)sender;
@@ -123,6 +131,8 @@ NSString* nsString(const std::string& value)
 @property(nonatomic, strong) NSMenuItem* reloadProgramMenuItem;
 @property(nonatomic, strong) NSMenuItem* openRecentMenuItem;
 @property(nonatomic, strong) NSMenu* recentProgramsMenu;
+@property(nonatomic, strong) NSMenuItem* openRecentProjectsMenuItem;
+@property(nonatomic, strong) NSMenu* recentProjectsMenu;
 @property(nonatomic, strong) NSMenuItem* saveAssemblyMenuItem;
 @property(nonatomic, strong) NSMenuItem* saveAsAssemblyMenuItem;
 @property(nonatomic, strong) NSMenuItem* editUndoMenuItem;
@@ -188,6 +198,31 @@ NSString* nsString(const std::string& value)
 			action:@selector(clearRecentPrograms:) keyEquivalent:@""];
 		clearItem.target = self;
 		[self.recentProgramsMenu addItem:clearItem];
+	}
+	const int recentProjectCount = self.app->recentProjectFileCount();
+	self.openRecentProjectsMenuItem.enabled = recentProjectCount > 0;
+	[self.recentProjectsMenu removeAllItems];
+	if (recentProjectCount == 0) {
+		NSMenuItem* emptyItem = [[NSMenuItem alloc] initWithTitle:@"No Recent Projects"
+			action:nil keyEquivalent:@""];
+		emptyItem.enabled = NO;
+		[self.recentProjectsMenu addItem:emptyItem];
+	} else {
+		for (int i = 0; i < recentProjectCount; ++i) {
+			NSString* path = nsString(self.app->recentProjectFilePath(i));
+			NSString* filename = path.lastPathComponent.length > 0 ? path.lastPathComponent : path;
+			NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%d %@", i + 1, filename]
+				action:@selector(openRecentProject:) keyEquivalent:@""];
+			item.target = self;
+			item.tag = i;
+			item.toolTip = path;
+			[self.recentProjectsMenu addItem:item];
+		}
+		[self.recentProjectsMenu addItem:[NSMenuItem separatorItem]];
+		NSMenuItem* clearItem = [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
+			action:@selector(clearRecentProjects:) keyEquivalent:@""];
+		clearItem.target = self;
+		[self.recentProjectsMenu addItem:clearItem];
 	}
 	const BOOL canSaveAssembly = self.app->canSaveAssemblyEditorFile();
 	self.saveAssemblyMenuItem.enabled = canSaveAssembly;
@@ -281,6 +316,49 @@ NSString* nsString(const std::string& value)
 	ImGui_ImplMetal_Init(_device);
 
 	return self;
+}
+
+- (IBAction)openRecentProject:(id)sender
+{
+	self.app->openRecentProjectFile((int)[sender tag]);
+	[self updateFileMenuItems];
+	[self updateEditMenuItems];
+	[self updateBuildMenuItems];
+	[self updateWindowTitle];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)clearRecentProjects:(id)sender
+{
+	self.app->clearRecentProjectFiles();
+	[self updateFileMenuItems];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)openProject:(id)sender
+{
+	self.app->requestOpenProject();
+	[self updateFileMenuItems];
+	[self updateEditMenuItems];
+	[self updateBuildMenuItems];
+	[self updateWindowTitle];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)saveProject:(id)sender
+{
+	self.app->saveProject();
+	[self updateFileMenuItems];
+	[self updateWindowTitle];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)saveProjectAs:(id)sender
+{
+	self.app->saveProjectAs();
+	[self updateFileMenuItems];
+	[self updateWindowTitle];
+	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)openProgram:(id)sender
@@ -710,6 +788,21 @@ NSString* nsString(const std::string& value)
 	return [self.viewController prepareToQuit] ? NSTerminateNow : NSTerminateCancel;
 }
 
+- (IBAction)openProject:(id)sender
+{
+	[self.viewController openProject:sender];
+}
+
+- (IBAction)saveProject:(id)sender
+{
+	[self.viewController saveProject:sender];
+}
+
+- (IBAction)saveProjectAs:(id)sender
+{
+	[self.viewController saveProjectAs:sender];
+}
+
 - (IBAction)openProgram:(id)sender
 {
 	[self.viewController openProgram:sender];
@@ -917,6 +1010,26 @@ int main()
 		NSMenuItem* fileMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:fileMenuItem];
 		NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+		NSMenuItem* openProjectItem = [[NSMenuItem alloc] initWithTitle:@"Open project..."
+			action:@selector(openProject:) keyEquivalent:@""];
+		openProjectItem.target = appDelegate;
+		[fileMenu addItem:openProjectItem];
+		NSMenuItem* recentProjectsItem = [[NSMenuItem alloc] initWithTitle:@"Open Recent Projects"
+			action:nil keyEquivalent:@""];
+		NSMenu* recentProjectsMenu = [[NSMenu alloc] initWithTitle:@"Open Recent Projects"];
+		viewController.openRecentProjectsMenuItem = recentProjectsItem;
+		viewController.recentProjectsMenu = recentProjectsMenu;
+		[recentProjectsItem setSubmenu:recentProjectsMenu];
+		[fileMenu addItem:recentProjectsItem];
+		NSMenuItem* saveProjectItem = [[NSMenuItem alloc] initWithTitle:@"Save project"
+			action:@selector(saveProject:) keyEquivalent:@""];
+		saveProjectItem.target = appDelegate;
+		[fileMenu addItem:saveProjectItem];
+		NSMenuItem* saveProjectAsItem = [[NSMenuItem alloc] initWithTitle:@"Save project as..."
+			action:@selector(saveProjectAs:) keyEquivalent:@""];
+		saveProjectAsItem.target = appDelegate;
+		[fileMenu addItem:saveProjectAsItem];
+		[fileMenu addItem:[NSMenuItem separatorItem]];
 		NSMenuItem* openProgramItem = [[NSMenuItem alloc] initWithTitle:@"Open program..."
 			action:@selector(openProgram:) keyEquivalent:@"o"];
 		openProgramItem.target = appDelegate;

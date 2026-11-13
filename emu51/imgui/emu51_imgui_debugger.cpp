@@ -1,13 +1,176 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_imgui_app.h"
+#include "emu51_imgui_app_internal.h"
 #include "emu51_imgui_input.h"
 #include "TextEditor.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <limits>
 
+using emu51_imgui_internal::normalizedProgramPath;
+
+namespace {
+std::string debugName(const char* text)
+{
+    std::string name = text ? text : "";
+    const auto first = name.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+        return {};
+    name = name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return name;
+}
+
+const char* symbolKindName(emu51_asm::SymbolKind kind)
+{
+    switch (kind) {
+    case emu51_asm::SymbolKind::label: return "Label / program byte";
+    case emu51_asm::SymbolKind::equ: return "Constant";
+    case emu51_asm::SymbolKind::data: return "Internal RAM/SFR";
+    case emu51_asm::SymbolKind::bit: return "Bit";
+    }
+    return "";
+}
+}
+
 void Emu51ImguiApp::showDebugger() { debuggerOpen_ = true; }
+
+std::optional<std::uint16_t> Emu51ImguiApp::resolveDebugAddress(const char* text) const
+{
+    const auto name = debugName(text);
+    if (const auto symbol = loadedSymbols_.find(name); symbol != loadedSymbols_.end())
+        return symbol->second.value;
+    if (const auto address = emu51ParseHexInput(name.c_str(), 0xffff))
+        return static_cast<std::uint16_t>(*address);
+    return std::nullopt;
+}
+
+std::string Emu51ImguiApp::labelAtAddress(std::uint16_t address) const
+{
+    const auto label = loadedLabels_.find(address);
+    return label == loadedLabels_.end() ? std::string{} : label->second;
+}
+
+std::optional<unsigned> Emu51ImguiApp::symbolValue(const std::string& name) const
+{
+    const auto found = loadedSymbols_.find(name);
+    if (found == loadedSymbols_.end())
+        return std::nullopt;
+    const auto& symbol = found->second;
+    switch (symbol.kind) {
+    case emu51_asm::SymbolKind::label: return readProgramByte(symbol.value);
+    case emu51_asm::SymbolKind::equ: return symbol.value;
+    case emu51_asm::SymbolKind::data:
+        if (symbol.value <= 0xff) return cpu_.SFR[symbol.value];
+        break;
+    case emu51_asm::SymbolKind::bit:
+        if (symbol.value <= 0xff) {
+            const unsigned byte = symbol.value < 0x80 ? 0x20 + symbol.value / 8 : symbol.value & 0xf8;
+            return (cpu_.SFR[byte] >> (symbol.value & 7)) & 1u;
+        }
+        break;
+    }
+    return std::nullopt;
+}
+
+void Emu51ImguiApp::clearLoadedDebugInfo()
+{
+    sourceLines_.clear();
+    loadedSymbols_.clear();
+    loadedLabels_.clear();
+    loadedSources_.clear();
+    sourceAddresses_.clear();
+    sourceLineBytes_.clear();
+    editorMatchesLoadedSource_ = false;
+}
+
+void Emu51ImguiApp::invalidateSourceLocation(std::uint16_t address)
+{
+    const auto found = sourceLines_.find(address);
+    if (found == sourceLines_.end())
+        return;
+    // An operand edit invalidates its instruction's source entry too. All bytes
+    // from one source line lose the mapping together, including wrapped output.
+    const auto source = found->second;
+    const SourceKey key{source.file, source.line};
+    sourceAddresses_.erase(key);
+    const auto bytes = sourceLineBytes_.find(key);
+    if (bytes != sourceLineBytes_.end()) {
+        for (const auto byte : bytes->second) sourceLines_.erase(byte);
+        sourceLineBytes_.erase(bytes);
+    }
+}
+
+std::string Emu51ImguiApp::editorSourceKey() const
+{
+    return editorDebugSourceKey_;
+}
+
+void Emu51ImguiApp::updateEditorSourceMatch()
+{
+    const std::string name = assemblyEditorState_.sourcePath.empty()
+        ? (assemblyEditorBaseDirectory() / assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
+    if (name != editorDebugSourceName_) {
+        editorDebugSourceName_ = name;
+        editorDebugSourceKey_ = normalizedProgramPath(name);
+    }
+    const auto source = loadedSources_.find(editorSourceKey());
+    editorMatchesLoadedSource_ = source != loadedSources_.end() &&
+        source->second == observedAssemblyEditorText_;
+}
+
+std::optional<std::uint16_t> Emu51ImguiApp::editorLineAddress(std::size_t line) const
+{
+    if (!editorMatchesLoadedSource_)
+        return std::nullopt;
+    const auto found = sourceAddresses_.find({editorSourceKey(), line});
+    return found == sourceAddresses_.end() ? std::nullopt : std::optional(found->second);
+}
+
+void Emu51ImguiApp::toggleEditorBreakpoint(std::size_t line)
+{
+    trackAssemblyEditorChanges();
+    if (const auto address = editorLineAddress(line))
+        toggleBreakpoint(*address);
+    else
+        statusMessage_ = "no matching loaded instruction; compile and load the current source";
+}
+
+void Emu51ImguiApp::configureEditorDebugger()
+{
+    assemblyEditor_->SetLineDecorator(-2.0f, [this](TextEditor::Decorator& decoration) {
+        const auto address = editorLineAddress(static_cast<std::size_t>(decoration.line + 1));
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImGui::BeginDisabled(!address);
+        const bool clicked = ImGui::InvisibleButton("breakpoint", ImVec2(decoration.width, decoration.height));
+        ImGui::EndDisabled();
+        if (address) {
+            const bool enabled = breakpoints_.contains(*address);
+            const ImVec2 center(origin.x + decoration.width * 0.5f, origin.y + decoration.height * 0.5f);
+            const float radius = std::min(decoration.width, decoration.height) * 0.3f;
+            if (enabled)
+                ImGui::GetWindowDrawList()->AddCircleFilled(center, radius, IM_COL32(230, 75, 75, 255));
+            else if (ImGui::IsItemHovered())
+                ImGui::GetWindowDrawList()->AddCircle(center, radius, IM_COL32(230, 75, 75, 255));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s breakpoint at %04X", enabled ? "Remove" : "Add", *address);
+            if (clicked)
+                toggleEditorBreakpoint(static_cast<std::size_t>(decoration.line + 1));
+        }
+    });
+    assemblyEditor_->SetLineNumberContextMenuCallback([this](int line) {
+        trackAssemblyEditorChanges();
+        const auto address = editorLineAddress(static_cast<std::size_t>(line + 1));
+        if (ImGui::MenuItem("Breakpoint", nullptr, address && breakpoints_.contains(*address), address.has_value()))
+            toggleEditorBreakpoint(static_cast<std::size_t>(line + 1));
+        if (ImGui::MenuItem("Run to line", nullptr, false, address.has_value()))
+            runToAddress(*address);
+    });
+}
 
 void Emu51ImguiApp::toggleBreakpoint(std::uint16_t address)
 {
@@ -46,7 +209,8 @@ bool Emu51ImguiApp::stopBeforeInstruction()
     if (!skip && breakpoints_.contains(cpu_.PC)) {
         char reason[48];
         std::snprintf(reason, sizeof(reason), "breakpoint at %04X", cpu_.PC);
-        stopForDebugger(reason);
+        const auto label = labelAtAddress(cpu_.PC);
+        stopForDebugger(label.empty() ? std::string(reason) : std::string(reason) + " (" + label + ")");
         return true;
     }
     return false;
@@ -74,27 +238,53 @@ void Emu51ImguiApp::setLoadedSourceMap(const emu51_asm::AssemblyImage& image)
     // loads whose unchanged bytes may belong to a different source version.
     if (stepTask_)
         stopForDebugger("step canceled by program load");
+    clearLoadedDebugInfo();
     sourceLines_ = image.sourceLines;
+    std::map<std::string, std::string> normalizedPaths;
+    const auto sourcePath = [&](const std::string& file) -> const std::string& {
+        auto [found, inserted] = normalizedPaths.try_emplace(file);
+        if (inserted) found->second = normalizedProgramPath(file);
+        return found->second;
+    };
+    for (auto& [address, source] : sourceLines_) {
+        source.file = sourcePath(source.file);
+        sourceLineBytes_[{source.file, source.line}].push_back(address);
+    }
+    loadedSymbols_ = image.symbols;
+    for (const auto& [name, symbol] : loadedSymbols_) {
+        if (symbol.kind == emu51_asm::SymbolKind::label) {
+            auto& labels = loadedLabels_[symbol.value];
+            if (!labels.empty()) labels += ", ";
+            labels += name;
+        }
+    }
+    TextEditor normalized;
+    normalized.SetTabSize(assemblyEditor_->GetTabSize());
+    normalized.SetInsertSpacesOnTabs(assemblyEditor_->IsInsertSpacesOnTabs());
+    for (const auto& [file, text] : image.sources) {
+        normalized.SetText(text);
+        loadedSources_[sourcePath(file)] = normalized.GetText();
+    }
+    for (const auto address : image.instructionAddresses) {
+        const auto source = sourceLines_.find(address);
+        if (source != sourceLines_.end())
+            sourceAddresses_.try_emplace(SourceKey{source->second.file, source->second.line}, address);
+    }
+    trackAssemblyEditorChanges();
 }
 
 void Emu51ImguiApp::runToEditorCursor()
 {
     trackAssemblyEditorChanges();
-    if (!assemblyEditor_ || assemblyEditorState_.dirty) {
-        statusMessage_ = "save, compile and load the current source before running to its cursor";
+    if (!assemblyEditor_) {
         return;
     }
     int line = 0, column = 0;
     assemblyEditor_->GetMainCursor(line, column);
-    const auto& path = assemblyEditorState_.sourcePath;
-    for (const auto& [address, source] : sourceLines_) {
-        if ((source.file == path || source.file == assemblyEditorState_.sourceName) &&
-            source.line == static_cast<std::size_t>(line + 1)) {
-            runToAddress(address);
-            return;
-        }
-    }
-    statusMessage_ = "no loaded instruction at the editor cursor";
+    if (const auto address = editorLineAddress(static_cast<std::size_t>(line + 1)))
+        runToAddress(*address);
+    else
+        statusMessage_ = "no matching loaded instruction; compile and load the current source";
 }
 
 void Emu51ImguiApp::showSource(std::uint16_t address)
@@ -104,9 +294,15 @@ void Emu51ImguiApp::showSource(std::uint16_t address)
         return;
     // Copy before opening another editor buffer; loading does not change CPU.
     const auto source = found->second;
-    if (source.file != assemblyEditorState_.sourcePath && source.file != assemblyEditorState_.sourceName) {
+    trackAssemblyEditorChanges();
+    if (source.file != editorSourceKey()) {
         if (!confirmAssemblyEditorChanges() || !loadAssemblyFileIntoEditor(source.file))
             return;
+    }
+    trackAssemblyEditorChanges();
+    if (!editorMatchesLoadedSource_) {
+        statusMessage_ = "source differs from the loaded program; compile and load before source navigation";
+        return;
     }
     if (source.line == 0 || source.line > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         return;
@@ -125,9 +321,16 @@ void Emu51ImguiApp::drawDebugger()
         return;
     }
     ImGui::TextWrapped("%s", statusMessage_.c_str());
-    ImGui::SetNextItemWidth(85);
-    ImGui::InputText("Address", debugAddress_, sizeof(debugAddress_), ImGuiInputTextFlags_CharsHexadecimal);
-    const auto address = emu51ParseHexInput(debugAddress_, 0xffff);
+    trackAssemblyEditorChanges();
+    ImGui::SetNextItemWidth(220);
+    ImGui::InputText("Address or symbol", debugAddress_, sizeof(debugAddress_));
+    const auto address = resolveDebugAddress(debugAddress_);
+    if (address) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("= %04X", *address);
+    } else {
+        ImGui::TextDisabled("Enter a loaded symbol or hexadecimal address.");
+    }
     ImGui::BeginDisabled(!address);
     if (ImGui::Button("Toggle breakpoint"))
         toggleBreakpoint(static_cast<std::uint16_t>(*address));
@@ -148,12 +351,62 @@ void Emu51ImguiApp::drawDebugger()
         std::optional<std::uint16_t> remove;
         for (const auto breakpoint : breakpoints_) {
             ImGui::PushID(breakpoint);
-            ImGui::Text("%04X", breakpoint);
+            ImGui::Text("%04X %s", breakpoint, labelAtAddress(breakpoint).c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove")) remove = breakpoint;
             ImGui::PopID();
         }
         if (remove) breakpoints_.erase(*remove);
+    }
+    if (ImGui::CollapsingHeader("Symbols")) {
+        ImGui::InputText("Filter", symbolFilter_, sizeof(symbolFilter_));
+        const auto filter = debugName(symbolFilter_);
+        ImGui::TextDisabled("Select an address to use it above. Watches inspect values without stopping execution.");
+        if (ImGui::BeginTable("symbols", 4, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg,
+            ImVec2(0, 160))) {
+            ImGui::TableSetupColumn("Name"); ImGui::TableSetupColumn("Address / constant");
+            ImGui::TableSetupColumn("Kind"); ImGui::TableSetupColumn("Watch");
+            ImGui::TableHeadersRow();
+            for (const auto& [name, symbol] : loadedSymbols_) {
+                if (!filter.empty() && name.find(filter) == std::string::npos) continue;
+                ImGui::PushID(name.c_str());
+                ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::TextUnformatted(name.c_str());
+                ImGui::TableNextColumn();
+                char value[8];
+                std::snprintf(value, sizeof(value), "%04X", symbol.value);
+                if (ImGui::Selectable(value))
+                    std::snprintf(debugAddress_, sizeof(debugAddress_), "%s", name.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(symbolKindName(symbol.kind));
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(symbolWatches_.contains(name));
+                if (ImGui::SmallButton("Watch")) symbolWatches_.insert(name);
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (loadedSymbols_.empty()) ImGui::TextDisabled("Compile and load assembly to populate symbols.");
+    }
+    if (ImGui::CollapsingHeader("Watches", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const auto name = debugName(debugAddress_);
+        ImGui::BeginDisabled(!loadedSymbols_.contains(name) || symbolWatches_.contains(name));
+        if (ImGui::Button("Watch symbol")) symbolWatches_.insert(name);
+        ImGui::EndDisabled();
+        std::optional<std::string> remove;
+        for (const auto& watch : symbolWatches_) {
+            ImGui::PushID(watch.c_str());
+            const auto value = symbolValue(watch);
+            const auto symbol = loadedSymbols_.find(watch);
+            if (value)
+                ImGui::Text("%s = %04X (%u) [%s]", watch.c_str(), *value, *value,
+                    symbolKindName(symbol->second.kind));
+            else
+                ImGui::TextDisabled("%s: unavailable in the loaded program", watch.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove")) remove = watch;
+            ImGui::PopID();
+        }
+        if (remove) symbolWatches_.erase(*remove);
     }
     if (ImGui::CollapsingHeader("Watchpoints", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Combo("Space", &watchSpace_, "Internal RAM/SFR changes\0External data\0Program memory\0");
@@ -162,7 +415,10 @@ void Emu51ImguiApp::drawDebugger()
         ImGui::SameLine();
         ImGui::Checkbox("Writes", &watchWrite_);
         ImGui::EndDisabled();
-        ImGui::BeginDisabled(!address || (watchSpace_ == 0 && *address > 255) ||
+        const auto symbol = loadedSymbols_.find(debugName(debugAddress_));
+        const bool bitSymbol = symbol != loadedSymbols_.end() && symbol->second.kind == emu51_asm::SymbolKind::bit;
+        if (bitSymbol) ImGui::TextDisabled("Use Watches for a bit value, or enter its byte address for a watchpoint.");
+        ImGui::BeginDisabled(!address || bitSymbol || (watchSpace_ == 0 && *address > 255) ||
             (watchSpace_ != 0 && !watchRead_ && !watchWrite_));
         if (ImGui::Button("Add watchpoint"))
             watchpoints_.push_back({static_cast<WatchSpace>(watchSpace_), static_cast<std::uint16_t>(*address),

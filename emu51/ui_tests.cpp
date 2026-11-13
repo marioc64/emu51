@@ -327,7 +327,7 @@ struct Emu51ImguiAppTestAccess {
         const fs::path source = root / "debug.asm";
         write(source, "mov a,#1\nloop: inc a\nsjmp loop\nend\n");
         check(app->loadProgram(source.string().c_str(), true, true), "Debugger source loads");
-        check(app->sourceLines_.at(2).file == source.string() && app->sourceLines_.at(2).line == 2,
+        check(app->sourceLines_.at(2).file == fs::weakly_canonical(source).string() && app->sourceLines_.at(2).line == 2,
             "Assembler emits address-to-source mappings");
         app->toggleBreakpoint(2);
         app->toggleRun();
@@ -374,7 +374,7 @@ struct Emu51ImguiAppTestAccess {
         write(root / "debug.inc", "entry: inc a\nret\n");
         write(source, "org 100h\nlcall entry\n$include(debug.inc)\nend\n");
         check(app->loadProgram(source.string().c_str(), true, true) &&
-            app->sourceLines_.at(0x103).file == (root / "debug.inc").string() &&
+            app->sourceLines_.at(0x103).file == fs::weakly_canonical(root / "debug.inc").string() &&
             app->sourceLines_.at(0x103).line == 1, "Source mappings preserve included file locations");
         app->cpu_.writeProg(0x103, 0);
         check(!app->sourceLines_.contains(0x103), "Program writes invalidate modified source locations");
@@ -389,6 +389,329 @@ struct Emu51ImguiAppTestAccess {
         app->drawDebugger();
         app->drawDisassemblyView(app->disassemblyViews_.front());
         ImGui::Render();
+    }
+
+    static void test_symbolic_debugging(const fs::path& root)
+    {
+        const fs::path source = root / "symbols.asm";
+        const fs::path included = root / "symbols.inc";
+        const std::string text = "counter data 30h\nflag bit 7\nready bit 90h\nlimit equ 1234h\n"
+            "org 100h\nstart: mov a,#1\nloop: inc a\nsjmp loop\n$include(symbols.inc)\nend\n";
+        write(source, text);
+        write(included, "helper: ret\n");
+        auto app = create();
+        app->requestProgramLoadFromPath(source, true);
+        check(app->resolveDebugAddress("  LoOp ") == 0x102 &&
+            app->resolveDebugAddress("counter") == 0x30 && app->resolveDebugAddress("helper") == 0x105,
+            "File loading preserves case-insensitive symbols from the source and includes");
+        check(app->resolveDebugAddress("0x1234") == 0x1234 && app->resolveDebugAddress("ffff") == 0xffff &&
+            !app->resolveDebugAddress("10000") && !app->resolveDebugAddress("missing") &&
+            !app->resolveDebugAddress("loop+1"), "Symbol lookup preserves bounded hex input and rejects unknown expressions");
+        check(app->labelAtAddress(0x102) == "LOOP" && app->labelAtAddress(0x30).empty(),
+            "Disassembly labels use program labels rather than data symbols at the same numeric address");
+        app->cpu_.SFR[0x30] = 0xab;
+        app->cpu_.SFR[0x20] = 0x80;
+        app->cpu_.SFR[0x90] = 1;
+        check(app->symbolValue("COUNTER") == 0xab && app->symbolValue("FLAG") == 1 &&
+            app->symbolValue("READY") == 1 && app->symbolValue("LIMIT") == 0x1234 &&
+            app->symbolValue("START") == 0x74 && !app->symbolValue("MISSING"),
+            "Symbol watches distinguish RAM, bit RAM, SFR bits, constants and program bytes");
+        app->instructionExecuting_ = true;
+        app->watchpoints_ = {{Emu51ImguiApp::WatchSpace::Program, 0x100, true, false, true}};
+        (void)app->symbolValue("START");
+        check(app->pendingWatchpointStop_.empty(), "Named value inspection does not trigger watchpoints");
+        app->instructionExecuting_ = false;
+        app->watchpoints_.clear();
+        app->trackAssemblyEditorChanges();
+        check(app->editorMatchesLoadedSource_ && app->editorLineAddress(6) == 0x100 &&
+            app->editorLineAddress(7) == 0x102 && !app->editorLineAddress(5),
+            "Source gutter resolves instruction starts and ignores directives");
+        app->toggleEditorBreakpoint(7);
+        app->cpu_.PC = 0x100; app->toggleRun(); app->runSteps(100);
+        check(!app->running_ && app->cpu_.PC == 0x102 && app->cpu_.Acc == 1,
+            "An editor gutter breakpoint stops at the corresponding loaded instruction");
+        app->toggleEditorBreakpoint(7);
+        app->assemblyEditor_->SetCursor(7, 0);
+        app->runToEditorCursor(); app->runSteps(100);
+        check(!app->running_ && app->cpu_.PC == 0x103,
+            "Run to editor cursor uses the instruction start rather than an operand byte");
+
+        app->assemblyEditor_->SetText("; inserted line\n" + text);
+        app->trackAssemblyEditorChanges();
+        check(!app->editorMatchesLoadedSource_ && !app->editorLineAddress(7),
+            "Editing source disables stale gutter locations immediately");
+        check(app->saveAssemblyEditorFileToPath(source), "Changed source saves successfully");
+        app->runToEditorCursor();
+        check(!app->running_ && !app->runToAddress_ && !app->editorMatchesLoadedSource_,
+            "Saving changed source does not make old debug locations valid again");
+        app->showSource(0x102);
+        check(app->statusMessage_.find("differs") != std::string::npos,
+            "Show source explains a mismatch instead of navigating to an obsolete line");
+        app->compileAndLoadAssemblyEditor();
+        check(app->editorMatchesLoadedSource_ && app->editorLineAddress(8) == 0x102,
+            "Compile and load replaces snapshots and enables current source locations");
+
+        write(included, "; changed on disk\nhelper: ret\n");
+        app->showSource(0x105);
+        check(!app->editorMatchesLoadedSource_ && app->statusMessage_.find("differs") != std::string::npos,
+            "Included files changed on disk cannot silently reuse loaded source locations");
+        write(included, "helper: ret\n");
+        check(app->loadAssemblyFileIntoEditor(included), "Original include can be reopened");
+        app->trackAssemblyEditorChanges();
+        check(app->editorLineAddress(1) == 0x105, "Matching include files support source gutter breakpoints");
+        check(app->loadAssemblyFileIntoEditor(source), "Main source can be reopened");
+        app->trackAssemblyEditorChanges();
+        app->cpu_.writeProg(0x101, 2);
+        check(!app->sourceLines_.contains(0x100) && !app->sourceLines_.contains(0x101) &&
+            !app->editorLineAddress(7) && app->editorLineAddress(8) == 0x102,
+            "Editing an operand invalidates its whole instruction while preserving unaffected locations");
+        app->symbolWatches_.insert("COUNTER");
+        const auto previous = app->resolveDebugAddress("loop");
+        check(!app->loadProgram((root / "absent.asm").string().c_str(), true, true) &&
+            app->resolveDebugAddress("loop") == previous,
+            "Failed program preparation preserves loaded symbols");
+        const fs::path binary = root / "symbols.bin";
+        write(binary, std::string(1, '\0'));
+        check(app->loadProgram(binary.string().c_str(), false, false) && app->loadedSymbols_.empty() &&
+            app->sourceAddresses_.empty() && app->loadedSources_.empty() && !app->symbolValue("COUNTER") &&
+            app->symbolWatches_.contains("COUNTER"),
+            "Overlaying a binary clears stale debug metadata and leaves watches visibly unresolved");
+
+        edit(*app, {}, "org 200h\nnew_label: nop\nend\n");
+        app->compileAndLoadAssemblyEditor();
+        check(app->resolveDebugAddress("new_label") == 0x200 && app->editorMatchesLoadedSource_ &&
+            app->editorLineAddress(2) == 0x200 && !app->resolveDebugAddress("loop"),
+            "Unsaved editor builds carry their own symbols and source snapshots");
+        app->clearMemory();
+        check(app->loadedSymbols_.empty() && !app->editorLineAddress(2),
+            "Clearing program memory clears symbolic debug metadata");
+        write(source, "\xef\xbb\xbf\torg 300h\r\n\tstart: nop\r\nend\r\n");
+        app->unsavedChangesPrompt_ = [] { return Choice::Discard; };
+        app->requestProgramLoadFromPath(source, true);
+        app->trackAssemblyEditorChanges();
+        check(app->editorMatchesLoadedSource_ && app->editorLineAddress(2) == 0x300,
+            "BOM, CRLF and tab normalization do not cause false source mismatches");
+        edit(*app, {}, "org 0ffffh\nboundary: mov a,#1\nend\n");
+        app->compileAndLoadAssemblyEditor();
+        check(app->editorLineAddress(2) == 0xffff,
+            "A wrapped instruction maps its source line to the opcode rather than its lower-address operand");
+        app->cpu_.writeProg(0, 2);
+        check(!app->editorLineAddress(2) && !app->sourceLines_.contains(0xffff),
+            "Operand edits invalidate wrapped instructions as well");
+        edit(*app, {}, "face: nop\nend\n");
+        app->compileAndLoadAssemblyEditor();
+        check(app->resolveDebugAddress("face") == 0 && app->resolveDebugAddress("0xface") == 0xface,
+            "Symbol names take precedence over bare hex; explicit hex remains unambiguous");
+    }
+
+    static void test_project_sessions(const fs::path& root)
+    {
+        const auto folder = root / "project folder";
+        fs::create_directory(folder);
+        const auto source = folder / "main.asm";
+        const auto binary = folder / "overlay.bin";
+        const auto editor = folder / "edit.asm";
+        const auto project = folder / "demo.emu51";
+        write(source, "org 100h\nbase: mov a,#1\nend\n");
+        write(binary, std::string(1, static_cast<char>(0xa5)));
+        const std::string built = "counter data 30h\norg 200h\nentry: inc counter\nret\nend\n";
+        const std::string draft = "; draft with quotes \" and backslash \\\n" + built;
+        write(editor, built);
+        auto app = create();
+        app->setUnifiedMode(false);
+        app->requestProgramLoadFromPath(source, true);
+        check(app->loadProgram(binary.string().c_str(), false, false, 0x400), "Project binary overlay loads");
+        edit(*app, editor, built);
+        app->compileAssemblyEditor();
+        app->loadCompiledAssemblyEditorOutput();
+        edit(*app, editor, draft);
+        app->breakpoints_ = {0x100, 0x200};
+        app->watchpoints_ = {{Emu51ImguiApp::WatchSpace::Data, 0x4567, true, true, false},
+            {Emu51ImguiApp::WatchSpace::Internal, 0x30, false, true, true}};
+        app->symbolWatches_ = {"COUNTER", "MISSING"};
+        app->cycleExact_ = false; app->crystalMHz_ = 11.0592; app->stepsPerFrame_ = 123;
+        app->debuggerOpen_ = true; app->traceEnabled_ = true;
+        app->assemblyEditor_->SetCursor(3, 2);
+        app->cpu_.PC = 0x1234; app->running_ = true; app->instructionCount_ = 42;
+        check(app->saveProjectToPath(project) && app->running_ && app->cpu_.PC == 0x1234 &&
+            app->assemblyEditorState_.dirty && read(editor) == built,
+            "Saving a project captures drafts without rewriting source files or stopping execution");
+        std::string error;
+        auto decoded = emu51LoadProject(project, error);
+        check(decoded && decoded->programs.size() == 3 && decoded->programs[1].binaryAddress == 0x400 &&
+            decoded->programs[2].fromEditor && decoded->programs[2].sourceText == built,
+            "Projects retain file, binary overlay and editor build recipes in load order");
+        const auto document = read(project);
+        check(document.find("\"path\":\"main.asm\"") != std::string::npos &&
+            document.find(folder.generic_string()) == std::string::npos,
+            "Project files store portable relative paths");
+        check(!app->saveProjectToPath(source) && read(source).find("org 100h") == 0,
+            "Saving a project cannot overwrite a referenced program source");
+
+        const auto moved = root / "relocated project";
+        fs::rename(folder, moved);
+        auto restored = create();
+        check(restored->openProjectFromPath(moved / "demo.emu51"), "Projects reopen after moving their folder");
+        check(!restored->unifiedMode_ && !restored->running_ && restored->cpu_.PC == 0 &&
+            restored->instructionCount_ == 0 && restored->cycleCount_ == 0 && restored->cpu_.readProg(0x100) == 0x74 &&
+            restored->cpu_.readProg(0x400) == 0xa5 && restored->cpu_.readProg(0x200) == 0x05 &&
+            restored->cpu_.readData(0x100) == 0,
+            "Project restoration rebuilds overlays in the selected memory mode and resets execution paused");
+        check(!restored->cycleExact_ && restored->crystalMHz_ == 11.0592 && restored->stepsPerFrame_ == 123 &&
+            restored->breakpoints_ == app->breakpoints_ && restored->watchpoints_.size() == 2 &&
+            !restored->watchpoints_[0].enabled && restored->watchpoints_[0].read && restored->watchpoints_[0].write &&
+            restored->symbolWatches_ == app->symbolWatches_ && restored->debuggerOpen_ && restored->traceEnabled_,
+            "Project execution settings, breakpoints, watches and watchpoint flags round-trip");
+        int line = 0, column = 0;
+        restored->assemblyEditor_->GetMainCursor(line, column);
+        check(restored->assemblyEditor_->GetText() == draft && restored->assemblyEditorState_.dirty &&
+            restored->assemblyEditorState_.sourcePath == fs::weakly_canonical(moved / "edit.asm").string() && line == 3 && column == 2 &&
+            restored->resolveDebugAddress("entry") == 0x200 && !restored->editorMatchesLoadedSource_,
+            "Projects restore the editor draft and cursor independently of the last loaded assembly");
+        check(restored->loadedProgramPath_ == fs::weakly_canonical(moved / "main.asm").string(),
+            "Projects preserve the original reload target separately from overlays");
+
+        restored->unsavedChangesPrompt_ = [] { return Choice::Cancel; };
+        restored->cpu_.PC = 0x2345; restored->running_ = true; restored->cycleCount_ = 99;
+        const auto memory = restored->romMemory_;
+        const auto previousPath = restored->projectPath_;
+        check(!restored->openProjectFromPath(moved / "demo.emu51") && restored->running_ &&
+            restored->cpu_.PC == 0x2345 && restored->cycleCount_ == 99 && restored->romMemory_ == memory,
+            "Canceling the unsaved-source guard preserves the live project");
+        restored->projectPathPicker_ = [](bool) { return fs::path{}; };
+        restored->saveProjectAs(); restored->requestOpenProject();
+        check(restored->projectPath_ == previousPath && restored->running_,
+            "Canceling either project picker leaves the current project selected");
+        fs::rename(moved / "overlay.bin", moved / "missing.bin");
+        check(!restored->openProjectFromPath(moved / "demo.emu51") && restored->romMemory_ == memory &&
+            restored->cpu_.PC == 0x2345 && restored->running_ && restored->projectPath_ == previousPath,
+            "Missing project inputs cannot reset the current CPU, memory or project path");
+        fs::rename(moved / "missing.bin", moved / "overlay.bin");
+        for (const auto& [from, to] : std::vector<std::pair<std::string, std::string>>{
+                {"\"version\":1", "\"version\":99"}, {"\"crystal_mhz\":11.0592", "\"crystal_mhz\":-1"},
+                {"\"binary_address\":1024", "\"binary_address\":65536"},
+                {"\"space\":1", "\"space\":3"}, {"\"breakpoints\":[256,512]", "\"breakpoints\":[-1]"},
+                {"\"version\":1", "\"version\":1,\"version\":1"}}) {
+            std::string malformed = document;
+            const auto at = malformed.find(from);
+            check(at != std::string::npos, "Invalid-project fixture locates its target field");
+            if (at == std::string::npos) continue;
+            malformed.replace(at, from.size(), to);
+            write(moved / "bad.emu51", malformed);
+            check(!restored->openProjectFromPath(moved / "bad.emu51") && restored->cpu_.PC == 0x2345 &&
+                restored->running_ && restored->romMemory_ == memory && restored->projectPath_ == previousPath,
+                "Invalid versions, settings, addresses, watchpoints and duplicate keys cannot partially restore a project");
+        }
+        decoded = emu51LoadProject(moved / "demo.emu51", error);
+        check(decoded.has_value(), "Moved project remains readable after validation errors");
+        if (decoded) {
+            decoded->editor.text.assign(1024 * 1024 + 1, 'x');
+            check(!emu51SaveProject(moved / "demo.emu51", *decoded, error) && read(moved / "demo.emu51") == document,
+                "Oversized project text fails without truncating the existing project file");
+        }
+        restored->unsavedChangesPrompt_ = [] { return Choice::Discard; };
+        check(restored->openProjectFromPath(moved / "demo.emu51"), "A project remains usable after canceled and failed opens");
+
+        auto untitled = create();
+        untitled->untitledSourceBaseDirectory_ = moved.string();
+        write(moved / "local.inc", "value equ 42\n");
+        edit(*untitled, {}, "$include(local.inc)\nentry: mov a,#value\nend\n");
+        untitled->compileAndLoadAssemblyEditor();
+        check(untitled->saveProjectToPath(moved / "untitled.emu51"), "Untitled builds can be saved in projects");
+        auto recovered = create();
+        check(recovered->openProjectFromPath(moved / "untitled.emu51") && recovered->assemblyEditorState_.dirty &&
+            recovered->assemblyEditorState_.sourcePath.empty() && recovered->editorMatchesLoadedSource_ &&
+            recovered->cpu_.readProg(1) == 42,
+            "Untitled editor builds restore symbols and relative include resolution");
+        recovered->compileAndLoadAssemblyEditor();
+        check(recovered->cpu_.readProg(1) == 42, "Restored untitled source can be rebuilt with its original include directory");
+
+        auto clean = create();
+        clean->requestProgramLoadFromPath(moved / "main.asm", true);
+        int pickers = 0;
+        clean->projectPathPicker_ = [&](bool save) {
+            check(save, "First Save project requests a save picker");
+            ++pickers;
+            return moved / "clean.EMU51";
+        };
+        clean->saveProject();
+        clean->stepsPerFrame_ = 321;
+        clean->saveProject();
+        check(pickers == 1 && fs::is_regular_file(moved / "clean.EMU51"),
+            "Save project remembers its path and subsequent saves do not open a picker");
+        write(moved / "main.asm", "org 100h\nbase: mov a,#9\nend\n");
+        auto current = create();
+        current->requestProgramLoadFromPath(moved / "clean.EMU51", true);
+        check(current->cpu_.readProg(0x101) == 9 && current->stepsPerFrame_ == 321 &&
+            !current->assemblyEditorState_.dirty && current->assemblyEditor_->GetText().find("#9") != std::string::npos,
+            "Clean editor files and program inputs reopen from disk; project extensions are case-insensitive");
+        edit(*current, moved / "main.asm", "org 100h\nbase: mov a,#7\nend\n");
+        current->unsavedChangesPrompt_ = [] { return Choice::Save; };
+        check(current->openProjectFromPath(moved / "clean.EMU51") && current->cpu_.readProg(0x101) == 7 &&
+            current->assemblyEditor_->GetText().find("#7") != std::string::npos && !current->assemblyEditorState_.dirty,
+            "Saving the old editor during project opening revalidates inputs before applying them");
+        edit(*current, {}, "unsaved source\n");
+        current->savePathPicker_ = [] { return fs::path{}; };
+        current->cpu_.PC = 0x3456;
+        check(!current->openProjectFromPath(moved / "clean.EMU51") && current->cpu_.PC == 0x3456 &&
+            current->assemblyEditor_->GetText() == "unsaved source\n",
+            "Canceling Save As in the unsaved guard also cancels project replacement");
+    }
+
+    static void test_recent_projects(const fs::path& root)
+    {
+        auto app = create();
+        check(app->recentProjectFileCount() == 0 && app->recentProjectFilePath(-1).empty() &&
+            app->recentProjectFilePath(0).empty(), "New sessions have an empty, bounds-checked recent projects list");
+        for (int i = 0; i < 12; ++i)
+            check(app->saveProjectToPath(root / ("recent-" + std::to_string(i) + ".emu51")),
+                "Saving projects populates recent projects");
+        check(app->recentProjectFileCount() == 10 &&
+            fs::path(app->recentProjectFilePath(0)).filename() == "recent-11.emu51" &&
+            fs::path(app->recentProjectFilePath(9)).filename() == "recent-2.emu51",
+            "Recent projects retain the ten most recently used entries");
+        const auto selected = app->recentProjectFilePath(3);
+        app->openRecentProjectFile(3);
+        check(app->projectPath_ == selected && app->recentProjectFilePath(0) == selected && app->recentProjectFileCount() == 10,
+            "Opening a recent project selects it and moves its existing entry to the front");
+        check(app->saveProjectToPath(selected) && app->recentProjectFilePath(0) == selected && app->recentProjectFileCount() == 10,
+            "Saving the same project deduplicates its recent entry");
+        std::ostringstream stored;
+        app->saveRecentProjectPaths(stored);
+        auto other = create();
+        std::istringstream input(stored.str());
+        other->loadRecentProjectPaths(input);
+        check(other->recentProjectPaths_ == app->recentProjectPaths_, "Recent projects survive persistence round-trips");
+        std::istringstream duplicates("\n" + selected + "\r\n" + selected + "\n" + stored.str());
+        other->loadRecentProjectPaths(duplicates);
+        check(other->recentProjectPaths_ == app->recentProjectPaths_,
+            "Loading recent projects ignores blank and duplicate entries and accepts CRLF");
+        const auto before = app->recentProjectPaths_;
+        app->cpu_.PC = 0x1234;
+        app->openRecentProjectFile(-1); app->openRecentProjectFile(10);
+        check(app->recentProjectPaths_ == before && app->cpu_.PC == 0x1234,
+            "Invalid recent-project indices do not change the live session");
+        check(!app->openProjectFromPath(root / "missing-recent.emu51") && app->recentProjectPaths_ == before,
+            "Failed project opens do not add to or reorder recent projects");
+        check(!app->saveProjectToPath(root / "absent-folder" / "failed.emu51") && app->recentProjectPaths_ == before,
+            "Failed saves do not add to recent projects");
+        fs::remove(before[1]);
+        app->openRecentProjectFile(1);
+        check(app->cpu_.PC == 0x1234 && app->recentProjectPaths_ == before,
+            "A missing recent project leaves the list and current machine intact");
+        edit(*app, {}, "unsaved\n");
+        app->unsavedChangesPrompt_ = [] { return Choice::Cancel; };
+        app->openRecentProjectFile(2);
+        check(app->cpu_.PC == 0x1234 && app->recentProjectPaths_ == before && app->assemblyEditorState_.dirty,
+            "Recent project opening uses the unsaved-source guard and canceled opens preserve recent ordering");
+        app->rememberRecentProgramPath(root / "program.hex");
+        const auto programs = app->recentProgramPaths_;
+        app->clearRecentProjectFiles();
+        std::ostringstream cleared;
+        app->saveRecentProjectPaths(cleared);
+        check(app->recentProjectFileCount() == 0 && cleared.str().empty() && app->recentProgramPaths_ == programs &&
+            app->projectPath_ == selected && app->assemblyEditorState_.dirty,
+            "Clear recent projects persists an empty list without touching program recents, the current project or editor");
     }
 
     static void test_execution_servicing()
@@ -510,6 +833,9 @@ int main()
     Emu51ImguiAppTestAccess::test_disassembly_follow_pc_persistence();
     Emu51ImguiAppTestAccess::test_in_memory_compilation();
     Emu51ImguiAppTestAccess::test_debugger(root);
+    Emu51ImguiAppTestAccess::test_symbolic_debugging(root);
+    Emu51ImguiAppTestAccess::test_project_sessions(root);
+    Emu51ImguiAppTestAccess::test_recent_projects(root);
     Emu51ImguiAppTestAccess::test_execution_servicing();
     Emu51ImguiAppTestAccess::test_recovery_integration(root);
     fs::remove_all(root);

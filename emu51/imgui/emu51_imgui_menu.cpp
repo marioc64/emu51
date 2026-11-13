@@ -71,6 +71,23 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 		return;
 
 	if (ImGui::BeginMenu("File")) {
+		if (ImGui::MenuItem("Open project...")) target.requestOpenProject();
+		const int recentProjectCount = target.recentProjectFileCount();
+		if (ImGui::BeginMenu("Open Recent Projects", recentProjectCount > 0)) {
+			for (int i = 0; i < recentProjectCount; ++i) {
+				const std::string path = target.recentProjectFilePath(i);
+				const auto filename = std::filesystem::path(path).filename().string();
+				const auto label = std::to_string(i + 1) + " " + filename + "###recent_project_" + std::to_string(i);
+				if (ImGui::MenuItem(label.c_str())) target.openRecentProjectFile(i);
+				if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", path.c_str());
+			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Clear Menu")) target.clearRecentProjectFiles();
+			ImGui::EndMenu();
+		}
+		if (ImGui::MenuItem("Save project")) target.saveProject();
+		if (ImGui::MenuItem("Save project as...")) target.saveProjectAs();
+		ImGui::Separator();
 		if (ImGui::MenuItem("Open program..."))
 			target.requestOpenProgram();
 		if (ImGui::MenuItem("Load program..."))

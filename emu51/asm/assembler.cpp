@@ -718,6 +718,7 @@ private:
         for (const auto& [name, info] : symbols_) {
             result.symbols.insert({name, info.public_symbol});
         }
+        result.image.symbols = result.symbols;
         return result;
     }
 
@@ -753,7 +754,11 @@ private:
                         const std::string& source,
                         const fs::path& base_directory,
                         std::vector<fs::path>& include_stack) {
-        std::istringstream input(source);
+        image_.sources[display_name] = source;
+        // Keep the original text for debug matching while accepting the same
+        // UTF-8 BOM that the editor strips when opening a source or include.
+        const bool has_bom = source.compare(0, 3, "\xef\xbb\xbf") == 0;
+        std::istringstream input(has_bom ? source.substr(3) : source);
         std::string line;
         std::size_t line_number = 0;
         while (std::getline(input, line)) {
@@ -1361,6 +1366,7 @@ private:
                     add_error(statement.location, error);
                     return;
                 }
+                image_.instructionAddresses.insert(pc);
                 for (std::size_t i = 0; i < encoded.size(); ++i) {
                     emit_byte(statement.location, static_cast<std::uint16_t>(pc + i), encoded[i]);
                 }

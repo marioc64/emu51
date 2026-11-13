@@ -17,6 +17,13 @@ public:
 	virtual ~Emu51ImguiMenuTarget() = default;
 
 	virtual void requestOpenProgram() = 0;
+	virtual void requestOpenProject() = 0;
+	virtual void saveProject() = 0;
+	virtual void saveProjectAs() = 0;
+	virtual int recentProjectFileCount() const = 0;
+	virtual const std::string& recentProjectFilePath(int index) const = 0;
+	virtual void openRecentProjectFile(int index) = 0;
+	virtual void clearRecentProjectFiles() = 0;
 	virtual void requestLoadProgram() = 0;
 	virtual bool hasLoadedProgram() const = 0;
 	virtual void reloadProgram() = 0;

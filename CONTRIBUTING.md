@@ -34,7 +34,7 @@ is not a complete secret scanner or license audit.
 | `emu51/imgui/` | Shared application state, panes, menus, pacing, and settings |
 | `emu51/imgui/macos/` | Cocoa menus, Metal frontend, and native execution timer |
 | `emu51/imgui/emu51_imgui_glfw.cpp` | Shared Linux/Windows GLFW/OpenGL frontend |
-| `emu51/io/` | Atomic source saves and editor recovery sessions |
+| `emu51/io/` | Atomic saves, editor recovery, and project file encoding |
 | `progs/` | Generic assembly, HEX, and binary examples |
 | `resources/` | Shared application artwork and Linux desktop integration |
 | `cmake/` | Packaging, deployment, manifest, and relocation checks |
@@ -74,11 +74,24 @@ machine. Callers reset only after successful preparation, then apply bytes with
 `apply_program_image()`. The GUI owns reset, reload-target, and recent-file
 behavior. Preserve that separation when adding formats or entry-point handling.
 
+`AssemblyImage` retains symbols, exact source text for the main file and includes,
+and instruction start addresses alongside byte-to-source mappings. `AssembleResult`
+also retains its existing symbols map for API compatibility. HEX/BIN serialization
+emits only bytes. Both file loading and editor compilation pass the same debug
+metadata to the GUI; an overlay replaces the previous image's debug information.
+
 Editor compilation caches an `AssemblyImage` per application instance. Buffer
 changes, failed compilation, and path changes invalidate the cache. Loading the
 image is an in-memory operation. The GUI retains source locations from the last
-loaded assembly image; writes invalidate mappings at modified program addresses.
-These mappings do not verify the current on-disk source against the loaded code.
+loaded assembly image; a program write invalidates all mappings from the affected
+source line, including operand bytes and wrapped instructions. Editor source
+actions require normalized text equality against the captured source; they do not
+rely on the saved/dirty flag. Source files are compared when opened, without a
+background disk watcher. Symbols resolve case-insensitively, before bare hex.
+Named value watches are passive; DATA/BIT use the internal RAM/SFR mapping, EQU
+shows its constant, and labels show a program byte. Breakpoints remain numeric.
+Editor gutter controls use the vendored editor's public decorator/context-menu
+callbacks; platform menu and shortcut ownership stays unchanged.
 
 ## UI and platform conventions
 
@@ -107,6 +120,28 @@ thread unless a future change introduces explicit synchronization and snapshots.
 See the timing document for budget, stepping, and suspension rules.
 
 ## Files, preferences, and recovery
+
+`io/emu51_project.*` defines the versioned project model and bounded KaSON
+schemas. It validates settings, addresses, collection sizes, and watchpoint
+semantics before returning a project. Paths are stored as relative UTF-8 paths
+where possible, with canonical parent directories handling symlinked paths.
+Project writes share the editor's atomic replacement implementation.
+
+`imgui/emu51_imgui_project.cpp` owns project dialogs, capture, and restoration.
+Successful program/editor-image loads retain a load recipe; full machine/program
+clears discard it. Opening prepares every image and editor file before resetting
+the machine. If the unsaved-source guard saves an input file, preparation runs
+again before applying. Restoration starts paused, clears transient debugger
+actions/dialogs, and does not persist the project's execution settings globally.
+Unsaved editor text is embedded separately from compiled source, so source
+matching still detects drafts that differ from loaded code. Untitled builds
+retain their include base directory. Projects preserve source/load recipes,
+not runtime CPU/memory snapshots or per-user window layouts.
+
+Recent projects are kept separately from recent programs in `recent_projects.txt`.
+Successful opens and saves update a deduplicated ten-entry list, persisted through
+atomic replacement. Failed/canceled operations preserve the order; the native
+and ImGui recent-project menus use the same guarded project-opening path.
 
 Source saves use sibling temporary files and atomic replacement; POSIX
 permissions and symlinks are preserved. Cancellation or write failure must leave

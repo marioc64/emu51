@@ -15,6 +15,8 @@ with a reusable emulation engine and a Dear ImGui interface. See
 - Run, pause, reset, Step In, Step Over, and Step Out.
 - Execution breakpoints, memory watchpoints, instruction tracing, and assembly
   source locations.
+- Symbol lookup, named value watches, and source editor gutter breakpoints.
+- Portable project sessions with program overlays, editor drafts, and debugger settings.
 - Assembly editing with syntax highlighting, diagnostics, formatting, and
   compilation directly into emulator memory.
 - Save/discard/cancel protection, atomic source saves, and recovery drafts.
@@ -99,6 +101,46 @@ menu to change modes, clear memory, or fill a range. The generic examples under
 `progs/` do not require proprietary board firmware; `mtask2.asm` expects unified
 memory, as described in its source comments.
 
+## Project sessions
+
+Use **File → Save project** to create a `.emu51` project, **Save project as...**
+to save a separate copy, and **Open project...** to restore it. These commands
+are available in the native macOS menu and the Linux/Windows ImGui menu. Save
+and Save As keep their existing assembly-source shortcuts. The window title
+shows the selected project's filename.
+
+**File → Open Recent Projects** lists the ten most recently opened or saved
+projects, with the newest first. **Clear Menu** clears this list independently
+of recent programs. The list is saved between application sessions; opening a
+recent project uses the same validation and unsaved-source guard as Open project.
+
+Projects retain the program load sequence, binary load addresses, reload target,
+unified/separate memory mode, execution settings, numeric breakpoints,
+watchpoints, named watches, debugger visibility, and the trace-recording choice. They also
+retain the editor's file, cursor, visibility, and unsaved text. Saving a project
+does not save over source files or clear the editor's modified flag. Restored
+drafts remain modified and use the normal save/discard/cancel protection.
+
+Paths are relative to the project file where possible; keep referenced files
+with the project when moving its folder. File-based program loads and clean
+editor buffers are reread from disk. In-memory assembly loads retain the main
+source text that was compiled; includes still resolve from the source directory
+and packaged modules. The restored editor draft may differ from the loaded
+assembly, so normal source-matching checks still apply.
+
+Opening first validates all inputs and asks about any current unsaved source.
+An invalid project, missing file, assembly error, or canceled save leaves the
+current machine intact. A successful open resets the CPU and memory, reapplies
+the saved loads in order, and starts paused. Live CPU/register state, runtime
+memory changes, trace history, and manual memory edits are not saved. Window
+layouts continue to use the existing per-user preferences. Project execution
+settings apply to the session without overwriting global preferences.
+
+Project JSON is versioned and saved through atomic replacement. Current limits
+are 32 program loads, 256 KiB per retained assembly source, a 1 MiB editor buffer/draft,
+1,024 watchpoints and named watches each, and a 32 MiB project file. Exceeding a
+limit fails the save without replacing an existing project.
+
 ## Assembly editor
 
 The Build menu provides three actions:
@@ -131,6 +173,20 @@ Double-click an address in a disassembly view to toggle a breakpoint. Its contex
 menu offers **Run to cursor** and **Show source**. The Debugger window also offers
 run-to-editor-cursor and breakpoint/watchpoint controls.
 
+Assembly loads retain symbols from the main file and includes. Labels appear
+beside their addresses in disassembly. The Debugger's **Address or symbol** field
+and the disassembly **G** dialog accept case-insensitive names such as `main_loop`
+as well as hexadecimal addresses. Names take precedence over bare hex; use an
+explicit `0x` prefix to disambiguate an address such as `0xFACE`. Breakpoints
+resolve to fixed addresses and are not automatically relocated by later builds.
+
+Expand **Symbols** to filter names and add **Watches**. These show internal
+RAM/SFR bytes for `DATA`, individual bits for `BIT`, constant values for `EQU`,
+and program bytes for labels. Watches follow names in the current loaded image;
+missing names are marked unavailable. They inspect values without stopping the
+CPU. **Watchpoints** below control execution stops and use the selected memory
+space; bit symbols must be inspected through Watches or watched by byte address.
+
 | Watchpoint space | Behavior |
 | --- | --- |
 | External data | Read and/or write accesses during CPU execution |
@@ -143,9 +199,15 @@ watchpoints. Breakpoints stop before an instruction; watchpoints stop after the
 instruction finishes. Step In bypasses the current execution breakpoint once.
 
 Source locations refer to the most recently loaded assembly image, including
-included files. The matching, unmodified editor buffer shows the PC line in dark
-green. Recompile and load after changing source; locations are not a live source
-checksum check. HEX and binary images contain no source map.
+included files. Click the editor gutter beside an instruction to toggle its
+breakpoint, or right-click its line number for breakpoint/run-to-line controls.
+The matching editor buffer shows the PC line in dark green. The editor's text
+must match the source captured during assembly for gutter controls, PC highlighting,
+and source navigation; tab, CRLF, and BOM normalization is allowed. Saving changed
+text alone does not restore matching locations: compile and load again. Included
+files are checked when opened for source navigation; files are not monitored in
+the background. Program writes invalidate source locations for the affected line.
+HEX/binary loads replace assembly debug information with an empty symbol/source map.
 
 Optional tracing retains the latest 4,096 instructions, including PC, three raw
 bytes starting at PC, next PC, cycle cost, A, PSW, and SP. Step Over/Out run as
@@ -196,7 +258,8 @@ Preferences use the per-user `emu51` directory:
 
 `settings.json` holds execution preferences. `imgui.ini` and
 `imgui_layout_state.txt` hold window/layout state, including each disassembly
-view's Follow PC choice. `recent_programs.txt` holds recent paths, and
+view's Follow PC choice. `recent_programs.txt` holds recent program paths,
+`recent_projects.txt` holds recent project paths, and
 `editor-recovery/` holds recovery sessions. Persistence can be unavailable if the
 configuration directory cannot be created.
 

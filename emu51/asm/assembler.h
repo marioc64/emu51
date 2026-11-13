@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -49,6 +50,11 @@ struct AssemblyImage {
     };
     std::map<std::uint16_t, std::uint8_t> bytes;
     std::map<std::uint16_t, SourceLine> sourceLines;
+    // Debug information travels with the exact image it describes. HEX/BIN
+    // serialization intentionally contains only bytes.
+    std::map<std::string, Symbol> symbols;
+    std::map<std::string, std::string> sources;
+    std::set<std::uint16_t> instructionAddresses;
 
     bool empty() const;
     std::uint16_t lowest_address() const;

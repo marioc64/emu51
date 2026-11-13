@@ -53,6 +53,7 @@ constexpr ImVec4 kDptrHeaderColor = ImVec4(0.55f, 0.8f, 1.0f, 1.0f);
 
 const std::vector<std::string> kProgramFileFilters = {
 	"Program files", "*.asm *.s03 *.hex *.ihx *.ihex *.bin",
+	"emu51 projects", "*.emu51",
 	"Assembler files", "*.asm *.s03",
 	"Intel HEX files", "*.hex *.ihx *.ihex",
 	"Raw binary files", "*.bin",
@@ -513,6 +514,7 @@ Emu51ImguiApp::Emu51ImguiApp(bool persistState)
 {
 	assemblyEditor_ = std::make_unique<TextEditor>();
 	emu51ConfigureAsmEditor(*assemblyEditor_);
+	configureEditorDebugger();
 	assemblyEditor_->SetTransactionCallback([this](std::vector<TextEditor::Change>&) {
 		markAssemblyEditorChanged();
 	});
@@ -521,6 +523,7 @@ Emu51ImguiApp::Emu51ImguiApp(bool persistState)
 	if (persistState_) {
 		loadExecutionSettings();
 		loadRecentProgramPaths();
+		loadRecentProjectPaths();
 		editorRecovery_ = Emu51EditorRecovery::create(emu51GetEditorRecoveryDirectory());
 		recoveryCheckPending_ = true;
 	}
@@ -723,6 +726,7 @@ bool Emu51ImguiApp::confirmAssemblyEditorChanges()
 void Emu51ImguiApp::markAssemblyEditorChanged()
 {
 	assemblyEditorState_.dirty = true;
+	editorMatchesLoadedSource_ = false;
 	editorDiagnostics_.clear();
 	assemblyEditorState_.compiledImage.reset();
 	assemblyEditor_->ClearMarkers();
@@ -740,6 +744,7 @@ void Emu51ImguiApp::trackAssemblyEditorChanges()
 		observedAssemblyEditorText_ = std::move(text);
 		markAssemblyEditorChanged();
 	}
+	updateEditorSourceMatch();
 }
 
 void Emu51ImguiApp::saveEditorRecovery()
@@ -811,7 +816,7 @@ void Emu51ImguiApp::recoverAssemblyEditor(const fs::path& root)
 
 std::string Emu51ImguiApp::windowTitle() const
 {
-	std::string path = loadedProgramPath_;
+	std::string path = projectPath_.empty() ? loadedProgramPath_ : projectPath_;
 	if (path.empty())
 		path = assemblyEditorState_.sourcePath;
 	if (path.empty())
@@ -1180,6 +1185,7 @@ void Emu51ImguiApp::drawAssemblyEditor()
 	if (!assemblyEditorState_.open || assemblyEditor_ == nullptr)
 		return;
 
+	trackAssemblyEditorChanges();
 	const PaneKey pane{PaneKey::Kind::AssemblyEditor, 0};
 	std::string title = "Assembly Editor";
 	if (!assemblyEditorState_.sourceName.empty()) {
@@ -1203,6 +1209,8 @@ void Emu51ImguiApp::drawAssemblyEditor()
 		ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 	notePaneActivity(pane, editorActive);
 
+	if (loadedSources_.contains(editorSourceKey()) && !editorMatchesLoadedSource_)
+		ImGui::TextWrapped("Source differs from the loaded program. Compile and Load to update source debugging.");
 	ImVec2 editorSize = ImGui::GetContentRegionAvail();
 	const bool showBuildStatus =
 		assemblyEditorState_.buildStatusOpen &&
@@ -1214,10 +1222,10 @@ void Emu51ImguiApp::drawAssemblyEditor()
 	if (showBuildStatus)
 		editorSize.y = std::max(0.0f, editorSize.y - buildStatusHeight);
 	updateAssemblyEditorDiagnostics(editorDiagnostics_);
-	if (!assemblyEditorState_.dirty) {
+	if (editorMatchesLoadedSource_) {
 		const auto source = sourceLines_.find(cpu_.PC);
 		if (source != sourceLines_.end() && source->second.line > 0 &&
-			(source->second.file == assemblyEditorState_.sourcePath || source->second.file == assemblyEditorState_.sourceName)) {
+			source->second.file == editorSourceKey()) {
 			assemblyEditor_->AddMarker(static_cast<int>(source->second.line - 1), kAssemblyPcHighlightColor,
 				kAssemblyPcHighlightColor, "Program counter", "Program counter");
 		}
@@ -1363,18 +1371,18 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 		view.openGotoPopup = false;
 	}
 	if (ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::Text("Go to address");
-		ImGui::SetNextItemWidth(100.0f);
+		ImGui::Text("Go to address or symbol");
+		ImGui::SetNextItemWidth(220.0f);
 		ImGui::SetKeyboardFocusHere();
 		if (ImGui::InputText("##goto_address", view.gotoAddress, sizeof(view.gotoAddress),
-				ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
-			if (const auto parsed = emu51ParseHexInput(view.gotoAddress, 0xffff)) {
+				ImGuiInputTextFlags_EnterReturnsTrue)) {
+			if (const auto parsed = resolveDebugAddress(view.gotoAddress)) {
 				view.start = static_cast<std::uint16_t>(*parsed);
 				view.followPc = false;
 				markLayoutStateDirty();
 				ImGui::CloseCurrentPopup();
 			} else {
-				statusMessage_ = "invalid address";
+				statusMessage_ = "unknown symbol or invalid hexadecimal address";
 			}
 		}
 		if (ImGui::IsKeyPressed(ImGuiKey_Escape))
@@ -1424,8 +1432,15 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 		}
 		ImGui::SameLine(rowStartX + addressWidth + byteBlockWidth);
 		ImGui::TextUnformatted(opcode.make_ds(cpu_, rowAddress, buffer));
+		bool instructionHovered = ImGui::IsItemHovered();
+		const auto label = labelAtAddress(rowAddress);
+		if (!label.empty()) {
+			ImGui::SameLine();
+			ImGui::TextColored(ImVec4(0.65f, 0.8f, 1.0f, 1.0f), "; %s:", label.c_str());
+			instructionHovered = instructionHovered || ImGui::IsItemHovered();
+		}
 		const auto source = sourceLines_.find(rowAddress);
-		if (source != sourceLines_.end() && ImGui::IsItemHovered())
+		if (source != sourceLines_.end() && instructionHovered)
 			ImGui::SetTooltip("%s:%zu", source->second.file.c_str(), source->second.line);
 		const int advance = std::max<int>(1, opcode.lenght);
 		pc = static_cast<std::uint16_t>(rowAddress + advance);
@@ -1551,10 +1566,11 @@ void Emu51ImguiApp::drawRegisters()
 
 void Emu51ImguiApp::resetMachine()
 {
+	projectPrograms_.clear();
 	stepTask_.reset();
 	runToAddress_.reset();
 	skipBreakpoint_.reset();
-	sourceLines_.clear();
+	clearLoadedDebugInfo();
 	trace_.clear();
 	running_ = false;
 	instructionCount_ = 0;
@@ -1584,6 +1600,14 @@ void Emu51ImguiApp::requestProgramLoad(bool resetCpuBeforeLoad)
 
 void Emu51ImguiApp::requestProgramLoadFromPath(const fs::path& path, bool resetCpuBeforeLoad)
 {
+	std::string extension = path.extension().string();
+	std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+		return static_cast<char>(std::tolower(ch));
+	});
+	if (extension == ".emu51") {
+		openProjectFromPath(path);
+		return;
+	}
 	if (path.empty())
 		return;
 
@@ -1621,6 +1645,7 @@ bool Emu51ImguiApp::loadProgram(
 			resetMachine();
 		emu51_asm::apply_program_image(cpu_, prepared.image);
 		setLoadedSourceMap(prepared.image);
+		projectPrograms_.push_back({normalizedProgramPath(requestedPath), binaryLoadAddress, false, {}});
 		invalidateInstructionCache();
 		if (rememberRecent)
 			rememberRecentProgramPath(fs::path(requestedPath));
@@ -1659,6 +1684,7 @@ bool Emu51ImguiApp::loadAssemblyFileIntoEditor(const fs::path& path)
 		statusMessage_ = "unable to read assembly source";
 		return false;
 	}
+	untitledSourceBaseDirectory_.clear();
 	assemblyEditor_->SetText(source);
 	// Loading normalizes CRLF, tabs and UTF-8 BOMs. Track the editor's
 	// representation so that normalization alone never looks like an edit.
@@ -1725,6 +1751,8 @@ fs::path Emu51ImguiApp::chooseAssemblyEditorSavePath()
 
 fs::path Emu51ImguiApp::assemblyEditorBaseDirectory() const
 {
+	if (assemblyEditorState_.sourcePath.empty())
+		return untitledSourceBaseDirectory_;
 	if (!assemblyEditorState_.sourcePath.empty()) {
 		const fs::path sourcePath(assemblyEditorState_.sourcePath);
 		if (sourcePath.has_parent_path())
@@ -1789,7 +1817,7 @@ bool Emu51ImguiApp::compileAssemblyEditorImage(bool updateStatus)
 		return false;
 	}
 	const std::string sourceName = assemblyEditorState_.sourcePath.empty()
-		? assemblyEditorState_.sourceName : assemblyEditorState_.sourcePath;
+		? (assemblyEditorBaseDirectory() / assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
 	emu51_asm::Assembler assembler;
 	auto result = assembler.assemble_string(sourceName, assemblyEditor_->GetText(), assemblyEditorBaseDirectory());
 	updateAssemblyEditorDiagnostics(result.diagnostics);
@@ -1818,6 +1846,10 @@ bool Emu51ImguiApp::loadCompiledAssemblyEditorOutput(bool updateStatus, bool res
 		resetMachine();
 	emu51_asm::apply_program_image(cpu_, *assemblyEditorState_.compiledImage);
 	setLoadedSourceMap(*assemblyEditorState_.compiledImage);
+	const std::string sourceName = assemblyEditorState_.sourcePath.empty()
+		? (assemblyEditorBaseDirectory() / assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
+	projectPrograms_.push_back({normalizedProgramPath(sourceName), 0, true,
+		assemblyEditorState_.compiledImage->sources.at(sourceName)});
 	invalidateInstructionCache();
 	updateDisassemblyFollowRange();
 	cycleTiming_.reset();
@@ -1877,7 +1909,7 @@ void Emu51ImguiApp::configureAddressSpace()
 	auto writeData = [this](std::uint16_t addr, std::uint8_t data) {
 		noteMemoryAccess(WatchSpace::Data, addr, true);
 		if (unifiedMode_) {
-			sourceLines_.erase(addr);
+			invalidateSourceLocation(addr);
 			unifiedMemory_[addr] = data;
 			prevInstructionCacheDirty_ = true;
 		} else {
@@ -1890,7 +1922,7 @@ void Emu51ImguiApp::configureAddressSpace()
 	};
 	auto writeProg = [this](std::uint16_t addr, std::uint8_t data) {
 		noteMemoryAccess(WatchSpace::Program, addr, true);
-		sourceLines_.erase(addr);
+		invalidateSourceLocation(addr);
 		if (unifiedMode_)
 			unifiedMemory_[addr] = data;
 		else
@@ -1902,8 +1934,9 @@ void Emu51ImguiApp::configureAddressSpace()
 
 void Emu51ImguiApp::clearMemory()
 {
+	projectPrograms_.clear();
 	stopForDebugger("memory cleared");
-	sourceLines_.clear();
+	clearLoadedDebugInfo();
 	running_ = false;
 	instructionCount_ = 0;
 	cycleCount_ = 0;
@@ -1919,8 +1952,9 @@ void Emu51ImguiApp::clearMemory()
 
 void Emu51ImguiApp::clearRam()
 {
+	if (unifiedMode_) projectPrograms_.clear();
 	stopForDebugger("memory cleared");
-	sourceLines_.clear();
+	clearLoadedDebugInfo();
 	running_ = false;
 	instructionCount_ = 0;
 	cycleCount_ = 0;
@@ -1934,8 +1968,9 @@ void Emu51ImguiApp::clearRam()
 
 void Emu51ImguiApp::clearRom()
 {
+	projectPrograms_.clear();
 	stopForDebugger("memory cleared");
-	sourceLines_.clear();
+	clearLoadedDebugInfo();
 	running_ = false;
 	instructionCount_ = 0;
 	cycleCount_ = 0;
@@ -1971,7 +2006,7 @@ void Emu51ImguiApp::fillRange(bool fillRom, std::uint16_t start, std::uint16_t e
 			break;
 	}
 	if (unifiedMode_ || fillRom) {
-		sourceLines_.clear();
+		clearLoadedDebugInfo();
 		invalidateInstructionCache();
 	}
 	statusMessage_ = unifiedMode_ ? "filled memory range" : (fillRom ? "filled program memory range" : "filled data memory range");

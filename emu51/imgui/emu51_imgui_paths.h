@@ -6,5 +6,6 @@
 std::string emu51GetImguiIniPath();
 std::string emu51GetImguiLayoutPath();
 std::string emu51GetRecentProgramsPath();
+std::string emu51GetRecentProjectsPath();
 std::string emu51GetSettingsPath();
 std::string emu51GetEditorRecoveryDirectory();

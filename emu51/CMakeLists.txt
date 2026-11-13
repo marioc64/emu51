@@ -23,9 +23,9 @@ add_library(emu51_kason STATIC
 set_target_properties(emu51_kason PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED TRUE C_EXTENSIONS FALSE)
 target_include_directories(emu51_kason SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/third_party/kason")
 
-add_library(emu51_settings_lib "imgui/emu51_execution_settings.cpp")
-target_include_directories(emu51_settings_lib PUBLIC "${EMU51_IMGUI_DIR}")
-target_link_libraries(emu51_settings_lib PRIVATE emu51_kason emu51_warnings)
+add_library(emu51_settings_lib "imgui/emu51_execution_settings.cpp" "io/emu51_project.cpp")
+target_include_directories(emu51_settings_lib PUBLIC "${EMU51_IMGUI_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/io")
+target_link_libraries(emu51_settings_lib PRIVATE emu51_kason emu51_editor_files_lib emu51_warnings)
 
 set(EMU51_CORE_SOURCES
 	"core/emu51.cpp"
@@ -119,6 +119,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 		"imgui/emu51_imgui_menu.cpp"
 		"imgui/emu51_imgui_monitor.cpp"
 		"imgui/emu51_imgui_paths.cpp"
+		"imgui/emu51_imgui_project.cpp"
 		"imgui/emu51_imgui_seg.cpp"
 	)
 	target_include_directories(emu51_imgui_common SYSTEM PRIVATE
