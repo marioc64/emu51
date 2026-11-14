@@ -66,6 +66,10 @@ slows relative to wall time rather than discarding ordinary accumulated work.
 The frontends service execution independently of drawing:
 
 - macOS uses a common-mode NSTimer with a nominal 240 Hz interval.
+  An unpaused MetalKit view renders at its own display cadence. The execution
+  timer requests a redraw only while the view is paused; forcing draws at the
+  CPU service rate can exhaust drawable buffers and block the same main thread
+  that services execution.
 - Linux/Windows use timed GLFW event waits, nominally 240 Hz while running, with
   rendering paced separately at approximately 60 Hz.
 

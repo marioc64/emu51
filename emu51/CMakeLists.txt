@@ -109,6 +109,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	# don't fire inside our translation units.
 	add_library(emu51_imgui_common OBJECT
 		"imgui/emu51_imgui_actions.cpp"
+		"imgui/emu51_hardware.cpp"
 		"imgui/emu51_imgui_app.cpp"
 		"imgui/emu51_imgui_asm_editor.cpp"
 		"imgui/emu51_imgui_codicons_data.cpp"
@@ -308,7 +309,7 @@ elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 	endif()
 endif()
 
-if (TARGET emu51_imgui)
+if (TARGET emu51_imgui AND NOT EMU51_LOCAL_EXTENSION)
 	install(TARGETS emu51_imgui
 		BUNDLE DESTINATION "."
 		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
@@ -332,4 +333,8 @@ add_test(NAME emu51_headless_tools
         -P "${CMAKE_CURRENT_SOURCE_DIR}/headless_tools_test.cmake")
 
 include("${PROJECT_SOURCE_DIR}/cmake/AppIcon.cmake")
-include("${PROJECT_SOURCE_DIR}/cmake/Packaging.cmake")
+if(NOT EMU51_LOCAL_EXTENSION)
+	include("${PROJECT_SOURCE_DIR}/cmake/Packaging.cmake")
+else()
+	message(STATUS "Local hardware extension build: installation and packaging disabled")
+endif()

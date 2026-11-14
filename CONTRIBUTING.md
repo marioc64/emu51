@@ -146,6 +146,33 @@ is independent of drawing but is not a background worker. Keep mutations on that
 thread unless a future change introduces explicit synchronization and snapshots.
 See the timing document for budget, stepping, and suspension rules.
 
+## Optional local hardware
+
+`imgui/emu51_hardware.*` defines one optional, statically registered hardware
+factory. Standard builds register none and do not search for modules or firmware.
+An explicit `-DEMU51_LOCAL_EXTENSION=/absolute/path/to/module` adds a local CMake
+directory after the application targets exist. Keep the extension's sources,
+firmware paths and resources outside this source tree; use a separate build
+directory. Extension builds reject installation before copying any files and
+omit CPack targets. Use a standard build for releases.
+
+An extension registers an `Emu51HardwareFactory` from an object source added to
+`emu51_imgui_common`. Claimed external-data reads/writes bypass backing memory;
+unclaimed accesses use the normal memory map. Program fetches and image loading
+remain independent. `advance()` receives completed machine cycles, including
+interrupt entry, after every executed instruction. Resets also reset hardware.
+Rendering never clocks hardware; `wantsRedraw()` supports held input and initial
+window frames while execution is paused. Keep input restricted to the focused
+panel and release held keys when hiding it.
+
+The host offers transactional program loading, CPU reset and status reporting.
+Loading through this interface enables the module, applies its oscillator and
+selects cycle-exact execution after successful image preparation. Both native
+Cocoa and ImGui Window menus expose the registered module without adding
+shortcuts. Projects retain an optional `hardware_module` ID (127 bytes maximum);
+unavailable IDs are rejected before any live state changes. Older projects
+default to no hardware, and module runtime state is not serialized.
+
 ## Files, preferences, and recovery
 
 `io/emu51_project.*` defines the versioned project model and bounded KaSON

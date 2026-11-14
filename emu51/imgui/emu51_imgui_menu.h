@@ -62,6 +62,8 @@ public:
 	virtual void requestExecutionSettings() = 0;
 	virtual void showDebugger() = 0;
 	virtual void showSerialTerminal() = 0;
+	virtual const char* hardwareModuleName() const = 0;
+	virtual void showHardwareModule() = 0;
 	virtual bool unifiedMode() const = 0;
 	virtual void setUnifiedMode(bool unifiedMode) = 0;
 	virtual bool internalRamMonitorVisible() const = 0;

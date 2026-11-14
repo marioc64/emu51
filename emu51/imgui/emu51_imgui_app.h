@@ -20,6 +20,7 @@
 #include "emu51_cycle_timing.h"
 #include "emu51_execution_settings.h"
 #include "emu51_project.h"
+#include "emu51_hardware.h"
 #include "emu51_imgui_menu.h"
 
 class TextEditor;
@@ -28,7 +29,7 @@ namespace emu51_asm {
 struct Diagnostic;
 }
 
-class Emu51ImguiApp : public Emu51ImguiMenuTarget {
+class Emu51ImguiApp : public Emu51ImguiMenuTarget, public Emu51HardwareHost {
 public:
 	Emu51ImguiApp();
 	~Emu51ImguiApp();
@@ -85,6 +86,11 @@ public:
 	void requestExecutionSettings() override;
 	void showDebugger() override;
 	void showSerialTerminal() override;
+	const char* hardwareModuleName() const override;
+	void showHardwareModule() override;
+	bool loadHardwareProgram(const std::filesystem::path& path, std::uint16_t address, bool unified, double crystalMHz) override;
+	void resetHardwareCpu() override { resetCpuState(true); }
+	const std::string& hardwareStatus() const override { return statusMessage_; }
 	bool unifiedMode() const override;
 	void setUnifiedMode(bool unifiedMode) override;
 	bool internalRamMonitorVisible() const override;
@@ -297,7 +303,8 @@ private:
 	void tickAt(Emu51CycleTiming::Clock::time_point now);
 	friend struct Emu51ImguiAppTestAccess;
 	// Headless integration tests disable user preferences and recovery I/O.
-	explicit Emu51ImguiApp(bool persistState);
+	explicit Emu51ImguiApp(bool persistState, bool attachHardware = true);
+	std::unique_ptr<Emu51Hardware> hardware_;
 	enum class UnsavedChoice { Save, Discard, Cancel };
 	enum class RecoveryChoice { Restore, Discard, Keep };
 	std::function<UnsavedChoice()> unsavedChangesPrompt_;
@@ -431,7 +438,8 @@ private:
 	void resetMachine();
 	void requestProgramLoad(bool resetCpuBeforeLoad);
 	void requestProgramLoadFromPath(const std::filesystem::path& path, bool resetCpuBeforeLoad);
-	bool loadProgram(const char* path, bool resetCpuBeforeLoad, bool rememberForReload, std::uint16_t binaryLoadAddress = 0, bool rememberRecent = true);
+	bool loadProgram(const char* path, bool resetCpuBeforeLoad, bool rememberForReload, std::uint16_t binaryLoadAddress = 0,
+		bool rememberRecent = true, std::optional<bool> memoryMode = std::nullopt);
 	bool loadAssemblyFileIntoEditor(const std::filesystem::path& path);
 	bool saveAssemblyEditorFileToPath(const std::filesystem::path& path);
 	std::filesystem::path chooseAssemblyEditorSavePath();

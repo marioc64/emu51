@@ -40,7 +40,7 @@ struct Emu51ImguiAppTestAccess {
     using Choice = Emu51ImguiApp::UnsavedChoice;
     static std::unique_ptr<Emu51ImguiApp> create()
     {
-        return std::unique_ptr<Emu51ImguiApp>(new Emu51ImguiApp(false));
+        return std::unique_ptr<Emu51ImguiApp>(new Emu51ImguiApp(false, false));
     }
     static void edit(Emu51ImguiApp& app, const fs::path& path, const std::string& source)
     {
@@ -714,6 +714,31 @@ struct Emu51ImguiAppTestAccess {
             "Clear recent projects persists an empty list without touching program recents, the current project or editor");
     }
 
+    static void test_hardware_projects(const fs::path& root)
+    {
+        auto app = create();
+        check(!app->hardware_ && !*app->hardwareModuleName(), "A standard session has no hardware module or menu item");
+        const auto path = root / "hardware.emu51";
+        Emu51Project project;
+        project.hardwareModule = "unavailable-board";
+        std::string error;
+        check(emu51SaveProject(path, project, error), "Projects can retain a local hardware requirement");
+        app->cpu_.PC = 0x1234;
+        app->running_ = true;
+        check(!app->openProjectFromPath(path) && app->cpu_.PC == 0x1234 && app->running_ &&
+            app->statusMessage_.find("unavailable-board") != std::string::npos,
+            "Unavailable project hardware is reported before changing the live machine");
+        project.hardwareModule.clear();
+        check(emu51SaveProject(path, project, error), "Generic projects save an empty hardware requirement");
+        auto json = read(path);
+        const std::string field = "\"hardware_module\":\"\",";
+        const auto position = json.find(field);
+        check(position != std::string::npos, "Project hardware field is present");
+        if (position != std::string::npos) json.erase(position, field.size());
+        write(path, json);
+        check(app->openProjectFromPath(path) && !app->running_, "Older projects without a hardware field still open");
+    }
+
     static void test_serial_terminal(const fs::path& root)
     {
         auto app = create();
@@ -1027,6 +1052,7 @@ int main()
     Emu51ImguiAppTestAccess::test_symbolic_debugging(root);
     Emu51ImguiAppTestAccess::test_project_sessions(root);
     Emu51ImguiAppTestAccess::test_recent_projects(root);
+    Emu51ImguiAppTestAccess::test_hardware_projects(root);
     Emu51ImguiAppTestAccess::test_serial_terminal(root);
     Emu51ImguiAppTestAccess::test_serial_file_send(root);
     Emu51ImguiAppTestAccess::test_serial_file_endings(root);

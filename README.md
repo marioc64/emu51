@@ -122,6 +122,10 @@ retain the editor's file, cursor, visibility, and unsaved text. Saving a project
 does not save over source files or clear the editor's modified flag. Restored
 drafts remain modified and use the normal save/discard/cancel protection.
 
+Custom local builds may also retain a hardware-module requirement. Opening such
+a project requires the matching local build; an unavailable module is reported
+without changing the current session. Standard builds include no hardware module.
+
 Paths are relative to the project file where possible; keep referenced files
 with the project when moving its folder. File-based program loads and clean
 editor buffers are reread from disk. In-memory assembly loads retain the main

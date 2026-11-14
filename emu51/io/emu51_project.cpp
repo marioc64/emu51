@@ -28,6 +28,7 @@ struct StoredEditor {
 struct StoredProject {
     int version, unified, debuggerOpen, traceEnabled, cycleExact, stepsPerFrame;
     int serialTerminalOpen;
+    char hardwareModule[128];
     double crystalMHz;
     StoredProgram programs[32];
     std::size_t programCount;
@@ -77,6 +78,7 @@ const kason_schema* projectSchema()
         KaSON_FIELD_BOOL(StoredProject, debuggerOpen, "debugger_open", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, traceEnabled, "trace_enabled", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, serialTerminalOpen, "serial_terminal_open", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_STRING(StoredProject, hardwareModule, "hardware_module", KaSON_DEFAULT_STRING("")),
         KaSON_FIELD_BOOL(StoredProject, cycleExact, "cycle_exact", KaSON_REQUIRED),
         KaSON_FIELD_DOUBLE(StoredProject, crystalMHz, "crystal_mhz", KaSON_REQUIRED),
         KaSON_FIELD_INT(StoredProject, stepsPerFrame, "instructions_per_frame", KaSON_REQUIRED),
@@ -126,6 +128,7 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
     Emu51Project p;
     p.unified = s.unified; p.debuggerOpen = s.debuggerOpen; p.traceEnabled = s.traceEnabled;
     p.serialTerminalOpen = s.serialTerminalOpen;
+    p.hardwareModule = s.hardwareModule;
     p.execution = {s.cycleExact != 0, s.crystalMHz, s.stepsPerFrame};
     p.reloadPath = resolvePath(s.reloadPath, base);
     p.reloadBinaryAddress = static_cast<std::uint16_t>(s.reloadBinaryAddress);
@@ -199,6 +202,7 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
         const auto base = projectBase(path);
         s->version = 1; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
         s->serialTerminalOpen = p.serialTerminalOpen;
+        copyText(s->hardwareModule, p.hardwareModule);
         s->cycleExact = p.execution.cycleExact; s->crystalMHz = p.execution.crystalMHz; s->stepsPerFrame = p.execution.stepsPerFrame;
         copyText(s->reloadPath, portablePath(p.reloadPath, base)); s->reloadBinaryAddress = p.reloadBinaryAddress;
         auto& editor = s->editor;

@@ -168,6 +168,7 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
     project.debuggerOpen = debuggerOpen_;
     project.traceEnabled = traceEnabled_;
     project.serialTerminalOpen = serialTerminalOpen_;
+    if (hardware_ && hardware_->enabled()) project.hardwareModule = hardware_->id();
     for (const auto& watch : watchpoints_)
         project.watchpoints.push_back({static_cast<int>(watch.space), watch.address, watch.read, watch.write, watch.enabled});
     auto& editor = project.editor;
@@ -199,6 +200,10 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     std::string error;
     const auto project = emu51LoadProject(path, error);
     if (!project) { statusMessage_ = error; return false; }
+    if (!project->hardwareModule.empty() && (!hardware_ || project->hardwareModule != hardware_->id())) {
+        statusMessage_ = "project requires unavailable hardware module: " + project->hardwareModule;
+        return false;
+    }
     std::vector<emu51_asm::AssemblyImage> images;
     std::string editorText;
     const auto prepare = [&]() {
@@ -239,6 +244,7 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     if (dirty && !assemblyEditorState_.dirty && !prepare()) return false;
 
     resetMachine();
+    if (hardware_) hardware_->setEnabled(!project->hardwareModule.empty());
     unifiedMode_ = project->unified;
     cycleExact_ = project->execution.cycleExact;
     crystalMHz_ = project->execution.crystalMHz;

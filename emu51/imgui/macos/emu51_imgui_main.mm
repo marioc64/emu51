@@ -56,6 +56,7 @@ NSString* nsString(const std::string& value)
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender;
 - (IBAction)showDebugger:(id)sender;
 - (IBAction)showSerialTerminal:(id)sender;
+- (IBAction)showHardwareModule:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
@@ -102,6 +103,7 @@ NSString* nsString(const std::string& value)
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender;
 - (IBAction)showDebugger:(id)sender;
 - (IBAction)showSerialTerminal:(id)sender;
+- (IBAction)showHardwareModule:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
@@ -499,6 +501,12 @@ NSString* nsString(const std::string& value)
 	[self.mtkView setNeedsDisplay:YES];
 }
 
+- (IBAction)showHardwareModule:(id)sender
+{
+	self.app->showHardwareModule();
+	[self.mtkView setNeedsDisplay:YES];
+}
+
 - (IBAction)showSerialTerminal:(id)sender
 {
 	self.app->showSerialTerminal();
@@ -674,7 +682,11 @@ NSString* nsString(const std::string& value)
 		Emu51AppViewController* controller = weakSelf;
 		if (controller != nil && controller.app != nullptr && controller.app->running()) {
 			controller.app->tick();
-			[controller.mtkView setNeedsDisplay:YES];
+			// An unpaused MTKView already draws at its display cadence. Forcing
+			// additional draws at the 240 Hz CPU service rate can exhaust Metal
+			// drawables and block this same thread before its next execution tick.
+			if (controller.mtkView.paused)
+				[controller.mtkView setNeedsDisplay:YES];
 		}
 	}];
 	[[NSRunLoop mainRunLoop] addTimer:self.executionTimer forMode:NSRunLoopCommonModes];
@@ -894,6 +906,11 @@ NSString* nsString(const std::string& value)
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender
 {
 	[self.viewController compileAndLoadAssemblyEditor:sender];
+}
+
+- (IBAction)showHardwareModule:(id)sender
+{
+	[self.viewController showHardwareModule:sender];
 }
 
 - (IBAction)showSerialTerminal:(id)sender
@@ -1241,6 +1258,12 @@ int main()
 		NSMenuItem* windowMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:windowMenuItem];
 		NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+		if (*viewController.app->hardwareModuleName()) {
+			NSMenuItem* hardwareItem = [[NSMenuItem alloc] initWithTitle:nsString(viewController.app->hardwareModuleName())
+				action:@selector(showHardwareModule:) keyEquivalent:@""];
+			hardwareItem.target = appDelegate;
+			[windowMenu addItem:hardwareItem];
+		}
 		NSMenuItem* newDisassemblyItem = [[NSMenuItem alloc] initWithTitle:@"New Disassembly View"
 			action:@selector(newDisassemblyView:) keyEquivalent:@"d"];
 		newDisassemblyItem.target = appDelegate;

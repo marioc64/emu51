@@ -509,8 +509,8 @@ void drawRegisterTable(const char* id, const RegisterDescriptor (&registers)[N],
 
 Emu51ImguiApp::Emu51ImguiApp() : Emu51ImguiApp(true) {}
 
-Emu51ImguiApp::Emu51ImguiApp(bool persistState)
-	: persistState_(persistState), cpu_(true)
+Emu51ImguiApp::Emu51ImguiApp(bool persistState, bool attachHardware)
+	: hardware_(attachHardware ? emu51CreateHardware() : nullptr), persistState_(persistState), cpu_(true)
 {
 	assemblyEditor_ = std::make_unique<TextEditor>();
 	emu51ConfigureAsmEditor(*assemblyEditor_);
@@ -587,7 +587,7 @@ void Emu51ImguiApp::tickAt(Emu51CycleTiming::Clock::time_point now)
 
 bool Emu51ImguiApp::shouldAnimate() const
 {
-	return running_ || virtualScrollActive_ || recoverySavePending_;
+	return running_ || virtualScrollActive_ || recoverySavePending_ || (hardware_ && hardware_->wantsRedraw());
 }
 
 bool Emu51ImguiApp::consumeQuitRequested()
@@ -595,6 +595,24 @@ bool Emu51ImguiApp::consumeQuitRequested()
 	const bool requested = quitRequested_;
 	quitRequested_ = false;
 	return requested;
+}
+
+const char* Emu51ImguiApp::hardwareModuleName() const
+{
+	return hardware_ ? hardware_->name() : "";
+}
+
+void Emu51ImguiApp::showHardwareModule() { if (hardware_) hardware_->show(); }
+
+bool Emu51ImguiApp::loadHardwareProgram(const fs::path& path, std::uint16_t address, bool unified, double crystalMHz)
+{
+	if (!hardware_ || !Emu51CycleTiming::validCrystalMHz(crystalMHz)) return false;
+	if (!loadProgram(path.string().c_str(), true, true, address, true, unified)) return false;
+	hardware_->setEnabled(true);
+	crystalMHz_ = crystalMHz;
+	cycleExact_ = true;
+	cycleTiming_.reset();
+	return true;
 }
 
 void Emu51ImguiApp::requestOpenProgram()
@@ -969,6 +987,7 @@ void Emu51ImguiApp::resetCpuState(bool stopRunning)
 	statusMessage_ = stopRunning ? "cpu reset and stopped" : "cpu reset";
 	cancelSerialFileSend();
 	cpu_.init();
+	if (hardware_) hardware_->reset();
 	updateDisassemblyFollowRange();
 	if (!stopRunning)
 		running_ = wasRunning;
@@ -1167,6 +1186,7 @@ void Emu51ImguiApp::draw()
 	drawAssemblyEditor();
 	drawDisassemblyViews();
 	drawMonitorViews();
+	if (hardware_) hardware_->draw(*this);
 	drawSetProgramCounterDialog();
 	drawFillRangeDialog();
 	drawSnapSplitters();
@@ -1589,6 +1609,7 @@ void Emu51ImguiApp::resetMachine()
 	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
 	invalidateInstructionCache();
 	cpu_.init();
+	if (hardware_) hardware_->reset();
 }
 
 void Emu51ImguiApp::requestProgramLoad(bool resetCpuBeforeLoad)
@@ -1642,13 +1663,15 @@ bool Emu51ImguiApp::loadProgram(
 	bool resetCpuBeforeLoad,
 	bool rememberForReload,
 	std::uint16_t binaryLoadAddress,
-	bool rememberRecent)
+	bool rememberRecent,
+	std::optional<bool> memoryMode)
 {
 	const std::string requestedPath = path != nullptr ? path : "";
 	const auto prepared = emu51_asm::prepare_program_file(
 		fs::path(requestedPath), emu51_asm::ProgramLoadOptions{binaryLoadAddress});
 	const auto& result = prepared.result;
 	if (result.success) {
+		if (memoryMode) unifiedMode_ = *memoryMode;
 		if (resetCpuBeforeLoad)
 			resetMachine();
 		emu51_asm::apply_program_image(cpu_, prepared.image);
@@ -1912,10 +1935,13 @@ void Emu51ImguiApp::configureAddressSpace()
 {
 	auto readData = [this](std::uint16_t addr) -> std::uint8_t {
 		noteMemoryAccess(WatchSpace::Data, addr, false);
+		std::uint8_t deviceValue = 0;
+		if (hardware_ && hardware_->enabled() && hardware_->readData(addr, deviceValue)) return deviceValue;
 		return unifiedMode_ ? unifiedMemory_[addr] : ramMemory_[addr];
 	};
 	auto writeData = [this](std::uint16_t addr, std::uint8_t data) {
 		noteMemoryAccess(WatchSpace::Data, addr, true);
+		if (hardware_ && hardware_->enabled() && hardware_->writeData(addr, data)) return;
 		if (unifiedMode_) {
 			invalidateSourceLocation(addr);
 			unifiedMemory_[addr] = data;
@@ -1957,6 +1983,7 @@ void Emu51ImguiApp::clearMemory()
 	invalidateInstructionCache();
 	cancelSerialFileSend();
 	cpu_.init();
+	if (hardware_) hardware_->reset();
 }
 
 void Emu51ImguiApp::clearRam()
@@ -1974,6 +2001,7 @@ void Emu51ImguiApp::clearRam()
 		invalidateInstructionCache();
 	cancelSerialFileSend();
 	cpu_.init();
+	if (hardware_) hardware_->reset();
 }
 
 void Emu51ImguiApp::clearRom()
@@ -1993,6 +2021,7 @@ void Emu51ImguiApp::clearRom()
 	if (unifiedMode_) {
 		cancelSerialFileSend();
 		cpu_.init();
+		if (hardware_) hardware_->reset();
 	}
 }
 
@@ -2025,6 +2054,7 @@ void Emu51ImguiApp::fillRange(bool fillRom, std::uint16_t start, std::uint16_t e
 	if (unifiedMode_ || !fillRom) {
 		cancelSerialFileSend();
 		cpu_.init();
+		if (hardware_) hardware_->reset();
 	}
 	cycleTiming_.reset();
 }
@@ -2137,6 +2167,7 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 	instructionExecuting_ = true;
 	const auto cycles = static_cast<std::uint8_t>(cpu_.process());
 	instructionExecuting_ = false;
+	if (hardware_ && hardware_->enabled()) hardware_->advance(cycles, crystalMHz_);
 	collectSerialOutput();
 	cycleCount_ += cycles;
 	++instructionCount_;
