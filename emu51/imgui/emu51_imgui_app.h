@@ -265,6 +265,7 @@ private:
 	std::string serialTerminalDisplay() const;
 	bool serialTerminalOpen_ = false, serialHexInput_ = false, serialHexOutput_ = false, serialRxNinth_ = false;
 	int serialLineEnding_ = 0;
+	bool serialTerminalFocusInput_ = false;
 	char serialTerminalInput_[1024] = "";
 	std::string serialTerminalStatus_;
 	std::deque<emu51::SerialByte> serialTerminalOutput_;
@@ -277,6 +278,9 @@ private:
 	// 0: unchanged, 1: LF, 2: CR, 3: CRLF. Capture the selection per transfer.
 	int serialFileLineEnding_ = 0, serialFileActiveLineEnding_ = 0;
 	bool serialFileSkipLf_ = false;
+	int serialFileLineDelayMs_ = 0;
+	std::uint64_t serialFileLineDelayCycles_ = 0, serialFileResumeCycle_ = 0;
+	bool serialFileWaitingForLine_ = false;
 	void toggleBreakpoint(std::uint16_t address);
 	void runToAddress(std::uint16_t address);
 	void runToEditorCursor();

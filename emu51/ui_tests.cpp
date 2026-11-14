@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -926,6 +927,159 @@ struct Emu51ImguiAppTestAccess {
         ImGui::NewFrame(); app->drawSerialTerminal(); ImGui::Render();
     }
 
+    static void test_tinybasic(const fs::path& root)
+    {
+        auto app = create();
+        const auto demo = fs::path(EMU51_REPO_ROOT) / "progs/tinybasic";
+        check(app->openProjectFromPath(demo / "tinybasic.emu51"), "TinyBASIC demo project loads with the built-in assembler");
+        check(app->cpu_.model() == Emu51Model::i8052 && !app->unifiedMode_ && !app->running_ &&
+            app->serialTerminalOpen_ && app->crystalMHz_ == 11.0592 && app->serialLineEnding_ == 2 &&
+            app->serialFileLineEnding_ == 2 && app->serialFileLineDelayMs_ == 20,
+            "TinyBASIC project restores its CPU, split memory, UART clock, CR endings and upload delay");
+        const auto upstream = emu51_asm::prepare_program_file(fs::path(EMU51_REPO_ROOT) / "third_party/tb51/tb51.hex");
+        bool same = upstream.result.success && upstream.image.bytes.size() == 3202;
+        for (const auto& [address, byte] : upstream.image.bytes) same = same && app->cpu_.readProg(address) == byte;
+        check(same, "TinyBASIC demo retains every byte of the published interpreter image");
+        const auto ready = [&] {
+            // Upstream C_IN polls RI at 8050h when waiting at a BASIC prompt.
+            return !app->serialFileStream_.is_open() && !app->cpu_.pendingSerialReceiveCount() &&
+                !app->cpu_.serialTransmitBusy() && app->cpu_.PC == 0x8050 && app->serialTerminalDisplay().ends_with("\n>");
+        };
+        const auto runUntilReady = [&] {
+            unsigned remaining = 1000000;
+            do { app->executeInstruction(); } while (--remaining && !ready());
+            check(ready(), "TinyBASIC completes the UART command and returns to its prompt within the instruction budget");
+        };
+        runUntilReady();
+        check(app->serialTerminalDisplay().find("MCS-51 TINY BASIC") != std::string::npos && app->cpu_.SP >= 0x80,
+            "TinyBASIC boots, prints its banner over UART and uses upper internal RAM for the stack");
+        const auto command = [&](const char* text) {
+            app->serialTerminalOutput_.clear();
+            std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "%s", text);
+            check(app->sendSerialTerminalInput(), "TinyBASIC command queues through the serial terminal");
+            runUntilReady();
+            return app->serialTerminalDisplay();
+        };
+        check(command("print (2+3)*4").find("\n20\nOK\n>") != std::string::npos,
+            "TinyBASIC evaluates expressions and accepts lowercase UART input");
+        app->serialTerminalOpen_ = false;
+        app->serialTerminalOutput_.clear();
+        check(app->startSerialFileSend(demo / "squares.bas"), "TinyBASIC BASIC program starts streaming through Send file");
+        // Controls are snapshotted for a transfer already in progress.
+        app->serialFileLineDelayMs_ = 0;
+        runUntilReady();
+        app->serialFileLineDelayMs_ = 20;
+        const auto listing = command("LIST");
+        check(listing.find("10 FOR I=1 TO 5") != std::string::npos && listing.find("20 PRINT I,I*I") != std::string::npos &&
+            listing.find("30 NEXT I") != std::string::npos && listing.find("40 END") != std::string::npos,
+            "TinyBASIC stores and lists all numbered lines sent from the LF-ended BASIC file");
+        const auto result = command("RUN");
+        check(result == "RUN\n1       1\n2       4\n3       9\n4       16\n5       25\nOK\n>",
+            "TinyBASIC runs every iteration of a stored FOR/NEXT program and prints the expected squares");
+        app->serialTerminalOutput_.clear();
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "INPUT A");
+        check(app->sendSerialTerminalInput(), "TinyBASIC INPUT command sends");
+        for (unsigned i = 0; i < 100000 && !app->serialTerminalDisplay().ends_with(": "); ++i) app->executeInstruction();
+        check(app->serialTerminalDisplay().ends_with(": "), "TinyBASIC INPUT requests a value through UART");
+        command("7");
+        check(command("PRINT A*6").find("\n42\nOK\n>") != std::string::npos,
+            "TinyBASIC reads a UART numeric input, stores the variable and uses it in an expression");
+        check(app->cpu_.serialReceiveOverruns() == 0 && app->cpu_.serialTransmitOverwrites() == 0 && app->cpu_.serialOutputDrops() == 0,
+            "TinyBASIC command, upload, LIST and RUN complete without UART data loss");
+        command("NEW"); command("10 GOTO 10");
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "RUN");
+        check(app->sendSerialTerminalInput(), "TinyBASIC infinite loop starts through UART");
+        for (unsigned i = 0; i < 30000; ++i) app->executeInstruction();
+        check(!ready(), "TinyBASIC keeps executing an infinite stored program before Ctrl-C");
+        app->serialHexInput_ = true; app->serialLineEnding_ = 0;
+        std::snprintf(app->serialTerminalInput_, sizeof(app->serialTerminalInput_), "03");
+        check(app->sendSerialTerminalInput(), "Ctrl-C queues as a raw UART control byte");
+        runUntilReady();
+        check(app->serialTerminalDisplay().find("WHAT?") != std::string::npos,
+            "TinyBASIC Ctrl-C aborts execution and returns to the command prompt");
+        app->serialHexInput_ = false; app->serialLineEnding_ = 2;
+        check(app->saveProjectToPath(root / "tinybasic-roundtrip.emu51"), "TinyBASIC UART settings save in a project");
+        auto restored = create();
+        check(restored->openProjectFromPath(root / "tinybasic-roundtrip.emu51") && restored->serialLineEnding_ == 2 &&
+            restored->serialFileLineEnding_ == 2 && restored->serialFileLineDelayMs_ == 20,
+            "Serial ending and file pacing preferences survive project round trips");
+        const auto saved = read(root / "tinybasic-roundtrip.emu51");
+        for (const auto& [field, invalid] : std::vector<std::pair<std::string, std::string>>{
+                {"\"serial_file_line_delay_ms\":20", "\"serial_file_line_delay_ms\":10001"},
+                {"\"serial_file_ending\":2", "\"serial_file_ending\":4"},
+                {"\"serial_input_ending\":2", "\"serial_input_ending\":-1"}}) {
+            auto malformed = saved;
+            const auto at = malformed.find(field);
+            check(at != std::string::npos, "UART project validation fixture locates its field");
+            if (at == std::string::npos) continue;
+            malformed.replace(at, field.size(), invalid);
+            write(root / "invalid-uart.emu51", malformed);
+            restored->cpu_.PC = 123; restored->running_ = true;
+            check(!restored->openProjectFromPath(root / "invalid-uart.emu51") && restored->cpu_.PC == 123 && restored->running_,
+                "Invalid UART settings cannot partially restore a project");
+        }
+        auto legacy = saved;
+        for (const char* field : {"\"serial_file_line_delay_ms\":20,", "\"serial_file_ending\":2,", "\"serial_input_ending\":2,"}) {
+            const auto at = legacy.find(field);
+            if (at != std::string::npos) legacy.erase(at, std::strlen(field));
+        }
+        write(root / "legacy-uart.emu51", legacy);
+        check(restored->openProjectFromPath(root / "legacy-uart.emu51") && restored->serialLineEnding_ == 0 &&
+            restored->serialFileLineEnding_ == 0 && restored->serialFileLineDelayMs_ == 0,
+            "Older projects default to unchanged file endings and continuous sending");
+    }
+
+    static void test_serial_file_pacing(const fs::path& root)
+    {
+        const auto path = root / "paced.txt";
+        const std::string payload = "A\r\nB\nC\rD";
+        write(path, payload);
+        for (int mode = 0; mode <= 3; ++mode) {
+            auto app = create();
+            const auto sample = fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/serial_echo.asm";
+            check(app->loadProgram(sample.string().c_str(), true, true), "Paced transfer loads echo firmware");
+            app->running_ = true; app->runSteps(10000); app->serialTerminalOutput_.clear();
+            app->cpu_.TH1 = app->cpu_.TL1 = 0xff;
+            app->serialFileLineDelayMs_ = 1; app->serialFileLineEnding_ = mode;
+            check(app->startSerialFileSend(path) && app->serialFileQueued_ == 3,
+                "Paced transfers initially queue one complete CRLF source line");
+            app->serialFileLineDelayMs_ = 0;
+            unsigned budget = 10000;
+            while (budget-- && !app->serialFileResumeCycle_) app->executeInstruction();
+            check(app->serialFileResumeCycle_ > app->cycleCount_ && app->serialFileQueued_ == 3 &&
+                !app->cpu_.pendingSerialReceiveCount(), "Line delay starts after the preceding UART line has drained");
+            app->cycleCount_ = app->serialFileResumeCycle_ - 1;
+            app->serviceSerialFileSend();
+            check(app->serialFileQueued_ == 3, "Pacing cannot queue the next line before its emulated deadline");
+            app->cycleCount_ = app->serialFileResumeCycle_;
+            app->serviceSerialFileSend();
+            check(app->serialFileQueued_ == 5, "Pacing queues the next LF source line exactly at its deadline");
+            app->runSteps(50000);
+            std::string expected = payload;
+            if (mode) {
+                const std::string ending = mode == 1 ? "\n" : mode == 2 ? "\r" : "\r\n";
+                expected = "A" + ending + "B" + ending + "C" + ending + "D";
+            }
+            std::string received;
+            for (const auto& byte : app->serialTerminalOutput_) received += static_cast<char>(byte.value);
+            check(!app->serialFileStream_.is_open() && !app->cpu_.pendingSerialReceiveCount() && received == expected &&
+                app->serialFileQueued_ == payload.size(), "Paced file input preserves raw/mixed endings, normalizes text and retains a final unterminated line");
+            check(app->cpu_.serialReceiveOverruns() == 0 && app->cpu_.serialTransmitOverwrites() == 0,
+                "Paced file transfers do not lose data");
+            for (int invalid : {-1, 10001}) {
+                app->serialFileLineDelayMs_ = invalid;
+                check(!app->startSerialFileSend(path) && !app->cpu_.pendingSerialReceiveCount(),
+                    "Invalid file line delays cannot inject input");
+            }
+            app->serialFileLineDelayMs_ = 20;
+            check(app->startSerialFileSend(path), "Paced transfer can restart after validation errors");
+            app->resetCpuState(true);
+            app->serviceSerialFileSend();
+            check(!app->serialFileStream_.is_open() && !app->cpu_.pendingSerialReceiveCount(),
+                "CPU reset cancels paced file transfers");
+        }
+    }
+
     static void test_serial_file_endings(const fs::path& root)
     {
         // A CR at the end of the first CRLF-mode source chunk, mixed endings,
@@ -1106,6 +1260,8 @@ int main()
     Emu51ImguiAppTestAccess::test_serial_terminal(root);
     Emu51ImguiAppTestAccess::test_serial_file_send(root);
     Emu51ImguiAppTestAccess::test_serial_file_endings(root);
+    Emu51ImguiAppTestAccess::test_tinybasic(root);
+    Emu51ImguiAppTestAccess::test_serial_file_pacing(root);
     Emu51ImguiAppTestAccess::test_execution_servicing();
     Emu51ImguiAppTestAccess::test_recovery_integration(root);
     fs::remove_all(root);

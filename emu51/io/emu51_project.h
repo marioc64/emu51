@@ -34,6 +34,7 @@ struct Emu51ProjectEditor {
 struct Emu51Project {
     bool unified = true, debuggerOpen = false, traceEnabled = false;
     bool serialTerminalOpen = false;
+    int serialLineEnding = 0, serialFileLineEnding = 0, serialFileLineDelayMs = 0;
     Emu51Model cpuModel = Emu51Model::i8051;
     std::string hardwareModule;
     Emu51ExecutionSettings execution;

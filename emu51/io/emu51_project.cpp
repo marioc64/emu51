@@ -27,7 +27,7 @@ struct StoredEditor {
 };
 struct StoredProject {
     int version, unified, debuggerOpen, traceEnabled, cycleExact, stepsPerFrame;
-    int serialTerminalOpen;
+    int serialTerminalOpen, serialLineEnding, serialFileLineEnding, serialFileLineDelayMs;
     char hardwareModule[128], cpuModel[16];
     double crystalMHz;
     StoredProgram programs[32];
@@ -78,6 +78,9 @@ const kason_schema* projectSchema()
         KaSON_FIELD_BOOL(StoredProject, debuggerOpen, "debugger_open", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, traceEnabled, "trace_enabled", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, serialTerminalOpen, "serial_terminal_open", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_INT(StoredProject, serialLineEnding, "serial_input_ending", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredProject, serialFileLineEnding, "serial_file_ending", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredProject, serialFileLineDelayMs, "serial_file_line_delay_ms", KaSON_DEFAULT_INT(0)),
         KaSON_FIELD_STRING(StoredProject, cpuModel, "cpu_model", KaSON_DEFAULT_STRING("8051")),
         KaSON_FIELD_STRING(StoredProject, hardwareModule, "hardware_module", KaSON_DEFAULT_STRING("")),
         KaSON_FIELD_BOOL(StoredProject, cycleExact, "cycle_exact", KaSON_REQUIRED),
@@ -128,10 +131,16 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
         throw std::runtime_error("invalid execution settings, cursor, or load address");
     const auto model = emu51ParseModel(s.cpuModel);
     if (!model) throw std::runtime_error("unsupported CPU model");
+    if (s.serialLineEnding < 0 || s.serialLineEnding > 3 || s.serialFileLineEnding < 0 || s.serialFileLineEnding > 3 ||
+        s.serialFileLineDelayMs < 0 || s.serialFileLineDelayMs > 10000)
+        throw std::runtime_error("invalid serial transfer settings");
     Emu51Project p;
     p.cpuModel = *model;
     p.unified = s.unified; p.debuggerOpen = s.debuggerOpen; p.traceEnabled = s.traceEnabled;
     p.serialTerminalOpen = s.serialTerminalOpen;
+    p.serialLineEnding = s.serialLineEnding;
+    p.serialFileLineEnding = s.serialFileLineEnding;
+    p.serialFileLineDelayMs = s.serialFileLineDelayMs;
     p.hardwareModule = s.hardwareModule;
     p.execution = {s.cycleExact != 0, s.crystalMHz, s.stepsPerFrame};
     p.reloadPath = resolvePath(s.reloadPath, base);
@@ -207,6 +216,9 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
         copyText(s->cpuModel, emu51ModelInfo(p.cpuModel).id);
         s->version = 1; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
         s->serialTerminalOpen = p.serialTerminalOpen;
+        s->serialLineEnding = p.serialLineEnding;
+        s->serialFileLineEnding = p.serialFileLineEnding;
+        s->serialFileLineDelayMs = p.serialFileLineDelayMs;
         copyText(s->hardwareModule, p.hardwareModule);
         s->cycleExact = p.execution.cycleExact; s->crystalMHz = p.execution.crystalMHz; s->stepsPerFrame = p.execution.stepsPerFrame;
         copyText(s->reloadPath, portablePath(p.reloadPath, base)); s->reloadBinaryAddress = p.reloadBinaryAddress;

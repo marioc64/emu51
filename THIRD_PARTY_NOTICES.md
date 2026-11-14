@@ -86,6 +86,21 @@ contributors. When bundling such a runtime, include its matching notice/license,
 not just the fallback library's older notice. The optional Linux bundling path
 requires `EMU51_GLFW_LICENSE` for that purpose.
 
+## Tiny BASIC V2.3 (source demo)
+
+PJRC publishes Dave LeBlanc's Tiny BASIC contribution as public domain. The demo
+preserves the original source, compiled HEX and revision history under
+`third_party/tb51/`; a generated assembler include retains the same interpreter
+bytes. The separate UART startup routine and demo tools authored for emu51 use
+GPL-2.0-only.
+
+- [Upstream announcement and documentation](https://www.pjrc.com/tech/8051/contrib/tb51/index.html)
+- [Preserved files and provenance](third_party/tb51/README.emu51.md)
+- [Demo instructions](progs/tinybasic/README.md)
+
+These firmware/example files are included in source distributions and are not
+installed into binary app packages.
+
 ## Installed notices
 
 Default binary installations include this document and full vendor license

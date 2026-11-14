@@ -103,7 +103,14 @@ visibility. The default preserves raw bytes without text/hex parsing. Optional
 file ending normalization snapshots the selected mode, coalesces CRLF across
 chunk boundaries, and reserves up to two output bytes per source byte so CRLF
 expansion cannot overflow the receive queue. Progress counts source bytes read;
-normalization never rewrites the source or appends an ending at EOF.
+normalization never rewrites the source or appends an ending at EOF. Optional
+file line pacing stops at a source CR/LF/CRLF boundary, waits for queued reception
+to drain, then waits against emulated cycle counts. No host sleeps are involved;
+reset cancels transfers and the selected delay is snapshotted at start. Projects
+save manual/file endings and the preferred line delay, with zero defaults for
+older files. The TinyBASIC workflow test loads the public-domain reference image,
+checks its bytes, uploads a BASIC file, and tests expression evaluation, INPUT,
+LIST and FOR/NEXT execution without UART overruns.
 File selection/validation does not mutate CPU state. Cancellation and CPU-reset
 paths close the stream; file progress and pending transfers are runtime state.
 

@@ -7,3 +7,7 @@
 /progs/asm/demo/mtask2250.asm export-ignore
 /progs/asm/mtask2250.asm export-ignore
 /progs/hex/mtask2250.hex export-ignore
+
+# Preserve the upstream TinyBASIC source/image bytes, including mixed line endings.
+/third_party/tb51/tb51.asm -text -whitespace
+/third_party/tb51/tb51.hex -text -whitespace

@@ -268,6 +268,11 @@ before choosing the file. These modes normalize existing CRLF pairs, lone CR and
 lone LF, including pairs split across streaming chunks. The source file is never
 modified, and no extra ending is appended at EOF.
 
+**File line delay (ms)** inserts extra emulated time between complete source
+lines after the preceding UART input drains. Zero (the default) sends continuously;
+20 ms suits TinyBASIC program uploads. CRLF is one source-line boundary. Pausing
+also pauses the delay. The selected delay is captured when the transfer starts.
+
 File transfers ignore the manual input's Hex input and Ending controls, and
 capture File endings and the receive ninth bit when started. Large files stream
 through the bounded input queue as the emulator executes; progress reports source bytes queued,
@@ -276,7 +281,7 @@ the baud clock eventually fills the queue and pauses file reading. Sending text
 is disabled until the entire file is queued or the transfer is canceled.
 **Cancel file** and **Clear pending input** stop file reading and clear all
 pending input. CPU reset or opening a program/project also cancels transfers;
-projects do not save or resume them. File selection does not start execution.
+projects do not save or resume active transfers. File selection does not start execution.
 Enter the firmware's receive command before sending. Clear pending input before
 a new transfer if a receiver stopped before consuming the preceding file.
 
@@ -285,13 +290,20 @@ other non-printable/non-ASCII bytes as `\xNN`. Hex output marks set ninth bits
 with `/1`. Input and the retained output transcript are bounded to 4,096 bytes.
 The window reports receive overruns, premature transmit writes, and core output
 queue drops. CPU reset clears pending serial state but keeps the transcript;
-opening a program/project clears it. Projects retain terminal visibility, while
-serial traffic and terminal input controls remain runtime state.
+opening a program/project clears it. Projects retain terminal visibility,
+manual/file line endings and the file line delay. Serial traffic and other terminal input controls remain runtime state.
 
 Try [serial_echo.asm](progs/asm/demo/serial_echo.asm): open it, select an
 11.0592 MHz crystal for 9600 baud, open the terminal, and Run. It prints `>` and
 echoes input using serial interrupts. The serial model operates at instruction
 boundaries; see [timing limits](CYCLE_ACCURATE_EXECUTION.md#serial-model).
+
+For an interactive language demo, open
+[TinyBASIC's project](progs/tinybasic/tinybasic.emu51). It selects the 8052 CPU,
+11.0592 MHz crystal, CR endings and upload pacing automatically. Run, send
+`PRINT 2+3`, then upload `progs/tinybasic/squares.bas`, send `LIST`, and send `RUN`.
+See the [TinyBASIC walkthrough](progs/tinybasic/README.md) for expected output,
+INPUT examples and source provenance.
 
 ## Execution settings and shortcuts
 

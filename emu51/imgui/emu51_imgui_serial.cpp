@@ -6,6 +6,7 @@
 #include <array>
 #include <charconv>
 #include <cstdio>
+#include <cmath>
 #include <sstream>
 
 void Emu51ImguiApp::showSerialTerminal() { serialTerminalOpen_ = true; }
@@ -100,8 +101,8 @@ bool Emu51ImguiApp::startSerialFileSend(const std::filesystem::path& path)
         serialTerminalStatus_ = "A file transfer is already active; cancel it before choosing another file.";
         return false;
     }
-    if (serialFileLineEnding_ < 0 || serialFileLineEnding_ > 3) {
-        serialTerminalStatus_ = "Invalid file line-ending selection.";
+    if (serialFileLineEnding_ < 0 || serialFileLineEnding_ > 3 || serialFileLineDelayMs_ < 0 || serialFileLineDelayMs_ > 10000) {
+        serialTerminalStatus_ = "Invalid file line-ending or line-delay selection.";
         return false;
     }
     std::error_code error;
@@ -122,6 +123,9 @@ bool Emu51ImguiApp::startSerialFileSend(const std::filesystem::path& path)
     serialFileNinth_ = serialRxNinth_;
     serialFileActiveLineEnding_ = serialFileLineEnding_;
     serialFileSkipLf_ = false;
+    serialFileLineDelayCycles_ = static_cast<std::uint64_t>(std::ceil(serialFileLineDelayMs_ * crystalMHz_ * 1000.0 / 12.0));
+    serialFileWaitingForLine_ = false;
+    serialFileResumeCycle_ = 0;
     serialTerminalStatus_ = "Sending file bytes to the serial receiver.";
     serviceSerialFileSend();
     return serialFileStream_.is_open() || serialFileQueued_ == serialFileSize_;
@@ -137,16 +141,40 @@ void Emu51ImguiApp::serviceSerialFileSend()
         return;
     }
     const auto pending = cpu_.pendingSerialReceiveCount();
+    if (serialFileWaitingForLine_) {
+        if (pending) return;
+        if (!serialFileResumeCycle_) serialFileResumeCycle_ = cycleCount_ + serialFileLineDelayCycles_;
+        if (cycleCount_ < serialFileResumeCycle_) return;
+        serialFileWaitingForLine_ = false;
+        serialFileResumeCycle_ = 0;
+    }
     // Refill in chunks rather than performing a filesystem read for every
     // consumed byte. Input remains bounded even for files larger than RAM.
     if (pending > emu51::kSerialQueueCapacity / 2) return;
     std::array<char, emu51::kSerialQueueCapacity> buffer;
     // CRLF normalization can expand every source byte to two UART bytes.
     const auto capacity = (buffer.size() - pending) / (serialFileActiveLineEnding_ == 3 ? 2 : 1);
-    const auto count = static_cast<std::size_t>(std::min<std::uintmax_t>(
+    const auto maximum = static_cast<std::size_t>(std::min<std::uintmax_t>(
         serialFileSize_ - serialFileQueued_, capacity));
-    serialFileStream_.read(buffer.data(), static_cast<std::streamsize>(count));
-    if (serialFileStream_.gcount() != static_cast<std::streamsize>(count) || serialFileStream_.bad()) {
+    std::size_t count = maximum;
+    bool readFailed = false, lineBoundary = false;
+    if (serialFileLineDelayCycles_) {
+        // Read through one source line, preserving CRLF as a single boundary.
+        // std::ifstream buffers reads; no sleep or wall-clock timer is needed.
+        count = 0;
+        while (count < maximum) {
+            if (!serialFileStream_.get(buffer[count])) { readFailed = true; break; }
+            const char byte = buffer[count++];
+            if (byte == '\n' || (byte == '\r' && serialFileStream_.peek() != '\n')) {
+                lineBoundary = true;
+                break;
+            }
+        }
+    } else {
+        serialFileStream_.read(buffer.data(), static_cast<std::streamsize>(count));
+        readFailed = serialFileStream_.gcount() != static_cast<std::streamsize>(count);
+    }
+    if (readFailed || serialFileStream_.bad()) {
         serialFileStream_.close();
         serialTerminalStatus_ = "File read failed after " + std::to_string(serialFileQueued_) + " bytes queued. Transfer stopped.";
         return;
@@ -169,6 +197,7 @@ void Emu51ImguiApp::serviceSerialFileSend()
         }
         cpu_.queueSerialReceive(byte, serialFileNinth_);
     }
+    serialFileWaitingForLine_ = lineBoundary;
     serialFileQueued_ += count;
     if (serialFileQueued_ == serialFileSize_) serviceSerialFileSend();
 }
@@ -226,7 +255,7 @@ void Emu51ImguiApp::drawSerialTerminal()
     ImGui::SameLine();
     const auto display = serialTerminalDisplay();
     if (ImGui::Button("Copy output")) ImGui::SetClipboardText(display.c_str());
-    const float footer = ImGui::GetFrameHeightWithSpacing() * 4 + ImGui::GetTextLineHeightWithSpacing() * 2 +
+    const float footer = ImGui::GetFrameHeightWithSpacing() * 5 + ImGui::GetTextLineHeightWithSpacing() * 2 +
         (serialFilePath_.empty() ? 0 : ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing());
     ImGui::BeginChild("serial_output", ImVec2(0, -footer), true, ImGuiWindowFlags_HorizontalScrollbar);
     const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
@@ -240,16 +269,29 @@ void Emu51ImguiApp::drawSerialTerminal()
     if (mode >= 2) { ImGui::SameLine(); ImGui::Checkbox("RX ninth bit", &serialRxNinth_); }
     ImGui::SetNextItemWidth(-80);
     ImGui::BeginDisabled(serialFileStream_.is_open());
+    if (serialTerminalFocusInput_ && !serialFileStream_.is_open()) {
+        ImGui::SetKeyboardFocusHere();
+        serialTerminalFocusInput_ = false;
+    }
     const bool submitted = ImGui::InputText("##serial_input", serialTerminalInput_, sizeof(serialTerminalInput_), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (submitted) ImGui::SetKeyboardFocusHere(-1);
     ImGui::SameLine();
     const bool clicked = ImGui::Button("Send");
-    if (submitted || clicked) sendSerialTerminalInput();
+    if (submitted || clicked) {
+        sendSerialTerminalInput();
+        if (clicked) serialTerminalFocusInput_ = true;
+    }
     if (ImGui::Button("Send file...")) requestSerialFileSend();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(115);
     ImGui::Combo("File endings", &serialFileLineEnding_, "Unchanged\0LF\0CR\0CRLF\0");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Unchanged preserves every byte. Text modes normalize CRLF, CR and LF to the selected ending.");
+    ImGui::SetNextItemWidth(115);
+    ImGui::InputInt("File line delay (ms)", &serialFileLineDelayMs_, 0, 0);
+    serialFileLineDelayMs_ = std::clamp(serialFileLineDelayMs_, 0, 10000);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Extra emulated time after each file line has reached the UART. Use 20 ms for TinyBASIC uploads; 0 sends continuously.");
     ImGui::EndDisabled();
     if (serialFileStream_.is_open()) {
         ImGui::SameLine();

@@ -169,6 +169,9 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
     project.debuggerOpen = debuggerOpen_;
     project.traceEnabled = traceEnabled_;
     project.serialTerminalOpen = serialTerminalOpen_;
+    project.serialLineEnding = serialLineEnding_;
+    project.serialFileLineEnding = serialFileLineEnding_;
+    project.serialFileLineDelayMs = serialFileLineDelayMs_;
     if (hardware_ && hardware_->enabled()) project.hardwareModule = hardware_->id();
     for (const auto& watch : watchpoints_)
         project.watchpoints.push_back({static_cast<int>(watch.space), watch.address, watch.read, watch.write, watch.enabled});
@@ -267,6 +270,9 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     debuggerOpen_ = project->debuggerOpen;
     traceEnabled_ = project->traceEnabled;
     serialTerminalOpen_ = project->serialTerminalOpen;
+    serialLineEnding_ = project->serialLineEnding;
+    serialFileLineEnding_ = project->serialFileLineEnding;
+    serialFileLineDelayMs_ = project->serialFileLineDelayMs;
     pendingWatchpointStop_.clear();
     const auto& editor = project->editor;
     assemblyEditorState_ = {};

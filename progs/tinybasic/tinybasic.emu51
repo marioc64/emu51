@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "unified_memory": false,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": true,
+  "cpu_model": "8052",
+  "hardware_module": "",
+  "cycle_exact": true,
+  "crystal_mhz": 11.0592,
+  "instructions_per_frame": 500,
+  "serial_input_ending": 2,
+  "serial_file_ending": 2,
+  "serial_file_line_delay_ms": 20,
+  "programs": [
+    {
+      "path": "tinybasic.asm"
+    }
+  ],
+  "reload_program": "tinybasic.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": false,
+    "open": false,
+    "draft": false,
+    "path": "",
+    "name": "untitled.asm",
+    "base_directory": "",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": []
+}
