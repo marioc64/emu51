@@ -2,6 +2,7 @@
 #pragma once
 
 #include "emu51_execution_settings.h"
+#include "../core/emu51_model.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -18,7 +19,7 @@ struct Emu51ProjectProgram {
 };
 
 struct Emu51ProjectWatchpoint {
-    // 0: internal RAM/SFR changes, 1: external data, 2: program.
+    // 0: direct RAM/SFR changes, 1: external data, 2: program, 3: internal RAM changes.
     int space = 0;
     std::uint16_t address = 0;
     bool read = false, write = true, enabled = true;
@@ -33,6 +34,7 @@ struct Emu51ProjectEditor {
 struct Emu51Project {
     bool unified = true, debuggerOpen = false, traceEnabled = false;
     bool serialTerminalOpen = false;
+    Emu51Model cpuModel = Emu51Model::i8051;
     std::string hardwareModule;
     Emu51ExecutionSettings execution;
     std::vector<Emu51ProjectProgram> programs;

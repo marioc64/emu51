@@ -43,10 +43,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		++PC;
 		break;
 	case 0x06: //inc @R0
-		_inc(SFR[R[0]]);
+		_inc(indirect(R[0]));
 		break;
 	case 0x07: //inc @R1
-		_inc(SFR[R[1]]);
+		_inc(indirect(R[1]));
 		break;
 	case 0x08: //inc R0
 		_inc(R[0]);
@@ -79,10 +79,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_op_dec_direct();
 		break;
 	case 0x16: //dec @R0
-		_dec(SFR[R[0]]);
+		_dec(indirect(R[0]));
 		break;
 	case 0x17: //dec @R1
-		_dec(SFR[R[1]]);
+		_dec(indirect(R[1]));
 		break;
 	case 0x18: // dec R0
 		_dec(R[0]);
@@ -143,10 +143,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_add_a(readDirect(readProg(++PC)));
 		break;
 	case 0x26:  // add A,@R0
-		_add_a(SFR[R[0]]);
+		_add_a(indirect(R[0]));
 		break;
 	case 0x27:  // add A,@R1
-		_add_a(SFR[R[1]]);
+		_add_a(indirect(R[1]));
 		break;
 	case 0x28: //add A,R0
 		_add_a(R[0]);
@@ -180,10 +180,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_addc_a(readDirect(readProg(++PC)));
 		break;
 	case 0x36:  // addc A,@R0
-		_addc_a(SFR[R[0]]);
+		_addc_a(indirect(R[0]));
 		break;
 	case 0x37:  // addc A,@R1
-		_addc_a(SFR[R[1]]);
+		_addc_a(indirect(R[1]));
 		break;
 	case 0x38: //addc A,R0
 		_addc_a(R[0]);
@@ -250,10 +250,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_xrl(readDirect(readProg(++PC)));
 		break;
 	case 0x66:  // xrl A,@R0
-		_xrl(SFR[R[0]]);
+		_xrl(indirect(R[0]));
 		break;
 	case 0x67:  // xrl A,@R1
-		_xrl(SFR[R[1]]);
+		_xrl(indirect(R[1]));
 		break;
 	case 0x68:  // xrl A,R0
 		_xrl(R[0]);
@@ -288,10 +288,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		break;
 	}
 	case 0xc6:  // xch A,@R0
-		_xch(SFR[R[0]]);
+		_xch(indirect(R[0]));
 		break;
 	case 0xc7:  // xch A,@R1
-		_xch(SFR[R[1]]);
+		_xch(indirect(R[1]));
 		break;
 	case 0xc8:  // xch A,R0
 		_xch(R[0]);
@@ -345,10 +345,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_op_movc_a_pc();
 		break;
 	case 0xe6:  // mov A,@R0
-		_mova(SFR[R[0]]);
+		_mova(indirect(R[0]));
 		break;
 	case 0xe7:  // mov A,@R1
-		_mova(SFR[R[1]]);
+		_mova(indirect(R[1]));
 		break;
 	case 0xf6:  // mov @R0,A
 		_mov_indirect_a(0);
@@ -508,10 +508,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_orl(R[7]);
 		break;
 	case 0x46: // orl A,@R0
-		_orl(SFR[R[0]]);
+		_orl(indirect(R[0]));
 		break;
 	case 0x47: // orl A,@R1
-		_orl(SFR[R[1]]);
+		_orl(indirect(R[1]));
 		break;
 	case 0x54:  // anl A,#(data)
 		_anl(readProg(++PC));
@@ -550,10 +550,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_anl(R[7]);
 		break;
 	case 0x56: // anl A,@R0
-		_anl(SFR[R[0]]);
+		_anl(indirect(R[0]));
 		break;
 	case 0x57: // anl A,@R1
-		_anl(SFR[R[1]]);
+		_anl(indirect(R[1]));
 		break;
 	case 0xa2: // mov C,(bit)
 		_op_mov_c_bit();
@@ -608,10 +608,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_op_cjne(Acc, readDirect(readProg(++PC)));
 		break;
 	case 0xb6: // cjne @R0,#(byte),offset
-		_op_cjne(SFR[R[0]], readProg(++PC));
+		_op_cjne(indirect(R[0]), readProg(++PC));
 		break;
 	case 0xb7: // cjne @R1,#(byte),offset
-		_op_cjne(SFR[R[1]], readProg(++PC));
+		_op_cjne(indirect(R[1]), readProg(++PC));
 		break;
 	case 0xb8: // cjne R0..R7,#(byte),offset
 	case 0xb9:
@@ -643,10 +643,10 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_subb_a(readDirect(readProg(++PC)));
 		break;
 	case 0x96: // subb A,@R0
-		_subb_a(SFR[R[0]]);
+		_subb_a(indirect(R[0]));
 		break;
 	case 0x97: // subb A,@R1
-		_subb_a(SFR[R[1]]);
+		_subb_a(indirect(R[1]));
 		break;
 	case 0x98: // subb A,R0
 		_subb_a(R[0]);
@@ -776,25 +776,25 @@ inline void emu51::_mov_direct_reg(int regIndex)
 
 inline void emu51::_mov_indirect_a(int indirectIndex)
 {
-	SFR[R[indirectIndex]] = Acc;
+	indirect(R[indirectIndex]) = Acc;
 	++PC;
 }
 
 inline void emu51::_mov_indirect_direct(int indirectIndex)
 {
-	SFR[R[indirectIndex]] = readDirect(readProg(++PC));
+	indirect(R[indirectIndex]) = readDirect(readProg(++PC));
 	++PC;
 }
 
 inline void emu51::_mov_indirect_imm(int indirectIndex)
 {
-	SFR[R[indirectIndex]] = readProg(++PC);
+	indirect(R[indirectIndex]) = readProg(++PC);
 	++PC;
 }
 
 inline void emu51::_mov_direct_indirect(int indirectIndex)
 {
-	writeDirect(readProg(++PC), SFR[R[indirectIndex]]);
+	writeDirect(readProg(++PC), indirect(R[indirectIndex]));
 	++PC;
 }
 
@@ -864,16 +864,16 @@ inline std::uint16_t emu51::_decode_addr11(std::uint8_t opcode)
 inline void emu51::_push16(std::uint16_t value)
 {
 	SP = static_cast<std::uint8_t>(SP + 1);
-	SFR[SP] = static_cast<std::uint8_t>(value & 0x00ff);
+	indirect(SP) = static_cast<std::uint8_t>(value & 0x00ff);
 	SP = static_cast<std::uint8_t>(SP + 1);
-	SFR[SP] = static_cast<std::uint8_t>(value >> 8);
+	indirect(SP) = static_cast<std::uint8_t>(value >> 8);
 }
 
 inline std::uint16_t emu51::_pop16()
 {
-	const std::uint8_t high = SFR[SP];
+	const std::uint8_t high = indirect(SP);
 	SP = static_cast<std::uint8_t>(SP - 1);
-	const std::uint8_t low = SFR[SP];
+	const std::uint8_t low = indirect(SP);
 	SP = static_cast<std::uint8_t>(SP - 1);
 	return static_cast<std::uint16_t>((static_cast<std::uint16_t>(high) << 8) | low);
 }
@@ -1006,8 +1006,8 @@ inline void emu51::_op_da_a()
 inline void emu51::_op_xchd_a_indirect(int indirectIndex)
 {
 	++PC;
-	const std::uint8_t tmp = SFR[R[indirectIndex]];
-	SFR[R[indirectIndex]] = static_cast<std::uint8_t>((tmp & 0xf0) | (Acc & 0x0f));
+	const std::uint8_t tmp = indirect(R[indirectIndex]);
+	indirect(R[indirectIndex]) = static_cast<std::uint8_t>((tmp & 0xf0) | (Acc & 0x0f));
 	Acc = static_cast<std::uint8_t>((Acc & 0xf0) | (tmp & 0x0f));
 }
 
@@ -1036,14 +1036,16 @@ inline void emu51::_op_mov_bit_c()
 inline void emu51::_op_push_direct()
 {
 	SP = static_cast<std::uint8_t>(SP + 1);
-	SFR[SP] = readDirect(readProg(++PC));
+	indirect(SP) = readDirect(readProg(++PC));
 	++PC;
 }
 
 inline void emu51::_op_pop_direct()
 {
-	writeDirect(readProg(++PC), SFR[SP]);
+	const auto value = indirect(SP);
+	// POP SP must load the popped value after decrementing the old pointer.
 	SP = static_cast<std::uint8_t>(SP - 1);
+	writeDirect(readProg(++PC), value);
 	++PC;
 }
 

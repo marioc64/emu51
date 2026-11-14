@@ -192,19 +192,34 @@ void Emu51ImguiApp::drawSerialTerminal()
         cpu_.SCON, cpu_.SBUF, cpu_.SCON & 1u, (cpu_.SCON >> 1) & 1u);
     const double crystal = crystalMHz_ * 1'000'000.0;
     const unsigned timerMode = (cpu_.TMOD >> 4) & 3;
+    const unsigned t2con = cpu_.modelInfo().timer2 ? cpu_.readDirect(0xc8) : 0;
+    const bool txTimer2 = (mode == 1 || mode == 3) && (t2con & bit4);
+    const bool rxTimer2 = (mode == 1 || mode == 3) && (t2con & bit5);
     if (mode == 0 || mode == 2)
         ImGui::Text("Nominal baud: %.2f", crystal / (mode == 0 ? 12 : ((cpu_.PCON & bit7) ? 32 : 64)));
-    else if (timerMode == 2)
-        ImGui::Text("Nominal baud: %.2f (Timer 1 mode 2)", crystal / 12 / (256 - cpu_.TH1) / ((cpu_.PCON & bit7) ? 16 : 32));
-    else
-        ImGui::TextDisabled("Baud clock: Timer 1 overflow (timer mode %u)", timerMode);
+    else {
+        for (const bool transmit : {true, false}) {
+            const bool timer2 = transmit ? txTimer2 : rxTimer2;
+            const char* direction = transmit ? "TX" : "RX";
+            if (timer2) {
+                const unsigned reload = (cpu_.readDirect(0xcb) << 8) | cpu_.readDirect(0xca);
+                if (t2con & bit1) ImGui::TextDisabled("%s baud clock: Timer 2 external counter", direction);
+                else ImGui::Text("%s nominal baud: %.2f (Timer 2)", direction, crystal / 32 / (65536 - reload));
+            } else if (timerMode == 2)
+                ImGui::Text("%s nominal baud: %.2f (Timer 1 mode 2)", direction,
+                    crystal / 12 / (256 - cpu_.TH1) / ((cpu_.PCON & bit7) ? 16 : 32));
+            else ImGui::TextDisabled("%s baud clock: Timer 1 overflow (timer mode %u)", direction, timerMode);
+        }
+    }
     ImGui::TextDisabled("%s | %zu pending input bytes | TX %s", running_ ? "Running" : "Paused",
         cpu_.pendingSerialReceiveCount(), cpu_.serialTransmitBusy() ? "busy" : "idle");
     ImGui::TextDisabled("Output retains the latest %zu bytes.", emu51::kSerialQueueCapacity);
     if (!(cpu_.SCON & bit4)) ImGui::TextWrapped("Receiver disabled (REN=0). Queued input waits until firmware enables it.");
-    if ((mode == 1 || mode == 3) && (!(cpu_.TCON & bit6) || (cpu_.TMOD & bit6) || (cpu_.TMOD & 3) == 3 ||
+    if ((mode == 1 || mode == 3) && (!txTimer2 || !rxTimer2) && (!(cpu_.TCON & bit6) || (cpu_.TMOD & bit6) || (cpu_.TMOD & 3) == 3 ||
         timerMode == 3 || ((cpu_.TMOD & bit7) && !(cpu_.P3 & bit3))))
         ImGui::TextWrapped("Timer 1 baud clock is stopped or uses unsupported counter/split mode.");
+    if ((txTimer2 || rxTimer2) && !(t2con & bit2))
+        ImGui::TextWrapped("Timer 2 baud clock is stopped (TR2=0).");
     ImGui::Checkbox("Hex output", &serialHexOutput_);
     ImGui::SameLine();
     if (ImGui::Button("Clear output")) serialTerminalOutput_.clear();

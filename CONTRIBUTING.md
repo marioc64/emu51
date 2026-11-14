@@ -61,6 +61,23 @@ handlers generated from the same opcode implementation. Both paths finish throug
 timers, and services supported interrupts. The benchmark checks their end-state
 hashes and cycle totals; regression tests also compare intermediate behavior.
 
+`core/emu51_model.h` defines stable 8051/8052 IDs and capabilities. `IRAM` and
+`SFR` are separate storage: use `readDirect()`/`writeDirect()` for direct operands,
+`readIndirect()`/`writeIndirect()` for host RAM access, and the internal
+`indirect()` reference helper for opcode/stack operands. Register banks live in
+IRAM. Raw `SFR` indices below 80h no longer represent RAM. `setModel()` resets CPU
+state; `init()` preserves the selected model. External program/data mappings are
+independent of model selection.
+
+`core/emu51_timer2.cpp` advances classic 8052 Timer 2 and supplies overflow counts
+to the UART. TCLK/RCLK select independent serial clocks; Timer 2 interrupts have
+their own source, priority and vector. External T2/T2EX inputs are sampled at
+instruction boundaries, not oscillator phases. `model_tests.cpp` exercises both
+dispatch implementations. `validation_tests.cpp` supplies independent exhaustive
+arithmetic/flag checks, opcode cycle costs and 8051 memory/stack edge cases from
+the manufacturer instruction specification. Project `cpu_model` defaults to `8051`; watchpoint space
+0 retains direct RAM/SFR semantics and space 3 observes internal RAM separately.
+
 ## Assembly and loading
 
 `core/emu51_serial.cpp` owns bounded byte queues and transmit/receive frame

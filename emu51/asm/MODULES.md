@@ -15,9 +15,10 @@ so do not also include the base module in the same assembly unit.
 | `$MOD89C2051` | Atmel/Microchip AT89C2051 | Reduced register map with ports 1/3; no P0, P2, WR, RD or Timer 2 symbols |
 
 These files define assembler symbols only. They do not select an emulated device,
-change memory sizes or implement peripherals. The emulator's existing 8051 core
-remains the runtime model; Timer 2, watchdogs, dual-DPTR switching, EEPROM and
-analog comparators do not gain device-specific behavior by including a module.
+change memory sizes or implement peripherals. Select the 8051 or 8052 runtime
+separately in Execution settings (or with `--model` in console tools). The 8052
+runtime implements upper RAM and classic Timer 2. Watchdogs, dual-DPTR switching,
+EEPROM and analog comparators remain unsupported.
 Assembly for an external device can still use its documented register addresses.
 The assembler does not enforce a device's flash size or pin restrictions.
 

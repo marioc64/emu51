@@ -409,8 +409,8 @@ struct Emu51ImguiAppTestAccess {
             !app->resolveDebugAddress("loop+1"), "Symbol lookup preserves bounded hex input and rejects unknown expressions");
         check(app->labelAtAddress(0x102) == "LOOP" && app->labelAtAddress(0x30).empty(),
             "Disassembly labels use program labels rather than data symbols at the same numeric address");
-        app->cpu_.SFR[0x30] = 0xab;
-        app->cpu_.SFR[0x20] = 0x80;
+        app->cpu_.IRAM[0x30] = 0xab;
+        app->cpu_.IRAM[0x20] = 0x80;
         app->cpu_.SFR[0x90] = 1;
         check(app->symbolValue("COUNTER") == 0xab && app->symbolValue("FLAG") == 1 &&
             app->symbolValue("READY") == 1 && app->symbolValue("LIMIT") == 0x1234 &&
@@ -504,6 +504,54 @@ struct Emu51ImguiAppTestAccess {
             "Symbol names take precedence over bare hex; explicit hex remains unambiguous");
     }
 
+    static void test_cpu_models(const fs::path& root)
+    {
+        auto app = create();
+        check(app->cpu_.model() == Emu51Model::i8051 && app->clampMonitorAddress(app->internalRamMonitor_, 255) == 127,
+            "New sessions default to 8051 with a 128-byte internal RAM monitor");
+        app->unifiedMemory_[0] = 0x76; app->unifiedMemory_[1] = 0x42; // MOV @R0,#42h
+        app->running_ = true; app->cpu_.PC = 99; app->cpu_.queueSerialReceive(1);
+        app->setCpuModel(Emu51Model::i8052);
+        check(!app->running_ && app->cpu_.PC == 0 && app->unifiedMemory_[0] == 0x76 &&
+            app->cpu_.pendingSerialReceiveCount() == 0 && app->clampMonitorAddress(app->internalRamMonitor_, 255) == 255,
+            "Changing CPU resets and pauses without clearing loaded program memory");
+        app->cpu_.Ri(0, 0x90);
+        app->watchpoints_ = {{Emu51ImguiApp::WatchSpace::Iram, 0x90, false, true, true}};
+        app->running_ = true; app->executeInstruction();
+        check(!app->running_ && app->readMonitorByte(app->internalRamMonitor_, 0x90) == 0x42 && app->cpu_.P1 == 0xff &&
+            !app->pendingWatchpointStop_.empty(), "Upper RAM monitor and RAM change watchpoints are separate from SFRs");
+        app->cpu_.IRAM[0x90] = 0;
+        app->watchpoints_ = {{Emu51ImguiApp::WatchSpace::Internal, 0x90, false, true, true}};
+        app->cpu_.PC = 0; app->running_ = true; app->executeInstruction();
+        check(app->running_ && app->pendingWatchpointStop_.empty(), "A direct SFR watch does not react to upper RAM writes");
+        app->watchpoints_ = {{Emu51ImguiApp::WatchSpace::Iram, 0x90, false, true, true}};
+        const auto path = root / "cpu-model.emu51";
+        check(app->saveProjectToPath(path), "CPU model project saves");
+        auto restored = create();
+        check(restored->openProjectFromPath(path) && restored->cpu_.model() == Emu51Model::i8052 &&
+            restored->watchpoints_.size() == 1 && restored->watchpoints_[0].space == Emu51ImguiApp::WatchSpace::Iram,
+            "CPU model and upper RAM watchpoints survive project restoration");
+        std::string document = read(path);
+        const std::string field = "\"cpu_model\":\"8052\",";
+        const auto at = document.find(field);
+        check(at != std::string::npos, "Project stores a stable CPU model ID");
+        if (at != std::string::npos) {
+            document.erase(at, field.size());
+            write(root / "old-cpu.emu51", document);
+            check(restored->openProjectFromPath(root / "old-cpu.emu51") && restored->cpu_.model() == Emu51Model::i8051,
+                "Projects without a CPU model retain the 8051 default");
+            document.insert(at, "\"cpu_model\":\"unknown\",");
+            write(root / "bad-cpu.emu51", document);
+            restored->cpu_.PC = 123; restored->running_ = true;
+            check(!restored->openProjectFromPath(root / "bad-cpu.emu51") && restored->cpu_.PC == 123 && restored->running_,
+                "Unknown CPU models fail validation before changing live state");
+        }
+        app->internalRamMonitor_.start = 0xf0; app->setCpuModel(Emu51Model::i8051);
+        check(app->internalRamMonitor_.start == 0x7f, "Switching to 8051 clamps the internal RAM monitor");
+        app->requestExecutionSettings();
+        check(app->executionSettingsDialog_.cpuModel == 0, "Execution settings display the active CPU model");
+    }
+
     static void test_project_sessions(const fs::path& root)
     {
         const auto folder = root / "project folder";
@@ -590,7 +638,7 @@ struct Emu51ImguiAppTestAccess {
         for (const auto& [from, to] : std::vector<std::pair<std::string, std::string>>{
                 {"\"version\":1", "\"version\":99"}, {"\"crystal_mhz\":11.0592", "\"crystal_mhz\":-1"},
                 {"\"binary_address\":1024", "\"binary_address\":65536"},
-                {"\"space\":1", "\"space\":3"}, {"\"breakpoints\":[256,512]", "\"breakpoints\":[-1]"},
+                {"\"space\":1", "\"space\":4"}, {"\"breakpoints\":[256,512]", "\"breakpoints\":[-1]"},
                 {"\"version\":1", "\"version\":1,\"version\":1"}}) {
             std::string malformed = document;
             const auto at = malformed.find(from);
@@ -969,7 +1017,8 @@ struct Emu51ImguiAppTestAccess {
         check(!app->running_ && !app->stepTask_ && app->cpu_.PC == 0x10,
             "Breakpoints interrupt and cancel Step Over tasks");
         app->breakpoints_.clear(); app->cpu_.PC = 0x20; app->unifiedMemory_[0x20] = 0x22;
-        app->cpu_.SP = 0; app->cpu_.SFR[0] = 0x12; app->cpu_.SFR[255] = 0x34;
+        app->cpu_.setModel(Emu51Model::i8052);
+        app->cpu_.PC = 0x20; app->cpu_.SP = 0; app->cpu_.IRAM[0] = 0x12; app->cpu_.IRAM[255] = 0x34;
         app->stepOut(); app->tick();
         check(!app->running_ && !app->stepTask_ && app->cpu_.PC == 0x1234 && app->cpu_.SP == 0xfe,
             "Step Out handles a wrapped stack using its return address and depth");
@@ -1050,6 +1099,7 @@ int main()
     Emu51ImguiAppTestAccess::test_in_memory_compilation();
     Emu51ImguiAppTestAccess::test_debugger(root);
     Emu51ImguiAppTestAccess::test_symbolic_debugging(root);
+    Emu51ImguiAppTestAccess::test_cpu_models(root);
     Emu51ImguiAppTestAccess::test_project_sessions(root);
     Emu51ImguiAppTestAccess::test_recent_projects(root);
     Emu51ImguiAppTestAccess::test_hardware_projects(root);

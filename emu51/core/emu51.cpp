@@ -130,6 +130,7 @@ int emu51::interrupt_priority(interrupt_source src)
 	case interrupt_source::ext1: return checkB(0xba) ? 1 : 0; // PX1
 	case interrupt_source::t1:   return checkB(0xbb) ? 1 : 0; // PT1
 	case interrupt_source::serial: return (IP & bit4) ? 1 : 0; // PS
+	case interrupt_source::t2: return (IP & bit5) ? 1 : 0; // PT2
 	default: return 0;
 	}
 }
@@ -143,6 +144,7 @@ bool emu51::interrupt_pending_enabled(interrupt_source src)
 	case interrupt_source::ext1: return checkB(0x8b) && checkB(0xaa); // IE1 && EX1
 	case interrupt_source::t1:   return checkB(0x8f) && checkB(0xab); // TF1 && ET1
 	case interrupt_source::serial: return (SCON & (bit0 | bit1)) && (IE & bit4);
+	case interrupt_source::t2: return (model_ == Emu51Model::i8052) && (SFR[0xc8] & (bit7 | bit6)) && (IE & bit5);
 	default: return false;
 	}
 }
@@ -162,6 +164,7 @@ void emu51::clear_interrupt_flag(interrupt_source src)
 		break;
 	case interrupt_source::t1:   clrB(0x8f); break; // TF1
 	case interrupt_source::serial: break; // RI/TI are cleared only by software.
+	case interrupt_source::t2: break; // TF2/EXF2 are cleared only by software.
 	}
 }
 
@@ -174,6 +177,7 @@ std::uint16_t emu51::interrupt_vector(interrupt_source src)
 	case interrupt_source::ext1: return 0x0013;
 	case interrupt_source::t1:   return 0x001b;
 	case interrupt_source::serial: return 0x0023;
+	case interrupt_source::t2: return 0x002b;
 	default: return 0x0000;
 	}
 }
@@ -210,7 +214,8 @@ bool emu51::try_service_interrupt()
 		interrupt_source::t0,
 		interrupt_source::ext1,
 		interrupt_source::t1,
-		interrupt_source::serial
+		interrupt_source::serial,
+		interrupt_source::t2
 	};
 
 	std::optional<interrupt_source> selected;
@@ -233,9 +238,9 @@ bool emu51::try_service_interrupt()
 		return false;
 
 	SP = SP + 1;
-	SFR[SP] = static_cast<std::uint8_t>(PC & 0x00ff);
+	indirect(SP) = static_cast<std::uint8_t>(PC & 0x00ff);
 	SP = SP + 1;
-	SFR[SP] = static_cast<std::uint8_t>(PC >> 8);
+	indirect(SP) = static_cast<std::uint8_t>(PC >> 8);
 	clear_interrupt_flag(*selected);
 	push_interrupt_source(*selected);
 	PC = interrupt_vector(*selected);
@@ -256,9 +261,10 @@ void emu51::init()
 		src = 0;
 	for (i = 0; i < 256; i++)
 	{
-		SFR[i] = 0; // all regs in internal RAM & SFR
+		SFR[i] = IRAM[i] = 0;
 	}
-	R = SFR; // PSW was reset to bank 0; discard the previously selected bank.
+	timer2Pins_ = previousTimer2Pins_ = 0x03;
+	R = IRAM; // PSW was reset to bank 0; discard the previously selected bank.
 	// Some SFR registers has other default value than 0
 	P0 = 0xff;
 	P1 = 0xff;
@@ -291,7 +297,7 @@ int emu51::finalize_instruction(std::uint8_t cycles)
 
 	// setup Rx bank
 	tmpB = static_cast<std::uint8_t>((check_RS1() ? 2 : 0) | (check_RS0() ? 1 : 0));
-	R = &SFR[tmpB << 3];
+	R = &IRAM[tmpB << 3];
 
 	advance_cycles(cycles);
 	if (try_service_interrupt()) {
@@ -405,7 +411,8 @@ void emu51::advance_cycles(std::uint8_t cycles)
 			break;
 		}
 	}
-	advance_serial(cycles, timer1Overflows);
+	const unsigned timer2Overflows = (model_ == Emu51Model::i8052) ? advance_timer2(cycles) : 0;
+	advance_serial(cycles, timer1Overflows, timer2Overflows);
 }
 
 int emu51::process_table()
@@ -604,11 +611,11 @@ void emu51::setB(std::uint8_t bit) // (bit) <- 1
 	tmpB = bit & 0xf8;
 	if (bit >= 128)
 	{         // bit set in SFR area
-		SFR[tmpB] = SFR[tmpB] | (1 << tmpbit);
+		if (hasSfr(tmpB)) SFR[tmpB] |= static_cast<std::uint8_t>(1 << tmpbit);
 	}
 	else {  // bit set in int. RAM
 		tmpB = (tmpB >> 3) + 32;
-		SFR[tmpB] = SFR[tmpB] | (1 << tmpbit);
+		IRAM[tmpB] |= static_cast<std::uint8_t>(1 << tmpbit);
 	}
 }
 void emu51::clrB(std::uint8_t bit) // (bit) <- 0
@@ -619,11 +626,11 @@ void emu51::clrB(std::uint8_t bit) // (bit) <- 0
 	tmpB = bit & 0xf8;
 	if (bit >= 128)
 	{         // bit clear in SFR area
-		SFR[tmpB] = SFR[tmpB] & ~(1 << tmpbit);
+		if (hasSfr(tmpB)) SFR[tmpB] &= static_cast<std::uint8_t>(~(1 << tmpbit));
 	}
 	else {  // bit clear in int. RAM
 		tmpB = (tmpB >> 3) + 32;
-		SFR[tmpB] = SFR[tmpB] & ~(1 << tmpbit);
+		IRAM[tmpB] &= static_cast<std::uint8_t>(~(1 << tmpbit));
 	}
 }
 bool emu51::checkB(std::uint8_t bit) // returns (bit)
@@ -634,11 +641,11 @@ bool emu51::checkB(std::uint8_t bit) // returns (bit)
 	tmpB = bit & 0xf8;
 	if (bit >= 128)
 	{         // bit check in SFR area
-		return SFR[tmpB] & 1 << tmpbit;
+		return (hasSfr(tmpB) ? SFR[tmpB] : 0xff) & (1 << tmpbit);
 	}
 	else {  // bit check in int. RAM
 		tmpB = (tmpB >> 3) + 32;
-		return SFR[tmpB] & 1 << tmpbit;
+		return IRAM[tmpB] & (1 << tmpbit);
 	}
 }
 bool emu51::check_RS0(void)

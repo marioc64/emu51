@@ -35,6 +35,8 @@ inline emu51_asm::PreparedProgram prepareProgram(const std::filesystem::path& pa
 inline std::uint64_t hashState(emu51& cpu) {
     std::uint64_t hash = 14695981039346656037ull;
     const auto mix = [&hash](std::uint8_t value) { hash = (hash ^ value) * 1099511628211ull; };
+    mix(static_cast<std::uint8_t>(cpu.model()));
+    for (const auto value : cpu.IRAM) mix(value);
     for (const auto value : cpu.SFR) mix(value);
     for (unsigned i = 0; i < 65536; ++i) {
         mix(cpu.readData(static_cast<std::uint16_t>(i)));

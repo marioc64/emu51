@@ -166,11 +166,11 @@ void test_ajmp_acall_page_behavior() {
             check(f.cpu.SP == 0x22,
                   "acall_addr11_sp",
                   "op=%02x SP=%02x expected=22", acall_ops[i], f.cpu.SP);
-            check(f.cpu.SFR[0x21] == static_cast<std::uint8_t>((pc + 2) & 0xff) &&
-                      f.cpu.SFR[0x22] == static_cast<std::uint8_t>((pc + 2) >> 8),
+            check(f.cpu.IRAM[0x21] == static_cast<std::uint8_t>((pc + 2) & 0xff) &&
+                      f.cpu.IRAM[0x22] == static_cast<std::uint8_t>((pc + 2) >> 8),
                   "acall_addr11_stack",
                   "op=%02x ret=%02x%02x expected=%04x",
-                  acall_ops[i], f.cpu.SFR[0x22], f.cpu.SFR[0x21], pc + 2);
+                  acall_ops[i], f.cpu.IRAM[0x22], f.cpu.IRAM[0x21], pc + 2);
         }
     }
 
@@ -198,8 +198,8 @@ void test_ajmp_acall_page_behavior() {
         check(f.cpu.PC == 0x0403 && f.cpu.SP == 0x07, "ret", "PC=%04x SP=%02x", f.cpu.PC, f.cpu.SP);
 
         f.cpu.SP = 0x09;
-        f.cpu.SFR[0x08] = 0xaa;
-        f.cpu.SFR[0x09] = 0xbb;
+        f.cpu.IRAM[0x08] = 0xaa;
+        f.cpu.IRAM[0x09] = 0xbb;
         f.place(0x0500, 0x32);
         f.step();
         check(f.cpu.PC == 0xbbaa && f.cpu.SP == 0x07, "reti", "PC=%04x SP=%02x", f.cpu.PC, f.cpu.SP);
@@ -243,24 +243,24 @@ void test_xchd_keeps_upper_nibble() {
         Fixture f;
         f.cpu.Ri(0, 0x30);
         f.cpu.Acc = 0xab;
-        f.cpu.SFR[0x30] = 0xcd;
+        f.cpu.IRAM[0x30] = 0xcd;
         f.place(0x0000, 0xd6);
         f.step();
-        check(f.cpu.Acc == 0xad && f.cpu.SFR[0x30] == 0xcb,
+        check(f.cpu.Acc == 0xad && f.cpu.IRAM[0x30] == 0xcb,
               "xchd_r0",
-              "Acc=%02x mem=%02x expected Acc=ad mem=cb", f.cpu.Acc, f.cpu.SFR[0x30]);
+              "Acc=%02x mem=%02x expected Acc=ad mem=cb", f.cpu.Acc, f.cpu.IRAM[0x30]);
     }
 
     {
         Fixture f;
         f.cpu.Ri(1, 0x31);
         f.cpu.Acc = 0x41;
-        f.cpu.SFR[0x31] = 0x9e;
+        f.cpu.IRAM[0x31] = 0x9e;
         f.place(0x0000, 0xd7);
         f.step();
-        check(f.cpu.Acc == 0x4e && f.cpu.SFR[0x31] == 0x91,
+        check(f.cpu.Acc == 0x4e && f.cpu.IRAM[0x31] == 0x91,
               "xchd_r1",
-              "Acc=%02x mem=%02x expected Acc=4e mem=91", f.cpu.Acc, f.cpu.SFR[0x31]);
+              "Acc=%02x mem=%02x expected Acc=4e mem=91", f.cpu.Acc, f.cpu.IRAM[0x31]);
     }
 }
 
@@ -345,11 +345,11 @@ void test_mov_direct_imm_and_mov_bit_c_regressions() {
     {
         Fixture f;
         f.place(0x0000, 0x75, 0x22, 0x5a);
-        f.cpu.SFR[0x22] = 0x00;
+        f.cpu.IRAM[0x22] = 0x00;
         f.step();
-        check(f.cpu.SFR[0x22] == 0x5a && f.cpu.PC == 0x0003,
+        check(f.cpu.IRAM[0x22] == 0x5a && f.cpu.PC == 0x0003,
               "mov_direct_imm_sequence",
-              "SFR[22]=%02x PC=%04x expected 5a/0003", f.cpu.SFR[0x22], f.cpu.PC);
+              "IRAM[22]=%02x PC=%04x expected 5a/0003", f.cpu.IRAM[0x22], f.cpu.PC);
     }
 
     // Regression: MOV bit,C must use the same decoded bit address for both set and clear paths.
@@ -672,27 +672,27 @@ void test_bit_address_mapping_and_cpl_roundtrip() {
     mark(0xd2); // SETB bit
     mark(0xc2); // CLR bit
 
-    // bit 0x10 maps to SFR[0x22].bit0 (middle of iram bit-addressable range).
+    // bit 0x10 maps to IRAM[0x22].bit0 (middle of iram bit-addressable range).
     {
         Fixture f;
-        f.cpu.SFR[0x22] = 0x00;
+        f.cpu.IRAM[0x22] = 0x00;
         f.place(0x0000, 0xd2, 0x10);
         f.step();
-        check(f.cpu.SFR[0x22] == 0x01,
+        check(f.cpu.IRAM[0x22] == 0x01,
               "bit_iram_mid_addr_setb",
-              "SFR[22]=%02x expected 01", f.cpu.SFR[0x22]);
+              "IRAM[22]=%02x expected 01", f.cpu.IRAM[0x22]);
 
         f.place(0x0002, 0xb2, 0x10);
         f.step();
-        check(f.cpu.SFR[0x22] == 0x00,
+        check(f.cpu.IRAM[0x22] == 0x00,
               "bit_iram_mid_addr_cpl_clears",
-              "SFR[22]=%02x expected 00", f.cpu.SFR[0x22]);
+              "IRAM[22]=%02x expected 00", f.cpu.IRAM[0x22]);
 
         f.place(0x0004, 0xb2, 0x10);
         f.step();
-        check(f.cpu.SFR[0x22] == 0x01,
+        check(f.cpu.IRAM[0x22] == 0x01,
               "bit_iram_mid_addr_cpl_sets",
-              "SFR[22]=%02x expected 01", f.cpu.SFR[0x22]);
+              "IRAM[22]=%02x expected 01", f.cpu.IRAM[0x22]);
     }
 
     // bit 0xa8 maps to SFR[0xa8].bit0 (IE.0/EX0).
@@ -828,34 +828,34 @@ void test_pc_stack_bit_and_branch_wrap_edges() {
     {
         Fixture f;
         f.cpu.SP = 0xff;
-        f.cpu.SFR[0x20] = 0xa5;
+        f.cpu.IRAM[0x20] = 0xa5;
         f.place(0x0100, 0xc0, 0x20); // PUSH 20h wraps SP to 00h.
         f.step();
-        check(f.cpu.SP == 0x00 && f.cpu.SFR[0x00] == 0xa5,
+        check(f.cpu.SP == 0x00 && f.cpu.IRAM[0x00] == 0xa5,
               "push_wraps_stack_pointer",
-              "SP=%02x SFR[00]=%02x expected 00/a5", f.cpu.SP, f.cpu.SFR[0x00]);
+              "SP=%02x IRAM[00]=%02x expected 00/a5", f.cpu.SP, f.cpu.IRAM[0x00]);
 
-        f.cpu.SFR[0x21] = 0x00;
-        f.place(0x0102, 0xd0, 0x21); // POP 21h reads SFR[00], then SP wraps to FFh.
+        f.cpu.IRAM[0x21] = 0x00;
+        f.place(0x0102, 0xd0, 0x21); // POP 21h reads IRAM[00], then SP wraps to FFh.
         f.step();
-        check(f.cpu.SP == 0xff && f.cpu.SFR[0x21] == 0xa5,
+        check(f.cpu.SP == 0xff && f.cpu.IRAM[0x21] == 0xa5,
               "pop_wraps_stack_pointer",
-              "SP=%02x SFR[21]=%02x expected ff/a5", f.cpu.SP, f.cpu.SFR[0x21]);
+              "SP=%02x IRAM[21]=%02x expected ff/a5", f.cpu.SP, f.cpu.IRAM[0x21]);
     }
 
     {
         Fixture f;
         f.place(0x0200, 0xd2, 0x00); // SETB bit 00h -> 20h.0
         f.step();
-        check((f.cpu.SFR[0x20] & 0x01) != 0,
+        check((f.cpu.IRAM[0x20] & 0x01) != 0,
               "setb_lowest_internal_bit",
-              "SFR[20]=%02x expected bit0 set", f.cpu.SFR[0x20]);
+              "IRAM[20]=%02x expected bit0 set", f.cpu.IRAM[0x20]);
 
         f.place(0x0202, 0xd2, 0x7f); // SETB bit 7Fh -> 2Fh.7
         f.step();
-        check((f.cpu.SFR[0x2f] & 0x80) != 0,
+        check((f.cpu.IRAM[0x2f] & 0x80) != 0,
               "setb_highest_internal_bit",
-              "SFR[2f]=%02x expected bit7 set", f.cpu.SFR[0x2f]);
+              "SFR[2f]=%02x expected bit7 set", f.cpu.IRAM[0x2f]);
 
         f.cpu.P0 = 0x00;
         f.place(0x0204, 0xd2, 0x80); // SETB P0.0
@@ -864,12 +864,12 @@ void test_pc_stack_bit_and_branch_wrap_edges() {
               "setb_lowest_sfr_bit",
               "P0=%02x expected bit0 set", f.cpu.P0);
 
-        f.cpu.SFR[0xf8] = 0xff;
-        f.place(0x0206, 0xc2, 0xff); // CLR F8h.7
+        f.cpu.B = 0xff;
+        f.place(0x0206, 0xc2, 0xf7); // CLR B.7
         f.step();
-        check((f.cpu.SFR[0xf8] & 0x80) == 0,
-              "clr_highest_sfr_bit",
-              "SFR[f8]=%02x expected bit7 clear", f.cpu.SFR[0xf8]);
+        check((f.cpu.B & 0x80) == 0,
+              "clr_highest_implemented_sfr_bit",
+              "B=%02x expected bit7 clear", f.cpu.B);
     }
 }
 
@@ -907,15 +907,15 @@ void test_stack_xch_coverage() {
     {
         Fixture f;
         f.cpu.SP = 0x07;
-        f.cpu.SFR[0x20] = 0x42;
+        f.cpu.IRAM[0x20] = 0x42;
         f.place(0x0000, 0xc0, 0x20);
         f.step();
-        check(f.cpu.SP == 0x08 && f.cpu.SFR[0x08] == 0x42, "push", "SP=%02x top=%02x", f.cpu.SP, f.cpu.SFR[0x08]);
+        check(f.cpu.SP == 0x08 && f.cpu.IRAM[0x08] == 0x42, "push", "SP=%02x top=%02x", f.cpu.SP, f.cpu.IRAM[0x08]);
 
-        f.cpu.SFR[0x20] = 0x00;
+        f.cpu.IRAM[0x20] = 0x00;
         f.place(0x0002, 0xd0, 0x20);
         f.step();
-        check(f.cpu.SP == 0x07 && f.cpu.SFR[0x20] == 0x42, "pop", "SP=%02x val=%02x", f.cpu.SP, f.cpu.SFR[0x20]);
+        check(f.cpu.SP == 0x07 && f.cpu.IRAM[0x20] == 0x42, "pop", "SP=%02x val=%02x", f.cpu.SP, f.cpu.IRAM[0x20]);
     }
 }
 
@@ -935,10 +935,10 @@ void test_mov_indirect_single_cycle_timing() {
         check(cycles == 1 && f.cpu.TL0 == 1 && f.cpu.TL1 == 1,
               "mov_indirect_single_cycle", "op=%02x cycles=%d TL0=%02x TL1=%02x",
               op, cycles, f.cpu.TL0, f.cpu.TL1);
-        check(f.cpu.SFR[0x40] == (immediate ? 0xa5 : 0x5a) &&
+        check(f.cpu.IRAM[0x40] == (immediate ? 0xa5 : 0x5a) &&
                   f.cpu.PC == (immediate ? 0x0202 : 0x0201),
               "mov_indirect_result", "op=%02x value=%02x PC=%04x",
-              op, f.cpu.SFR[0x40], f.cpu.PC);
+              op, f.cpu.IRAM[0x40], f.cpu.PC);
     }
 }
 
@@ -1309,16 +1309,16 @@ void test_init_resets_register_bank() {
         f.step();
         f.cpu.init();
         f.cpu.Ri(1, 0x5a);
-        check(f.cpu.SFR[1] == 0x5a && f.cpu.SFR[bank * 8 + 1] == 0,
+        check(f.cpu.IRAM[1] == 0x5a && f.cpu.IRAM[bank * 8 + 1] == 0,
               "init_register_access_uses_bank_zero",
               "previous bank=%d IRAM[01]=%02x old R1=%02x",
-              bank, f.cpu.SFR[1], f.cpu.SFR[bank * 8 + 1]);
+              bank, f.cpu.IRAM[1], f.cpu.IRAM[bank * 8 + 1]);
         f.place(0, 0x78, 0x42); // First instruction after reset: MOV R0,#42h
         f.step();
-        check(f.cpu.SFR[0] == 0x42 && f.cpu.SFR[bank * 8] == 0 && f.cpu.Ri(0) == 0x42,
+        check(f.cpu.IRAM[0] == 0x42 && f.cpu.IRAM[bank * 8] == 0 && f.cpu.Ri(0) == 0x42,
               "init_first_instruction_uses_bank_zero",
               "previous bank=%d IRAM[00]=%02x old R0=%02x R0=%02x",
-              bank, f.cpu.SFR[0], f.cpu.SFR[bank * 8], f.cpu.Ri(0));
+              bank, f.cpu.IRAM[0], f.cpu.IRAM[bank * 8], f.cpu.Ri(0));
     }
 }
 
@@ -1418,14 +1418,18 @@ void seed_operands_for_opcode(Fixture& f, std::uint8_t op) {
 
 void test_dispatch_equivalence() {
     std::mt19937 random(8051);
+    for (const auto model : {Emu51Model::i8051, Emu51Model::i8052})
     for (unsigned op = 0; op < 256; ++op) {
         Fixture sw, table;
+        sw.cpu.setModel(model); table.cpu.setModel(model);
         for (auto& byte : sw.mem) byte = static_cast<std::uint8_t>(random());
+        for (auto& byte : sw.cpu.IRAM) byte = static_cast<std::uint8_t>(random());
         for (auto& byte : sw.cpu.SFR) byte = static_cast<std::uint8_t>(random());
         sw.cpu.PSW = 0; // Both machines start in register bank zero.
         sw.cpu.IE = 0x9f;
         sw.place(0x1000, static_cast<std::uint8_t>(op), 0x40, 0x42);
         std::memcpy(table.mem, sw.mem, sizeof(sw.mem));
+        std::memcpy(table.cpu.IRAM, sw.cpu.IRAM, sizeof(sw.cpu.IRAM));
         std::memcpy(table.cpu.SFR, sw.cpu.SFR, sizeof(sw.cpu.SFR));
         table.cpu.PC = sw.cpu.PC;
         for (unsigned step = 0; step < 16; ++step) {
@@ -1434,6 +1438,7 @@ void test_dispatch_equivalence() {
             const int swCycles = sw.cpu.process();
             const int tableCycles = table.cpu.process_table();
             const bool equal = swCycles == tableCycles && sw.cpu.PC == table.cpu.PC &&
+                std::memcmp(sw.cpu.IRAM, table.cpu.IRAM, sizeof(sw.cpu.IRAM)) == 0 &&
                 std::memcmp(sw.cpu.SFR, table.cpu.SFR, sizeof(sw.cpu.SFR)) == 0 &&
                 std::memcmp(sw.mem, table.mem, sizeof(sw.mem)) == 0;
             check(equal, "dispatch_equivalence", "initial op=%02x step=%u differs", op, step);
@@ -1488,13 +1493,13 @@ void test_all_opcodes_basic_contract() {
         f.cpu.PSW &= static_cast<std::uint8_t>(~0x80); // C=0
         f.cpu.Ri(0, 0x22);
         f.cpu.Ri(1, 0x23);
-        f.cpu.SFR[0x20] = 0x01; // bit-addressable byte with bit0=1
-        f.cpu.SFR[0x22] = 0x05;
-        f.cpu.SFR[0x23] = 0x07;
-        f.cpu.SFR[0x24] = 0x01;
+        f.cpu.IRAM[0x20] = 0x01; // bit-addressable byte with bit0=1
+        f.cpu.IRAM[0x22] = 0x05;
+        f.cpu.IRAM[0x23] = 0x07;
+        f.cpu.IRAM[0x24] = 0x01;
         f.cpu.SP = 0x30;
-        f.cpu.SFR[0x31] = 0x34;
-        f.cpu.SFR[0x32] = 0x12;
+        f.cpu.IRAM[0x31] = 0x34;
+        f.cpu.IRAM[0x32] = 0x12;
         f.cpu.DPTR(0x3000);
         f.mem[0x3000] = 0x77;
         f.mem[0x3001] = 0x88;
@@ -1510,10 +1515,10 @@ void test_all_opcodes_basic_contract() {
         }
         if (is_bit_branch(op)) {
             // bit at address 0x20 is 0 (so JB/JBC not taken, JNB taken handled by relative offset +2).
-            f.cpu.SFR[0x24] = 0x00;
+            f.cpu.IRAM[0x24] = 0x00;
         }
         if (op == 0xd5) {
-            f.cpu.SFR[0x20] = 0x01; // djnz will decrement to 0 and not jump
+            f.cpu.IRAM[0x20] = 0x01; // djnz will decrement to 0 and not jump
         }
         if (op >= 0xd8 && op <= 0xdf) {
             f.cpu.Ri(op - 0xd8, 0x01); // decrement to 0 and not jump
@@ -1521,14 +1526,14 @@ void test_all_opcodes_basic_contract() {
         if (op >= 0xb4 && op <= 0xbf) {
             // Make compare equal so no jump.
             if (op == 0xb4 || op == 0xb5) { f.cpu.Acc = 0x20; }
-            if (op == 0xb6) { f.cpu.SFR[f.cpu.Ri(0)] = 0x20; }
-            if (op == 0xb7) { f.cpu.SFR[f.cpu.Ri(1)] = 0x20; }
+            if (op == 0xb6) { f.cpu.IRAM[f.cpu.Ri(0)] = 0x20; }
+            if (op == 0xb7) { f.cpu.IRAM[f.cpu.Ri(1)] = 0x20; }
             if (op >= 0xb8 && op <= 0xbf) { f.cpu.Ri(op - 0xb8, 0x20); }
         }
         if (op == 0x22 || op == 0x32) {
             f.cpu.SP = 0x32;
-            f.cpu.SFR[0x32] = 0x12;
-            f.cpu.SFR[0x31] = 0x34;
+            f.cpu.IRAM[0x32] = 0x12;
+            f.cpu.IRAM[0x31] = 0x34;
         }
         if (op == 0x73) {
             f.cpu.Acc = 0x10;
@@ -2557,9 +2562,13 @@ void check_opcode_coverage() {
 } // namespace
 
 int emu51_serial_tests();
+int emu51_model_tests();
+int emu51_validation_tests();
 
 int main() {
     g_failures += emu51_serial_tests();
+    g_failures += emu51_model_tests();
+    g_failures += emu51_validation_tests();
     test_dptr_roundtrip();
     test_parity_flag_odd_is_set();
     test_a5_advances_pc();

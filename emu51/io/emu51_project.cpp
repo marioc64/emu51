@@ -28,7 +28,7 @@ struct StoredEditor {
 struct StoredProject {
     int version, unified, debuggerOpen, traceEnabled, cycleExact, stepsPerFrame;
     int serialTerminalOpen;
-    char hardwareModule[128];
+    char hardwareModule[128], cpuModel[16];
     double crystalMHz;
     StoredProgram programs[32];
     std::size_t programCount;
@@ -78,6 +78,7 @@ const kason_schema* projectSchema()
         KaSON_FIELD_BOOL(StoredProject, debuggerOpen, "debugger_open", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, traceEnabled, "trace_enabled", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, serialTerminalOpen, "serial_terminal_open", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_STRING(StoredProject, cpuModel, "cpu_model", KaSON_DEFAULT_STRING("8051")),
         KaSON_FIELD_STRING(StoredProject, hardwareModule, "hardware_module", KaSON_DEFAULT_STRING("")),
         KaSON_FIELD_BOOL(StoredProject, cycleExact, "cycle_exact", KaSON_REQUIRED),
         KaSON_FIELD_DOUBLE(StoredProject, crystalMHz, "crystal_mhz", KaSON_REQUIRED),
@@ -125,7 +126,10 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
     if (!Emu51CycleTiming::validCrystalMHz(s.crystalMHz) || s.stepsPerFrame < 1 || s.stepsPerFrame > 1000000 ||
         !addressValid(s.reloadBinaryAddress) || s.editor.line < 0 || s.editor.column < 0)
         throw std::runtime_error("invalid execution settings, cursor, or load address");
+    const auto model = emu51ParseModel(s.cpuModel);
+    if (!model) throw std::runtime_error("unsupported CPU model");
     Emu51Project p;
+    p.cpuModel = *model;
     p.unified = s.unified; p.debuggerOpen = s.debuggerOpen; p.traceEnabled = s.traceEnabled;
     p.serialTerminalOpen = s.serialTerminalOpen;
     p.hardwareModule = s.hardwareModule;
@@ -153,8 +157,8 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
     }
     for (std::size_t i = 0; i < s.watchpointCount; ++i) {
         const auto& w = s.watchpoints[i];
-        if (w.space < 0 || w.space > 2 || !addressValid(w.address) || (!w.read && !w.write) ||
-            (w.space == 0 && (w.address > 255 || w.read || !w.write)))
+        if (w.space < 0 || w.space > 3 || !addressValid(w.address) || (!w.read && !w.write) ||
+            ((w.space == 0 || w.space == 3) && (w.address > 255 || w.read || !w.write)))
             throw std::runtime_error("invalid watchpoint");
         p.watchpoints.push_back({w.space, static_cast<std::uint16_t>(w.address), w.read != 0, w.write != 0, w.enabled != 0});
     }
@@ -200,6 +204,7 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
         if (p.programs.size() > std::size(s->programs) || p.watchpoints.size() > std::size(s->watchpoints) ||
             p.watches.size() > std::size(s->watches)) throw std::runtime_error("project has too many program loads or watches");
         const auto base = projectBase(path);
+        copyText(s->cpuModel, emu51ModelInfo(p.cpuModel).id);
         s->version = 1; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
         s->serialTerminalOpen = p.serialTerminalOpen;
         copyText(s->hardwareModule, p.hardwareModule);

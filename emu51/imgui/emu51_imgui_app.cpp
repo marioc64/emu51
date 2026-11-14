@@ -1020,8 +1020,8 @@ void Emu51ImguiApp::stepOut()
 		statusMessage_ = "cannot step out at top level";
 		return;
 	}
-	const auto returnAddress = static_cast<std::uint16_t>((static_cast<unsigned>(cpu_.SFR[cpu_.SP]) << 8) |
-		cpu_.SFR[static_cast<std::uint8_t>(cpu_.SP - 1)]);
+	const auto returnAddress = static_cast<std::uint16_t>((static_cast<unsigned>(cpu_.readIndirect(cpu_.SP)) << 8) |
+		cpu_.readIndirect(static_cast<std::uint8_t>(cpu_.SP - 1)));
 	stepTask_ = StepTask{returnAddress, static_cast<std::uint8_t>(cpu_.SP - 2), 0};
 	skipBreakpoint_ = cpu_.PC;
 	running_ = true;
@@ -1043,8 +1043,20 @@ bool Emu51ImguiApp::saveExecutionSettings() const
 		.cycleExact = cycleExact_, .crystalMHz = crystalMHz_, .stepsPerFrame = stepsPerFrame_});
 }
 
+void Emu51ImguiApp::setCpuModel(Emu51Model model)
+{
+    if (cpu_.model() == model) return;
+    cpu_.setModel(model);
+    resetCpuState(true);
+    trace_.clear();
+    pendingWatchpointStop_.clear();
+    internalRamMonitor_.start = clampMonitorAddress(internalRamMonitor_, internalRamMonitor_.start);
+    statusMessage_ = std::string("CPU model: ") + cpu_.modelInfo().id + "; reset and paused";
+}
+
 void Emu51ImguiApp::requestExecutionSettings()
 {
+	executionSettingsDialog_.cpuModel = static_cast<int>(cpu_.model());
 	executionSettingsDialog_.stepsPerFrame = stepsPerFrame_;
 	executionSettingsDialog_.cycleExact = cycleExact_;
 	executionSettingsDialog_.crystalMHz = crystalMHz_;
@@ -1568,6 +1580,11 @@ void Emu51ImguiApp::drawRegisters()
 		requestSetProgramCounter();
 	ImGui::SameLine(0.0f, 18.0f);
 	ImGui::TextColored(kDptrHeaderColor, "DPTR %04X", cpu_.DPTR());
+    ImGui::SameLine();
+    ImGui::Text("CPU %s", cpu_.modelInfo().id);
+	if (!cpu_.modelInfo().timer2 && loadedSymbols_.contains("T2CON")) {
+		ImGui::TextWrapped("Loaded symbols include Timer 2. Select CPU 8052 in Execution settings to use it.");
+	}
 	drawPswFlagsRow(cpu_.PSW);
 	ImGui::Separator();
 
@@ -1577,7 +1594,17 @@ void Emu51ImguiApp::drawRegisters()
 		drawRegisterTable("registers_ports_table", portRegisters);
 	if (ImGui::CollapsingHeader("Timers###registers_timers"))
 		drawRegisterTable("registers_timers_table", timerRegisters);
-	if (ImGui::CollapsingHeader("Serial & Interrupts###registers_serial"))
+	if (cpu_.modelInfo().timer2 && ImGui::CollapsingHeader("Timer 2###registers_timer2")) {
+        const RegisterDescriptor timer2Registers[] = {
+            {"T2CON", "C8", cpu_.readDirect(0xc8), 8},
+            {"RCAP2L", "CA", cpu_.readDirect(0xca), 8},
+            {"RCAP2H", "CB", cpu_.readDirect(0xcb), 8},
+            {"TL2", "CC", cpu_.readDirect(0xcc), 8},
+            {"TH2", "CD", cpu_.readDirect(0xcd), 8},
+        };
+        drawRegisterTable("registers_timer2_table", timer2Registers);
+    }
+    if (ImGui::CollapsingHeader("Serial & Interrupts###registers_serial"))
 		drawRegisterTable("registers_serial_table", serialRegisters);
 	ImGui::SetNextItemOpen(false, ImGuiCond_FirstUseEver);
 	if (ImGui::CollapsingHeader(rxHeader))
@@ -2160,9 +2187,13 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 		for (unsigned i = 0; i < 3; ++i)
 			entry.bytes[i] = cpu_.readProg(static_cast<std::uint16_t>(pc + i));
 	}
-	std::array<std::uint8_t, 256> previousInternal;
-	if (!watchpoints_.empty())
-		std::copy(std::begin(cpu_.SFR), std::end(cpu_.SFR), previousInternal.begin());
+	std::array<std::uint8_t, 256> previousInternal, previousIram;
+    if (!watchpoints_.empty()) {
+        for (unsigned i = 0; i < 256; ++i) {
+            previousInternal[i] = cpu_.readDirect(static_cast<std::uint8_t>(i));
+            previousIram[i] = cpu_.readIndirect(static_cast<std::uint8_t>(i));
+        }
+    }
 	pendingWatchpointStop_.clear();
 	instructionExecuting_ = true;
 	const auto cycles = static_cast<std::uint8_t>(cpu_.process());
@@ -2172,8 +2203,10 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 	cycleCount_ += cycles;
 	++instructionCount_;
 	for (const auto& watch : watchpoints_) {
-		if (watch.enabled && watch.space == WatchSpace::Internal && watch.address < 256 &&
-			previousInternal[watch.address] != cpu_.SFR[watch.address] && pendingWatchpointStop_.empty()) {
+		if (watch.enabled && (watch.space == WatchSpace::Internal || watch.space == WatchSpace::Iram) && watch.address < 256 &&
+            (watch.space == WatchSpace::Iram
+                ? previousIram[watch.address] != cpu_.readIndirect(static_cast<std::uint8_t>(watch.address))
+                : previousInternal[watch.address] != cpu_.readDirect(static_cast<std::uint8_t>(watch.address))) && pendingWatchpointStop_.empty()) {
 			char reason[64];
 			std::snprintf(reason, sizeof(reason), "internal change watchpoint at %02X", watch.address);
 			pendingWatchpointStop_ = reason;

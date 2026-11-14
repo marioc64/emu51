@@ -599,7 +599,8 @@ NSString* nsString(const std::string& value)
 - (IBAction)openExecutionSettings:(id)sender
 {
 	self.app->requestExecutionSettings();
-	[self.mtkView setNeedsDisplay:YES];
+	// ImGui needs subsequent frames to size and reveal a newly opened modal.
+	[self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 }
 
 - (IBAction)toggleUnifiedMode:(id)sender

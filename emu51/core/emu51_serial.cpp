@@ -15,6 +15,8 @@ void emu51::sync_serial_mode()
 
 void emu51::writeDirect(std::uint8_t address, std::uint8_t value)
 {
+    if (address < 0x80) { IRAM[address] = value; return; }
+    if (!hasSfr(address)) return;
     if (address != 0x99) {
         SFR[address] = value;
         if (address == 0x98) sync_serial_mode();
@@ -56,20 +58,27 @@ void emu51::clearSerialReceiveQueue()
     serialRx_.reset();
 }
 
-void emu51::advance_serial(std::uint8_t cycles, unsigned timer1Overflows)
+void emu51::advance_serial(std::uint8_t cycles, unsigned timer1Overflows, unsigned timer2Overflows)
 {
     sync_serial_mode();
     if (!serialTx_ && !serialRx_ && serialInput_.empty()) return;
     const unsigned mode = serialMode_;
     // Phase units use twice the clock source frequency, allowing the receiver
     // to sample midway through the stop bit without floating-point time.
+    const bool timer2Tx = (model_ == Emu51Model::i8052) && (mode == 1 || mode == 3) && (SFR[0xc8] & bit4);
+    const bool timer2Rx = (model_ == Emu51Model::i8052) && (mode == 1 || mode == 3) && (SFR[0xc8] & bit5);
     const unsigned divider = mode == 0 ? 1 : (mode == 2 ? ((PCON & bit7) ? 32 : 64) : ((PCON & bit7) ? 16 : 32));
     const unsigned clocks = mode == 0 ? cycles : (mode == 2 ? cycles * 12u : timer1Overflows);
-    const unsigned fullFrame = (mode == 0 ? 16 : (mode == 1 ? 20 : 22)) * divider;
-    const unsigned transmitFlag = (mode == 0 ? 16 : (mode == 1 ? 18 : 20)) * divider;
-    const unsigned receiveFlag = (mode == 0 ? 16 : (mode == 1 ? 19 : 21)) * divider;
+    const unsigned txDivider = timer2Tx ? 16 : divider;
+    const unsigned rxDivider = timer2Rx ? 16 : divider;
+    const unsigned txClocks = timer2Tx ? timer2Overflows : clocks;
+    const unsigned rxClocks = timer2Rx ? timer2Overflows : clocks;
+    const unsigned fullFrame = (mode == 0 ? 16 : (mode == 1 ? 20 : 22)) * txDivider;
+    const unsigned transmitFlag = (mode == 0 ? 16 : (mode == 1 ? 18 : 20)) * txDivider;
+    const unsigned receiveFlag = (mode == 0 ? 16 : (mode == 1 ? 19 : 21)) * rxDivider;
 
-    unsigned remaining = clocks * 2;
+    const unsigned receiveFullFrame = (mode == 0 ? 16 : (mode == 1 ? 20 : 22)) * rxDivider;
+    unsigned remaining = txClocks * 2;
     while (serialTx_ && remaining) {
         auto& frame = *serialTx_;
         const auto step = std::min<std::uint64_t>(remaining, frame.phase < fullFrame ? fullFrame - frame.phase : 0);
@@ -93,7 +102,7 @@ void emu51::advance_serial(std::uint8_t cycles, unsigned timer1Overflows)
     }
 
     if (!(SCON & bit4)) { serialRx_.reset(); return; } // REN
-    remaining = clocks * 2;
+    remaining = rxClocks * 2;
     while (remaining) {
         if (!serialRx_) {
             if (serialInput_.empty() || (mode == 0 && (SCON & bit0))) break;
@@ -101,7 +110,7 @@ void emu51::advance_serial(std::uint8_t cycles, unsigned timer1Overflows)
             serialInput_.pop_front();
         }
         auto& frame = *serialRx_;
-        const auto step = std::min<std::uint64_t>(remaining, frame.phase < fullFrame ? fullFrame - frame.phase : 0);
+        const auto step = std::min<std::uint64_t>(remaining, frame.phase < receiveFullFrame ? receiveFullFrame - frame.phase : 0);
         frame.phase += step;
         remaining -= static_cast<unsigned>(step);
         if (!frame.flagged && frame.phase >= receiveFlag) {
@@ -117,7 +126,7 @@ void emu51::advance_serial(std::uint8_t cycles, unsigned timer1Overflows)
                 SCON |= bit0;
             }
         }
-        if (frame.phase < fullFrame) break;
+        if (frame.phase < receiveFullFrame) break;
         serialRx_.reset();
     }
 }

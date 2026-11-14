@@ -158,7 +158,7 @@ void directWrites(bool table)
         std::copy(instruction.bytes.begin(), instruction.bytes.end(), m.memory.begin());
         m.cpu.SBUF = instruction.rx; m.cpu.Acc = instruction.acc;
         for (int i = 0; i < 8; ++i) m.cpu.Ri(i, 0x55);
-        m.cpu.SFR[0x30] = 0x55;
+        m.cpu.IRAM[0x30] = 0x55;
         if (instruction.bytes[0] == 0x86) m.cpu.Ri(0, 0x30);
         if (instruction.bytes[0] == 0x87) m.cpu.Ri(1, 0x30);
         if (instruction.bytes[0] == 0xd0) m.cpu.SP = 0x30;

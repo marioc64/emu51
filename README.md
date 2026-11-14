@@ -10,7 +10,7 @@ with a reusable emulation engine and a Dear ImGui interface. See
 
 ## Features
 
-- 8051 CPU emulation with unified or separate program/data memory.
+- Selectable 8051/8052 CPU emulation with unified or separate program/data memory.
 - Register, disassembly, internal RAM, and external memory views.
 - Run, pause, reset, Step In, Step Over, and Step Out.
 - Execution breakpoints, memory watchpoints, instruction tracing, and assembly
@@ -22,7 +22,7 @@ with a reusable emulation engine and a Dear ImGui interface. See
 - Save/discard/cancel protection, atomic source saves, and recovery drafts.
 - Saved layouts, Follow PC settings, and execution preferences.
 - Crystal-paced execution using the classic 12-clock 8051 timing model.
-- Serial modes 0–3, Timer 1/SMOD baud clocks, serial interrupts, and a byte-oriented terminal.
+- Serial modes 0–3, Timer 1/SMOD and 8052 Timer 2 baud clocks, serial interrupts, and a byte-oriented terminal.
 - A standalone assembler, bounded console runner, and dispatch benchmark.
 
 The timing mode paces emulated machine cycles against wall time. It does not
@@ -76,6 +76,31 @@ Run the desktop executable for your build:
 Other multi-configuration builds also put executables or app bundles under their
 configuration directory. Useful build options are `-DEMU51_WERROR=ON` for warnings
 as errors and `-DEMU51_ASAN=ON` for AddressSanitizer/UBSan with Clang or GCC.
+
+## CPU models
+
+Choose **8051** or **8052** in **Execution settings → CPU model**. The default is
+8051 with 128 bytes of internal RAM. The 8052 provides 256 bytes, with upper RAM
+physically separate from SFRs, plus Timer 2 capture, auto-reload, counter,
+interrupt and UART baud-clock support. Both use classic 12-clock timing.
+
+Changing models resets and pauses the CPU while preserving loaded program memory.
+The selection is saved in project files; older projects default to 8051. Global
+execution preferences save pacing settings only. Internal RAM views show the
+selected model's RAM; SFRs are shown in Registers. Debugger watchpoints offer
+separate direct RAM/SFR changes and internal RAM changes.
+
+Use `$MOD51` or `$MOD52` in source as appropriate. Assembler modules define names;
+they do not change the selected runtime model. Watchdogs, dual data pointers,
+EEPROM, comparators, and derivative-specific Timer 2 extensions remain unsupported.
+Programs can still use the full 64 KB external code/data spaces; on-chip ROM sizes
+are descriptive and do not restrict the loader.
+
+The console runner and benchmark accept `--model 8051` or `--model 8052`, for example:
+
+```sh
+build/emu51/emu51 --model 8052 --steps 1000000 program.hex
+```
 
 ## Loading programs and memory modes
 

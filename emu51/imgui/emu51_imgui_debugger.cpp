@@ -65,12 +65,12 @@ std::optional<unsigned> Emu51ImguiApp::symbolValue(const std::string& name) cons
     case emu51_asm::SymbolKind::label: return readProgramByte(symbol.value);
     case emu51_asm::SymbolKind::equ: return symbol.value;
     case emu51_asm::SymbolKind::data:
-        if (symbol.value <= 0xff) return cpu_.SFR[symbol.value];
+        if (symbol.value <= 0xff) return cpu_.readDirect(static_cast<std::uint8_t>(symbol.value));
         break;
     case emu51_asm::SymbolKind::bit:
         if (symbol.value <= 0xff) {
             const unsigned byte = symbol.value < 0x80 ? 0x20 + symbol.value / 8 : symbol.value & 0xf8;
-            return (cpu_.SFR[byte] >> (symbol.value & 7)) & 1u;
+            return (cpu_.readDirect(static_cast<std::uint8_t>(byte)) >> (symbol.value & 7)) & 1u;
         }
         break;
     }
@@ -409,8 +409,9 @@ void Emu51ImguiApp::drawDebugger()
         if (remove) symbolWatches_.erase(*remove);
     }
     if (ImGui::CollapsingHeader("Watchpoints", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Combo("Space", &watchSpace_, "Internal RAM/SFR changes\0External data\0Program memory\0");
-        ImGui::BeginDisabled(watchSpace_ == 0);
+        ImGui::Combo("Space", &watchSpace_, "Direct RAM/SFR changes\0External data\0Program memory\0Internal RAM changes\0");
+        const bool internalSpace = watchSpace_ == 0 || watchSpace_ == 3;
+        ImGui::BeginDisabled(internalSpace);
         ImGui::Checkbox("Reads", &watchRead_);
         ImGui::SameLine();
         ImGui::Checkbox("Writes", &watchWrite_);
@@ -418,11 +419,11 @@ void Emu51ImguiApp::drawDebugger()
         const auto symbol = loadedSymbols_.find(debugName(debugAddress_));
         const bool bitSymbol = symbol != loadedSymbols_.end() && symbol->second.kind == emu51_asm::SymbolKind::bit;
         if (bitSymbol) ImGui::TextDisabled("Use Watches for a bit value, or enter its byte address for a watchpoint.");
-        ImGui::BeginDisabled(!address || bitSymbol || (watchSpace_ == 0 && *address > 255) ||
-            (watchSpace_ != 0 && !watchRead_ && !watchWrite_));
+        ImGui::BeginDisabled(!address || bitSymbol || (internalSpace && *address > (watchSpace_ == 3 ? cpu_.modelInfo().internalRamBytes - 1 : 255)) ||
+            (!internalSpace && !watchRead_ && !watchWrite_));
         if (ImGui::Button("Add watchpoint"))
             watchpoints_.push_back({static_cast<WatchSpace>(watchSpace_), static_cast<std::uint16_t>(*address),
-                watchSpace_ != 0 && watchRead_, watchSpace_ == 0 || watchWrite_, true});
+                !internalSpace && watchRead_, internalSpace || watchWrite_, true});
         ImGui::EndDisabled();
         for (std::size_t i = 0; i < watchpoints_.size();) {
             auto& watch = watchpoints_[i];
@@ -430,7 +431,7 @@ void Emu51ImguiApp::drawDebugger()
             ImGui::Checkbox("##enabled", &watch.enabled);
             ImGui::SameLine();
             ImGui::Text("%s %04X %s%s", watch.space == WatchSpace::Internal ? "Internal changes" :
-                (watch.space == WatchSpace::Data ? "Data" : "Program"), watch.address,
+                (watch.space == WatchSpace::Iram ? "RAM changes" : (watch.space == WatchSpace::Data ? "Data" : "Program")), watch.address,
                 watch.read ? "R" : "", watch.write ? "W" : "");
             ImGui::SameLine();
             const bool remove = ImGui::SmallButton("Remove");

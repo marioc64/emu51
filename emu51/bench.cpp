@@ -11,8 +11,9 @@
 namespace {
 using BenchClock = std::chrono::steady_clock;
 struct Result { double seconds; std::uint64_t cycles; std::uint64_t hash; };
-Result run(const emu51_asm::AssemblyImage& image, std::uint64_t steps, bool table) {
+Result run(const emu51_asm::AssemblyImage& image, std::uint64_t steps, bool table, Emu51Model model) {
     emu51 cpu(true);
+    cpu.setModel(model);
     emu51_asm::apply_program_image(cpu, image);
     const auto start = BenchClock::now();
     std::uint64_t cycles = 0;
@@ -29,11 +30,18 @@ Result run(const emu51_asm::AssemblyImage& image, std::uint64_t steps, bool tabl
 
 int main(int argc, char** argv) {
     std::uint64_t steps = 5'000'000, repeats = 5;
+    Emu51Model model = Emu51Model::i8051;
     std::filesystem::path path;
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
+        if (arg == "--model" && i + 1 < argc) {
+            const auto parsed = emu51ParseModel(argv[++i]);
+            if (!parsed) { std::fputs("Unsupported CPU model. Use 8051 or 8052.\n", stderr); return 2; }
+            model = *parsed;
+            continue;
+        }
         if (arg == "--help" || arg == "-h") {
-            std::puts("Usage: emu51_bench [--steps COUNT] [--repeats COUNT] [PROGRAM]\n"
+            std::puts("Usage: emu51_bench [--model 8051|8052] [--steps COUNT] [--repeats COUNT] [PROGRAM]\n"
                       "Compare switch and function-table dispatch using median elapsed time.\n"
                       "Default: deterministic synthetic workload, 5000000 instructions, 5 trials.\n"
                       "PROGRAM may be ASM, HEX or BIN (address 0); execution starts at PC=0.\n"
@@ -60,8 +68,8 @@ int main(int argc, char** argv) {
                 static_cast<unsigned long long>(steps), static_cast<unsigned long long>(repeats));
     // Warm each path on a fresh machine, outside the reported trials.
     const auto warmupSteps = std::min(steps, std::uint64_t{100'000});
-    const auto warmSwitch = run(program.image, warmupSteps, false);
-    const auto warmTable = run(program.image, warmupSteps, true);
+    const auto warmSwitch = run(program.image, warmupSteps, false, model);
+    const auto warmTable = run(program.image, warmupSteps, true, model);
     if (warmSwitch.hash != warmTable.hash || warmSwitch.cycles != warmTable.cycles) {
         std::fputs("Dispatch state/cycle mismatch during warmup\n", stderr);
         return 1;
@@ -72,7 +80,7 @@ int main(int argc, char** argv) {
         // Alternate ordering to reduce first/second-run bias.
         for (unsigned n = 0; n < 2; ++n) {
             const unsigned mode = static_cast<unsigned>((trial + n) % 2);
-            const auto result = run(program.image, steps, mode != 0);
+            const auto result = run(program.image, steps, mode != 0, model);
             if (reference && (reference->hash != result.hash || reference->cycles != result.cycles)) {
                 std::fputs("Dispatch state/cycle mismatch\n", stderr);
                 return 1;

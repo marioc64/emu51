@@ -3,6 +3,7 @@
 #pragma once
 
 #include "opcode_metadata.h"
+#include "emu51_model.h"
 
 #include <array>
 #include <cstdint>
@@ -76,7 +77,8 @@ class emu51
 	std::shared_ptr<address_space> addressSpace;
 
 public:
-	std::uint8_t SFR[0x100];                 // internal memory and sfr area 256 bytes
+	std::uint8_t IRAM[0x100]{};              // physically separate from SFRs
+	std::uint8_t SFR[0x100]{};               // SFRs use addresses 80h..FFh
 
 	std::uint8_t & Acc  = SFR[0xe0];          // 8-bit accumlator
 	std::uint8_t & DPH  = SFR[0x83];          // high byte of DPTR
@@ -104,7 +106,15 @@ public:
 
 private:
 
-	std::uint8_t *R = SFR;                    // Additional 8 Rx Registers
+	Emu51Model model_ = Emu51Model::i8051;
+	std::uint8_t absentRam_ = 0xff;
+	std::uint8_t timer2Pins_ = 0x03, previousTimer2Pins_ = 0x03;
+	std::uint8_t& indirect(std::uint8_t address) {
+		if (address < 0x80 || model_ == Emu51Model::i8052) return IRAM[address];
+		absentRam_ = 0xff;
+		return absentRam_; // deterministic open bus for unimplemented 8051 upper RAM
+	}
+	std::uint8_t *R = IRAM;                    // Additional 8 Rx Registers
 	unsigned long c_time = 0;
 
 	bool check_C(void);
@@ -203,7 +213,8 @@ private:
 	void exec_opcode_switch(std::uint8_t code);
 	int finalize_instruction(std::uint8_t cycles);
 	void advance_cycles(std::uint8_t cycles);
-	void advance_serial(std::uint8_t cycles, unsigned timer1Overflows);
+	void advance_serial(std::uint8_t cycles, unsigned timer1Overflows, unsigned timer2Overflows);
+	unsigned advance_timer2(std::uint8_t cycles);
 	void sync_serial_mode();
 	using opcode_handler_t = void(*)(emu51*);
 	template<std::uint8_t Op>
@@ -219,7 +230,8 @@ private:
 		t0 = 1,
 		ext1 = 2,
 		t1 = 3,
-		serial = 4
+		serial = 4,
+		t2 = 5
 	};
 	std::uint8_t irqStack[8] = { 0 };
 	int irqDepth = 0;
@@ -240,9 +252,35 @@ public:
 		bool stop = true;
 	};
 	static constexpr std::size_t kSerialQueueCapacity = 4096;
-	// Direct CPU/SFR writes must use this API to trigger peripherals. Raw SFR
-	// and SBUF references remain available for passive inspection/legacy setup.
-	std::uint8_t readDirect(std::uint8_t address) const { return SFR[address]; }
+	Emu51Model model() const { return model_; }
+	Emu51ModelInfo modelInfo() const { return emu51ModelInfo(model_); }
+	void setModel(Emu51Model model) { model_ = emu51ModelInfo(model).model; init(); }
+	bool hasSfr(std::uint8_t address) const {
+		switch (address) {
+		case 0x80: case 0x81: case 0x82: case 0x83: case 0x87:
+		case 0x88: case 0x89: case 0x8a: case 0x8b: case 0x8c: case 0x8d:
+		case 0x90: case 0x98: case 0x99: case 0xa0: case 0xa8:
+		case 0xb0: case 0xb8: case 0xd0: case 0xe0: case 0xf0:
+			return true;
+		case 0xc8: case 0xca: case 0xcb: case 0xcc: case 0xcd:
+			return model_ == Emu51Model::i8052;
+		default: return false;
+		}
+	}
+	// Use the direct API for CPU operands and peripheral side effects.
+	std::uint8_t readDirect(std::uint8_t address) const {
+		return address < 0x80 ? IRAM[address] : (hasSfr(address) ? SFR[address] : 0xff);
+	}
+	std::uint8_t readIndirect(std::uint8_t address) const {
+		return (address < 0x80 || model_ == Emu51Model::i8052) ? IRAM[address] : 0xff;
+	}
+	void writeIndirect(std::uint8_t address, std::uint8_t value) {
+		if (address < 0x80 || model_ == Emu51Model::i8052) IRAM[address] = value;
+	}
+	// External input levels, ANDed with the P1 latch. Sampled at instruction boundaries.
+	void setTimer2Inputs(bool t2, bool t2ex) {
+		timer2Pins_ = static_cast<std::uint8_t>((t2 ? 1 : 0) | (t2ex ? 2 : 0));
+	}
 	void writeDirect(std::uint8_t address, std::uint8_t value);
 	bool queueSerialReceive(std::uint8_t value, bool ninth = false, bool stop = true);
 	std::optional<SerialByte> takeSerialTransmit();

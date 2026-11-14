@@ -335,7 +335,7 @@ void Emu51ImguiApp::drawMonitorView(MonitorView& view)
 
 std::uint16_t Emu51ImguiApp::clampMonitorAddress(const MonitorView& view, int address) const
 {
-	const int maxAddress = view.memoryKind == MonitorView::MemoryKind::InternalRam ? 0xff : (Emu51ImguiApp::kMemoryBytes - 1);
+	const int maxAddress = view.memoryKind == MonitorView::MemoryKind::InternalRam ? static_cast<int>(cpu_.modelInfo().internalRamBytes) - 1 : (Emu51ImguiApp::kMemoryBytes - 1);
 	return static_cast<std::uint16_t>(std::clamp(address, 0, maxAddress));
 }
 
@@ -343,7 +343,7 @@ std::uint8_t Emu51ImguiApp::readMonitorByte(const MonitorView& view, std::uint16
 {
 	switch (view.memoryKind) {
 	case MonitorView::MemoryKind::InternalRam:
-		return cpu_.SFR[static_cast<std::uint8_t>(address)];
+		return cpu_.readIndirect(static_cast<std::uint8_t>(address));
 	case MonitorView::MemoryKind::ExternalProgram:
 		return unifiedMode_ ? cpu_.readData(address) : cpu_.readProg(address);
 	case MonitorView::MemoryKind::ExternalData:

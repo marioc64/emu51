@@ -149,6 +149,7 @@ public:
 	struct ExecutionSettingsDialog {
 		bool open = false;
 		int stepsPerFrame = 500;
+        int cpuModel = 0;
 		bool cycleExact = true;
 		double crystalMHz = Emu51CycleTiming::kDefaultCrystalMHz;
 		bool saveFailed = false;
@@ -213,7 +214,7 @@ public:
 	};
 
 private:
-	enum class WatchSpace { Internal, Data, Program };
+	enum class WatchSpace { Internal, Data, Program, Iram };
 	struct Watchpoint {
 		WatchSpace space = WatchSpace::Data;
 		std::uint16_t address = 0;
@@ -430,6 +431,7 @@ private:
 	void drawMonitorViews();
 	void drawMonitorView(MonitorView& view);
 	void drawExecutionSettingsDialog();
+    void setCpuModel(Emu51Model model);
 	void drawSetProgramCounterDialog();
 	void drawBinaryLoadDialog();
 	void drawFillRangeDialog();

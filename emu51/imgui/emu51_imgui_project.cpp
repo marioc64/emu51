@@ -158,6 +158,7 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
         }
     }
     Emu51Project project;
+    project.cpuModel = cpu_.model();
     project.unified = unifiedMode_;
     project.execution = {cycleExact_, crystalMHz_, stepsPerFrame_};
     project.programs = projectPrograms_;
@@ -243,7 +244,9 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     // before resetting the machine; choosing Discard has not changed any files.
     if (dirty && !assemblyEditorState_.dirty && !prepare()) return false;
 
+    cpu_.setModel(project->cpuModel);
     resetMachine();
+    internalRamMonitor_.start = clampMonitorAddress(internalRamMonitor_, internalRamMonitor_.start);
     if (hardware_) hardware_->setEnabled(!project->hardwareModule.empty());
     unifiedMode_ = project->unified;
     cycleExact_ = project->execution.cycleExact;

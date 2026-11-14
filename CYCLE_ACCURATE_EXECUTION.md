@@ -1,6 +1,6 @@
 # Execution timing and accuracy
 
-emu51 provides wall-clock pacing for the classic 12-clock 8051 model. The settings
+emu51 provides wall-clock pacing for the classic 12-clock 8051 and 8052 models. The settings
 label **Cycle exact** selects that pacing mode; it does not imply oscillator-phase,
 bus, pin, or complete peripheral accuracy.
 
@@ -103,15 +103,39 @@ The following limits remain:
   request sampling delays and inhibition following RETI or IE/IP access are not
   modeled.
 - Idle mode and power-down execution behavior are not modeled.
-- Counter mode suppresses automatic timer increments, but external input pulses
-  are not sampled as counter events.
+- Timer 0/1 counter mode suppresses automatic increments; external pulses are not
+  sampled. Timer 2 samples T2/T2EX levels at instruction boundaries, so pulses
+  entirely within an instruction are not observed.
 - The core's `c_time` is an `unsigned long`; on Windows it is 32 bits and wraps
   after about 71.6 minutes at one million cycles/second. GUI and console totals
   use separate 64-bit accounting. The pacer does not use `c_time` as its clock.
 
-Frequency settings do not select other 8051 derivatives or 1T/6T timing profiles.
+CPU selection chooses 8051 or 8052. Frequency settings do not select a CPU model
+or change the classic 12-clock instruction timing to 1T/6T.
 Applications requiring exact pin transitions or complete peripherals need a
 more detailed event/timing model.
+
+## CPU memory and Timer 2
+
+The 8051 has 128 bytes of internal RAM; the 8052 has 256. Direct addresses below
+80h access lower RAM, while direct addresses 80h–FFh access SFRs. Indirect and
+stack accesses use internal RAM, never SFRs. Unimplemented 8051 upper RAM reads
+return FFh and writes are discarded; this is a deterministic emulator convention,
+not a claim about undefined hardware reads. Unimplemented SFRs follow the same
+FFh/discard convention. Reset clears both RAM and SFR storage.
+
+The 8052 implements the classic T2CON, RCAP2L/H and TL2/TH2 registers. Timer 2
+supports 16-bit capture, auto-reload and baud generation. TF2/EXF2 request interrupt
+002Bh under EA/ET2 and IP.PT2; software must clear these flags. TF2 is suppressed
+in baud mode. T2EX capture/reload requires EXEN2, and in baud mode only sets EXF2.
+Timer 2 also advances during interrupt entry.
+
+Host code can set external T2/T2EX levels with `setTimer2Inputs()`. Levels are
+ANDed with the P1.0/P1.1 latches and sampled at instruction boundaries. A falling
+edge on T2 advances counter mode once; a falling T2EX edge captures or reloads
+at the modeled end of the instruction. Oscillator-phase sampling is not modeled.
+T2MOD, down-counting and clock-output extensions are excluded from this classic
+8052 profile. See the [Intel MCS-51 User's Manual](https://bitsavers.trailing-edge.com/components/intel/8051/MCS-51_Users_Manual_Feb94.pdf).
 
 ## Serial model
 
@@ -121,8 +145,11 @@ Mode 0 shifts eight data bits at oscillator/12. Mode 1 frames contain ten bits;
 modes 2/3 contain eleven, including TB8/RB8. Mode 2 uses oscillator/64, or /32
 with SMOD. Modes 1/3 divide Timer 1 overflow events by 32, or by 16 with SMOD.
 Every overflow counts, even if several occur during one instruction. Existing
-counter-input and Timer 0 split-mode limitations also affect the baud clock;
-8052 Timer 2 baud generation is not implemented.
+Timer 1 counter-input and Timer 0 split-mode limitations also affect that clock.
+On 8052, TCLK and RCLK independently select Timer 2 for transmission/reception in
+modes 1/3. Each Timer 2 overflow is divided by 16 regardless of SMOD. In baud timer
+mode Timer 2 advances six ticks per machine cycle (oscillator/2); all overflows
+within an instruction clock the UART.
 
 TI is delivered at the modeled start of the stop bit (after eight bits in mode
 0); RI is delivered at the modeled midpoint of the stop bit (after eight bits
@@ -163,3 +190,20 @@ pacing accuracy or desktop responsiveness. Test those on each release platform.
 
 Historical development probes are not release performance specifications, and
 regression coverage is not an exhaustive hardware conformance certification.
+
+Model tests cover RAM/SFR isolation, upper-RAM stack/calls/interrupts, Timer 2
+capture/reload/counter edges, sticky flags, priority, and separate UART clocks.
+Project workflow tests cover model selection, reset, backward compatibility,
+unknown-model validation, and upper-RAM inspection/watchpoints.
+
+`validation_tests.cpp` explicitly selects the 8051 profile and independently
+checks all ADD/ADDC/SUBB input bytes and carry states, all MUL/DIV byte pairs,
+result flags and parity, and a specification-based cycle table for every defined
+opcode. It also checks all register banks and MOVX pages, isolation of absent
+upper RAM, PUSH SP ordering, and POP SP destinations including 00h and FFh.
+Both dispatch paths run the same expectations. POP decrements the old stack
+pointer before writing its destination, so POP SP retains the popped byte.
+Expectations follow section 1 of the
+[Atmel 8051 Hardware Manual](https://www.microchip.com/content/dam/mchp/documents/OTH/ProductDocuments/UserGuides/doc4316.pdf).
+These checks validate instruction-boundary behavior within the limits above;
+they do not establish pin-level or complete hardware conformance.

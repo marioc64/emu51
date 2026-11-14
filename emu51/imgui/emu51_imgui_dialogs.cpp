@@ -21,6 +21,12 @@ void Emu51ImguiApp::drawExecutionSettingsDialog()
 	if (!ImGui::BeginPopupModal("Execution settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		return;
 
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("8052 (256 bytes RAM, Timer 2)").x + ImGui::GetFrameHeight() * 1.5f);
+    ImGui::Combo("CPU model", &executionSettingsDialog_.cpuModel, "8051 (128 bytes RAM)\0" "8052 (256 bytes RAM, Timer 2)\0");
+    if (executionSettingsDialog_.cpuModel != static_cast<int>(cpu_.model()))
+        ImGui::TextWrapped("Changing the CPU model resets and pauses execution. Loaded program memory is preserved.");
+    ImGui::TextDisabled("CPU model is saved with the project.");
+    ImGui::TextDisabled("Select a matching $MOD51 or $MOD52 in assembly sources.");
 	ImGui::Text("Run mode setting");
 	const ImGuiStyle& style = ImGui::GetStyle();
 	const float inputOffset = ImGui::GetCursorPosX() + ImGui::GetFrameHeight() +
@@ -51,6 +57,7 @@ void Emu51ImguiApp::drawExecutionSettingsDialog()
 
 	ImGui::BeginDisabled(!validSettings);
 	if (ImGui::Button("Apply")) {
+		setCpuModel(static_cast<Emu51Model>(executionSettingsDialog_.cpuModel));
 		stepsPerFrame_ = clampStepsPerFrame(executionSettingsDialog_.stepsPerFrame);
 		cycleExact_ = executionSettingsDialog_.cycleExact;
 		if (validMHz)
