@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "shift_out",
+      "kind": 11
+    },
+    {
+      "id": "chained_out",
+      "kind": 11
+    },
+    {
+      "id": "shift_in",
+      "kind": 12
+    },
+    {
+      "id": "led",
+      "kind": 6,
+      "active_low": false
+    },
+    {
+      "id": "switch_0",
+      "kind": 7,
+      "initially_pressed": true
+    },
+    {
+      "id": "switch_1",
+      "kind": 7,
+      "initially_pressed": false
+    },
+    {
+      "id": "switch_2",
+      "kind": 7,
+      "initially_pressed": false
+    },
+    {
+      "id": "switch_3",
+      "kind": 7,
+      "initially_pressed": true
+    },
+    {
+      "id": "switch_4",
+      "kind": 7,
+      "initially_pressed": false
+    },
+    {
+      "id": "switch_5",
+      "kind": 7,
+      "initially_pressed": true
+    },
+    {
+      "id": "switch_6",
+      "kind": 7,
+      "initially_pressed": true
+    },
+    {
+      "id": "switch_7",
+      "kind": 7,
+      "initially_pressed": false
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "shift_out.SER",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "shift_out.QH",
+      "b": "chained_out.SER",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "shift_in.CLK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "shift_in.LOAD",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "shift_in.QH",
+      "b": "cpu.P3",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "shift_out.Q",
+      "b": "led.in",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "shift_out.SRCLK",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "shift_out.RCLK",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "chained_out.SRCLK",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "chained_out.RCLK",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "switch_0.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "switch_1.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "switch_2.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "switch_3.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 3,
+      "width": 1
+    },
+    {
+      "a": "switch_4.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 4,
+      "width": 1
+    },
+    {
+      "a": "switch_5.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 5,
+      "width": 1
+    },
+    {
+      "a": "switch_6.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 6,
+      "width": 1
+    },
+    {
+      "a": "switch_7.out",
+      "b": "shift_in.D",
+      "a_bit": 0,
+      "b_bit": 7,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "shift_registers.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "shift_registers.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "shift_registers.asm",
+    "name": "shift_registers.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "shift_out",
+      "x": 420,
+      "y": 0,
+      "name": "shift out"
+    },
+    {
+      "id": "chained_out",
+      "x": 850,
+      "y": 0,
+      "name": "chained out"
+    },
+    {
+      "id": "shift_in",
+      "x": 1280,
+      "y": 0,
+      "name": "shift in"
+    },
+    {
+      "id": "led",
+      "x": 420,
+      "y": 400,
+      "name": "led"
+    },
+    {
+      "id": "switch_0",
+      "x": 850,
+      "y": 400,
+      "name": "switch 0"
+    },
+    {
+      "id": "switch_1",
+      "x": 1280,
+      "y": 400,
+      "name": "switch 1"
+    },
+    {
+      "id": "switch_2",
+      "x": 420,
+      "y": 800,
+      "name": "switch 2"
+    },
+    {
+      "id": "switch_3",
+      "x": 850,
+      "y": 800,
+      "name": "switch 3"
+    },
+    {
+      "id": "switch_4",
+      "x": 1280,
+      "y": 800,
+      "name": "switch 4"
+    },
+    {
+      "id": "switch_5",
+      "x": 420,
+      "y": 1200,
+      "name": "switch 5"
+    },
+    {
+      "id": "switch_6",
+      "x": 850,
+      "y": 1200,
+      "name": "switch 6"
+    },
+    {
+      "id": "switch_7",
+      "x": 1280,
+      "y": 1200,
+      "name": "switch 7"
+    }
+  ]
+}

@@ -66,28 +66,30 @@ int runEmu51ImguiGlfwApp()
 	ImGui_ImplOpenGL3_Init(kGlslVersion);
 
 	Emu51ImguiApp app;
-	std::string windowTitle = app.windowTitle();
+    app.startBackgroundExecution();
+	std::string windowTitle = app.access()->windowTitle();
 	glfwSetWindowTitle(window, windowTitle.c_str());
 	bool firstFrame = true;
+    bool wasRunning = false;
 
 	using Clock = std::chrono::steady_clock;
 	auto nextDraw = Clock::now();
 	bool quit = false;
 	while (!quit) {
 		if (!firstFrame) {
-			if (app.shouldAnimate())
-				glfwWaitEventsTimeout(app.running() ? 1.0 / 240.0 : 1.0 / 60.0);
+			if (wasRunning || app.access(false)->shouldAnimate())
+				glfwWaitEventsTimeout(1.0 / 60.0);
 			else
 				glfwWaitEvents();
 			if (glfwWindowShouldClose(window)) {
 				glfwSetWindowShouldClose(window, GLFW_FALSE);
-				app.requestQuit();
+				app.access()->requestQuit();
 			}
 		}
 		// Service CPU work independently of drawing, including minimized windows.
-		app.tick();
+		app.access()->tick();
 		const auto now = Clock::now();
-		if (!firstFrame && app.running() && now < nextDraw)
+		if (!firstFrame && app.access(false)->running() && now < nextDraw)
 			continue;
 		firstFrame = false;
 		nextDraw = now + std::chrono::microseconds(16667);
@@ -96,13 +98,14 @@ int runEmu51ImguiGlfwApp()
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		app.draw();
-		const std::string newWindowTitle = app.windowTitle();
+		app.access()->draw();
+        wasRunning = app.access(false)->running();
+		const std::string newWindowTitle = app.access()->windowTitle();
 		if (newWindowTitle != windowTitle) {
 			windowTitle = newWindowTitle;
 			glfwSetWindowTitle(window, windowTitle.c_str());
 		}
-		if (app.consumeQuitRequested())
+		if (app.access()->consumeQuitRequested())
 			quit = true;
 
 		ImGui::Render();
@@ -116,6 +119,7 @@ int runEmu51ImguiGlfwApp()
 		glfwSwapBuffers(window);
 	}
 
+	app.stopBackgroundExecution();
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();

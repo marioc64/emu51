@@ -71,10 +71,22 @@ public:
 	std::uint8_t readProg  (std::uint16_t a)         override { return readProgF(a); }
 };
 
+// Optional host GPIO/timing boundary. The core has no dependency on the SDK.
+// Reads must be passive; writes settle the physical pin state before returning.
+class emu51_port_io {
+public:
+	virtual ~emu51_port_io() = default;
+	virtual std::uint8_t readPort(unsigned port) const = 0;
+	virtual void writePort(unsigned port, std::uint8_t latch) = 0;
+	virtual void advance(unsigned machineCycles) = 0;
+	virtual void reset() = 0;
+};
+
 class emu51
 {
 
 	std::shared_ptr<address_space> addressSpace;
+	std::shared_ptr<emu51_port_io> portIo_;
 
 public:
 	std::uint8_t IRAM[0x100]{};              // physically separate from SFRs
@@ -109,6 +121,10 @@ private:
 	Emu51Model model_ = Emu51Model::i8051;
 	std::uint8_t absentRam_ = 0xff;
 	std::uint8_t timer2Pins_ = 0x03, previousTimer2Pins_ = 0x03;
+	std::uint8_t previousPort3_ = 0xff;
+	void sync_port_latches();
+	void sample_external_interrupts(std::uint8_t pins);
+	bool checkLatchBit(std::uint8_t bit) const;
 	std::uint8_t& indirect(std::uint8_t address) {
 		if (address < 0x80 || model_ == Emu51Model::i8052) return IRAM[address];
 		absentRam_ = 0xff;
@@ -267,9 +283,26 @@ public:
 		default: return false;
 		}
 	}
-	// Use the direct API for CPU operands and peripheral side effects.
-	std::uint8_t readDirect(std::uint8_t address) const {
+	// Passive latch/state inspection, also used by read-modify-write operands.
+	std::uint8_t readLatch(std::uint8_t address) const {
 		return address < 0x80 ? IRAM[address] : (hasSfr(address) ? SFR[address] : 0xff);
+	}
+	// Ordinary CPU reads sample port pins. Other addresses retain direct semantics.
+	std::uint8_t readDirect(std::uint8_t address) const {
+		if (address >= 0x80 && address <= 0xb0 && !(address & 0x0f))
+			return readPort((address - 0x80) >> 4);
+		return readLatch(address);
+	}
+	std::uint8_t readPort(unsigned port) const {
+		if (port > 3) return 0xff;
+		return portIo_ ? portIo_->readPort(port) : SFR[0x80 + (port << 4)];
+	}
+	// Attach after the host topology has started. Attachment publishes current
+	// latches without resetting CPU, peripherals or time. Detachment is passive.
+	void setPortIo(std::shared_ptr<emu51_port_io> io) {
+		portIo_ = std::move(io);
+		previousPort3_ = 0xff;
+		sync_port_latches();
 	}
 	std::uint8_t readIndirect(std::uint8_t address) const {
 		return (address < 0x80 || model_ == Emu51Model::i8052) ? IRAM[address] : 0xff;

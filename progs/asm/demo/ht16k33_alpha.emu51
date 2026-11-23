@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "ht16k33",
+      "kind": 23,
+      "display_digits": 8,
+      "display_style": 14,
+      "display_color": 1
+    },
+    {
+      "id": "alpha",
+      "kind": 16,
+      "display_digits": 8,
+      "display_style": 14,
+      "display_color": 2
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "ht16k33.SDA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "ht16k33.SCL",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "ht16k33.INT",
+      "b": "cpu.P3",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "ht16k33.segments",
+      "b": "alpha.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 15
+    },
+    {
+      "a": "ht16k33.commons",
+      "b": "alpha.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "ht16k33_alpha.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "ht16k33_alpha.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "ht16k33_alpha.asm",
+    "name": "ht16k33_alpha.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "ht16k33",
+      "x": 420,
+      "y": 0,
+      "name": "ht16k33"
+    },
+    {
+      "id": "alpha",
+      "x": 850,
+      "y": 0,
+      "name": "alpha"
+    }
+  ]
+}

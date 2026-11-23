@@ -57,7 +57,9 @@ NSString* nsString(const std::string& value)
 - (IBAction)showDebugger:(id)sender;
 - (IBAction)showSerialTerminal:(id)sender;
 - (IBAction)showHardwareModule:(id)sender;
+- (IBAction)showPeripherals:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
+- (IBAction)toggleRegisters:(id)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
 - (IBAction)newDataMemoryMonitor:(id)sender;
@@ -104,7 +106,9 @@ NSString* nsString(const std::string& value)
 - (IBAction)showDebugger:(id)sender;
 - (IBAction)showSerialTerminal:(id)sender;
 - (IBAction)showHardwareModule:(id)sender;
+- (IBAction)showPeripherals:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
+- (IBAction)toggleRegisters:(id)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
 - (IBAction)newDataMemoryMonitor:(id)sender;
@@ -158,6 +162,7 @@ NSString* nsString(const std::string& value)
 @property(nonatomic, strong) NSMenuItem* runMenuItem;
 @property(nonatomic, strong) NSMenuItem* setProgramCounterMenuItem;
 @property(nonatomic, strong) NSMenuItem* assemblyEditorMenuItem;
+@property(nonatomic, strong) NSMenuItem* registersMenuItem;
 @property(nonatomic, strong) NSMenuItem* internalRamMonitorMenuItem;
 @property(nonatomic, strong) NSMenuItem* externalMemoryMonitorMenuItem;
 @property(nonatomic, strong) NSMenuItem* dataMemoryMonitorMenuItem;
@@ -177,8 +182,8 @@ NSString* nsString(const std::string& value)
 
 - (void)updateFileMenuItems
 {
-	self.reloadProgramMenuItem.enabled = self.app->hasLoadedProgram();
-	const int recentCount = self.app->recentProgramFileCount();
+	self.reloadProgramMenuItem.enabled = self.app->access()->hasLoadedProgram();
+	const int recentCount = self.app->access()->recentProgramFileCount();
 	self.openRecentMenuItem.enabled = recentCount > 0;
 	[self.recentProgramsMenu removeAllItems];
 	if (recentCount == 0) {
@@ -188,7 +193,7 @@ NSString* nsString(const std::string& value)
 		[self.recentProgramsMenu addItem:emptyItem];
 	} else {
 		for (int i = 0; i < recentCount; ++i) {
-			NSString* path = nsString(self.app->recentProgramFilePath(i));
+			NSString* path = nsString(self.app->access()->recentProgramFilePath(i));
 			NSString* filename = path.lastPathComponent.length > 0 ? path.lastPathComponent : path;
 			NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%d %@", i + 1, filename]
 				action:@selector(openRecentProgram:) keyEquivalent:@""];
@@ -203,7 +208,7 @@ NSString* nsString(const std::string& value)
 		clearItem.target = self;
 		[self.recentProgramsMenu addItem:clearItem];
 	}
-	const int recentProjectCount = self.app->recentProjectFileCount();
+	const int recentProjectCount = self.app->access()->recentProjectFileCount();
 	self.openRecentProjectsMenuItem.enabled = recentProjectCount > 0;
 	[self.recentProjectsMenu removeAllItems];
 	if (recentProjectCount == 0) {
@@ -213,7 +218,7 @@ NSString* nsString(const std::string& value)
 		[self.recentProjectsMenu addItem:emptyItem];
 	} else {
 		for (int i = 0; i < recentProjectCount; ++i) {
-			NSString* path = nsString(self.app->recentProjectFilePath(i));
+			NSString* path = nsString(self.app->access()->recentProjectFilePath(i));
 			NSString* filename = path.lastPathComponent.length > 0 ? path.lastPathComponent : path;
 			NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%d %@", i + 1, filename]
 				action:@selector(openRecentProject:) keyEquivalent:@""];
@@ -228,33 +233,33 @@ NSString* nsString(const std::string& value)
 		clearItem.target = self;
 		[self.recentProjectsMenu addItem:clearItem];
 	}
-	const BOOL canSaveAssembly = self.app->canSaveAssemblyEditorFile();
+	const BOOL canSaveAssembly = self.app->access()->canSaveAssemblyEditorFile();
 	self.saveAssemblyMenuItem.enabled = canSaveAssembly;
 	self.saveAsAssemblyMenuItem.enabled = canSaveAssembly;
 }
 
 - (void)updateEditMenuItems
 {
-	const BOOL canUseTextCommands = self.app->canUseAssemblyEditorTextCommands();
-	self.editUndoMenuItem.enabled = self.app->canUndoAssemblyEditorText();
-	self.editRedoMenuItem.enabled = self.app->canRedoAssemblyEditorText();
+	const BOOL canUseTextCommands = self.app->access()->canUseAssemblyEditorTextCommands();
+	self.editUndoMenuItem.enabled = self.app->access()->canUndoAssemblyEditorText();
+	self.editRedoMenuItem.enabled = self.app->access()->canRedoAssemblyEditorText();
 	self.editCutMenuItem.enabled = canUseTextCommands;
 	self.editCopyMenuItem.enabled = canUseTextCommands;
 	self.editPasteMenuItem.enabled = canUseTextCommands;
 	self.editSelectAllMenuItem.enabled = canUseTextCommands;
-	self.editFormatCodeMenuItem.enabled = self.app->canFormatAssemblyEditorText();
+	self.editFormatCodeMenuItem.enabled = self.app->access()->canFormatAssemblyEditorText();
 }
 
 - (void)updateBuildMenuItems
 {
-	self.buildCompileMenuItem.enabled = self.app->hasAssemblyEditorSource();
-	self.buildLoadMenuItem.enabled = self.app->hasCompiledAssemblyEditorOutput();
-	self.buildCompileAndLoadMenuItem.enabled = self.app->hasAssemblyEditorSource();
+	self.buildCompileMenuItem.enabled = self.app->access()->hasAssemblyEditorSource();
+	self.buildLoadMenuItem.enabled = self.app->access()->hasCompiledAssemblyEditorOutput();
+	self.buildCompileAndLoadMenuItem.enabled = self.app->access()->hasAssemblyEditorSource();
 }
 
 - (void)updateMemoryMenuItems
 {
-	const BOOL unifiedMode = self.app->unifiedMode();
+	const BOOL unifiedMode = self.app->access()->unifiedMode();
 	self.unifiedModeMenuItem.state = unifiedMode ? NSControlStateValueOn : NSControlStateValueOff;
 	self.clearMemoryMenuItem.hidden = !unifiedMode;
 	self.clearDataMemoryMenuItem.hidden = unifiedMode;
@@ -265,9 +270,10 @@ NSString* nsString(const std::string& value)
 
 - (void)updateWindowMenuItems
 {
-	const BOOL unifiedMode = self.app->unifiedMode();
-	self.assemblyEditorMenuItem.state = self.app->assemblyEditorVisible() ? NSControlStateValueOn : NSControlStateValueOff;
-	self.internalRamMonitorMenuItem.state = self.app->internalRamMonitorVisible() ? NSControlStateValueOn : NSControlStateValueOff;
+    self.registersMenuItem.state = self.app->access()->registersVisible() ? NSControlStateValueOn : NSControlStateValueOff;
+	const BOOL unifiedMode = self.app->access()->unifiedMode();
+	self.assemblyEditorMenuItem.state = self.app->access()->assemblyEditorVisible() ? NSControlStateValueOn : NSControlStateValueOff;
+	self.internalRamMonitorMenuItem.state = self.app->access()->internalRamMonitorVisible() ? NSControlStateValueOn : NSControlStateValueOff;
 	self.externalMemoryMonitorMenuItem.hidden = !unifiedMode;
 	self.dataMemoryMonitorMenuItem.hidden = unifiedMode;
 	self.programMemoryMonitorMenuItem.hidden = unifiedMode;
@@ -275,14 +281,14 @@ NSString* nsString(const std::string& value)
 
 - (void)updateExecutionMenuItems
 {
-	self.runMenuItem.state = self.app->running() ? NSControlStateValueOn : NSControlStateValueOff;
-	self.setProgramCounterMenuItem.enabled = !self.app->running();
+	self.runMenuItem.state = self.app->access(false)->running() ? NSControlStateValueOn : NSControlStateValueOff;
+	self.setProgramCounterMenuItem.enabled = !self.app->access(false)->running();
 }
 
 - (void)updateWindowTitle
 {
 	if (self.view.window != nil)
-		self.view.window.title = nsString(self.app->windowTitle());
+		self.view.window.title = nsString(self.app->access()->windowTitle());
 }
 
 - (void)requestInteractiveRedrawForDuration:(NSTimeInterval)duration
@@ -318,13 +324,14 @@ NSString* nsString(const std::string& value)
 	io.Fonts->AddFontDefault();
 	emu51LoadCodiconsFont(io);
 	ImGui_ImplMetal_Init(_device);
+    _app->startBackgroundExecution();
 
 	return self;
 }
 
 - (IBAction)openRecentProject:(id)sender
 {
-	self.app->openRecentProjectFile((int)[sender tag]);
+	self.app->access()->openRecentProjectFile((int)[sender tag]);
 	[self updateFileMenuItems];
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
@@ -334,14 +341,14 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)clearRecentProjects:(id)sender
 {
-	self.app->clearRecentProjectFiles();
+	self.app->access()->clearRecentProjectFiles();
 	[self updateFileMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)openProject:(id)sender
 {
-	self.app->requestOpenProject();
+	self.app->access()->requestOpenProject();
 	[self updateFileMenuItems];
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
@@ -351,7 +358,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)saveProject:(id)sender
 {
-	self.app->saveProject();
+	self.app->access()->saveProject();
 	[self updateFileMenuItems];
 	[self updateWindowTitle];
 	[self.mtkView setNeedsDisplay:YES];
@@ -359,7 +366,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)saveProjectAs:(id)sender
 {
-	self.app->saveProjectAs();
+	self.app->access()->saveProjectAs();
 	[self updateFileMenuItems];
 	[self updateWindowTitle];
 	[self.mtkView setNeedsDisplay:YES];
@@ -367,7 +374,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)openProgram:(id)sender
 {
-	self.app->requestOpenProgram();
+	self.app->access()->requestOpenProgram();
 	[self updateFileMenuItems];
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
@@ -377,7 +384,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)loadProgram:(id)sender
 {
-	self.app->requestLoadProgram();
+	self.app->access()->requestLoadProgram();
 	[self updateFileMenuItems];
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
@@ -387,7 +394,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)reloadProgram:(id)sender
 {
-	self.app->reloadProgram();
+	self.app->access()->reloadProgram();
 	[self updateFileMenuItems];
 	[self updateWindowTitle];
 	[self.mtkView setNeedsDisplay:YES];
@@ -395,7 +402,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)openRecentProgram:(id)sender
 {
-	self.app->openRecentProgramFile((int)[sender tag]);
+	self.app->access()->openRecentProgramFile((int)[sender tag]);
 	[self updateFileMenuItems];
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
@@ -405,14 +412,14 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)clearRecentPrograms:(id)sender
 {
-	self.app->clearRecentProgramFiles();
+	self.app->access()->clearRecentProgramFiles();
 	[self updateFileMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)saveAssemblyEditor:(id)sender
 {
-	self.app->saveAssemblyEditorFile();
+	self.app->access()->saveAssemblyEditorFile();
 	[self updateFileMenuItems];
 	[self updateBuildMenuItems];
 	[self updateWindowTitle];
@@ -421,7 +428,7 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)saveAssemblyEditorAs:(id)sender
 {
-	self.app->saveAssemblyEditorFileAs();
+	self.app->access()->saveAssemblyEditorFileAs();
 	[self updateFileMenuItems];
 	[self updateBuildMenuItems];
 	[self updateWindowTitle];
@@ -430,49 +437,49 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)editUndo:(id)sender
 {
-	self.app->undoAssemblyEditorText();
+	self.app->access()->undoAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)editRedo:(id)sender
 {
-	self.app->redoAssemblyEditorText();
+	self.app->access()->redoAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)editCut:(id)sender
 {
-	self.app->cutAssemblyEditorText();
+	self.app->access()->cutAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)editCopy:(id)sender
 {
-	self.app->copyAssemblyEditorText();
+	self.app->access()->copyAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)editPaste:(id)sender
 {
-	self.app->pasteAssemblyEditorText();
+	self.app->access()->pasteAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)editSelectAll:(id)sender
 {
-	self.app->selectAllAssemblyEditorText();
+	self.app->access()->selectAllAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)formatCode:(id)sender
 {
-	self.app->formatAssemblyEditorText();
+	self.app->access()->formatAssemblyEditorText();
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
@@ -480,14 +487,14 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)compileAssemblyEditor:(id)sender
 {
-	self.app->compileAssemblyEditor();
+	self.app->access()->compileAssemblyEditor();
 	[self updateBuildMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)loadCompiledAssemblyEditorOutput:(id)sender
 {
-	self.app->loadCompiledAssemblyEditorOutput();
+	self.app->access()->loadCompiledAssemblyEditorOutput();
 	[self updateFileMenuItems];
 	[self updateBuildMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
@@ -495,39 +502,52 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender
 {
-	self.app->compileAndLoadAssemblyEditor();
+	self.app->access()->compileAndLoadAssemblyEditor();
 	[self updateFileMenuItems];
 	[self updateBuildMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
+- (IBAction)showPeripherals:(id)sender
+{
+    self.app->access()->showPeripherals();
+    [self.mtkView setNeedsDisplay:YES];
+}
+
 - (IBAction)showHardwareModule:(id)sender
 {
-	self.app->showHardwareModule();
+	self.app->access()->showHardwareModule();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)showSerialTerminal:(id)sender
 {
-	self.app->showSerialTerminal();
+	self.app->access()->showSerialTerminal();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)showDebugger:(id)sender
 {
-	self.app->showDebugger();
+	self.app->access()->showDebugger();
 	[self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 }
 
 - (IBAction)newDisassemblyView:(id)sender
 {
-	self.app->createDisassemblyView();
+	self.app->access()->createDisassemblyView();
 	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)toggleRegisters:(id)sender
+{
+    { auto access = self.app->access(); access->setRegistersVisible(!access->registersVisible()); }
+    [self updateWindowMenuItems];
+    [self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 }
 
 - (IBAction)toggleAssemblyEditor:(id)sender
 {
-	self.app->setAssemblyEditorVisible(!self.app->assemblyEditorVisible());
+	self.app->access()->setAssemblyEditorVisible(!self.app->access()->assemblyEditorVisible());
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
 	[self updateWindowMenuItems];
@@ -536,26 +556,26 @@ NSString* nsString(const std::string& value)
 
 - (IBAction)toggleInternalRamMonitor:(id)sender
 {
-	self.app->setInternalRamMonitorVisible(!self.app->internalRamMonitorVisible());
+	self.app->access()->setInternalRamMonitorVisible(!self.app->access()->internalRamMonitorVisible());
 	[self updateWindowMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)newDataMemoryMonitor:(id)sender
 {
-	self.app->createDataMemoryMonitor();
+	self.app->access()->createDataMemoryMonitor();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)newProgramMemoryMonitor:(id)sender
 {
-	self.app->createProgramMemoryMonitor();
+	self.app->access()->createProgramMemoryMonitor();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)toggleRun:(id)sender
 {
-	self.app->toggleRun();
+	self.app->access()->toggleRun();
 	[self updateExecutionMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
@@ -563,49 +583,49 @@ NSString* nsString(const std::string& value)
 - (IBAction)resetExecution:(id)sender
 {
 	const NSEventModifierFlags modifiers = NSApp.currentEvent.modifierFlags;
-	self.app->resetCpuState((modifiers & NSEventModifierFlagShift) != 0);
+	self.app->access()->resetCpuState((modifiers & NSEventModifierFlagShift) != 0);
 	[self updateExecutionMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)setProgramCounter:(id)sender
 {
-	self.app->requestSetProgramCounter();
+	self.app->access()->requestSetProgramCounter();
 	[self updateExecutionMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)stepOver:(id)sender
 {
-	self.app->stepOver();
+	self.app->access()->stepOver();
 	[self updateExecutionMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)stepIn:(id)sender
 {
-	self.app->stepIn();
+	self.app->access()->stepIn();
 	[self updateExecutionMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)stepOut:(id)sender
 {
-	self.app->stepOut();
+	self.app->access()->stepOut();
 	[self updateExecutionMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)openExecutionSettings:(id)sender
 {
-	self.app->requestExecutionSettings();
+	self.app->access()->requestExecutionSettings();
 	// ImGui needs subsequent frames to size and reveal a newly opened modal.
 	[self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 }
 
 - (IBAction)toggleUnifiedMode:(id)sender
 {
-	self.app->setUnifiedMode(!self.app->unifiedMode());
+	self.app->access()->setUnifiedMode(!self.app->access()->unifiedMode());
 	[self updateMemoryMenuItems];
 	[self updateWindowMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
@@ -613,36 +633,36 @@ NSString* nsString(const std::string& value)
 
 - (BOOL)isUnifiedMode
 {
-	return self.app->unifiedMode();
+	return self.app->access()->unifiedMode();
 }
 
 - (IBAction)clearMemory:(id)sender
 {
-	self.app->clearAllMemory();
+	self.app->access()->clearAllMemory();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)clearRam:(id)sender
 {
-	self.app->clearRamOnly();
+	self.app->access()->clearRamOnly();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)clearRom:(id)sender
 {
-	self.app->clearRomOnly();
+	self.app->access()->clearRomOnly();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)fillRamRange:(id)sender
 {
-	self.app->requestFillRamRange();
+	self.app->access()->requestFillRamRange();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
 - (IBAction)fillRomRange:(id)sender
 {
-	self.app->requestFillRomRange();
+	self.app->access()->requestFillRomRange();
 	[self.mtkView setNeedsDisplay:YES];
 }
 
@@ -681,8 +701,8 @@ NSString* nsString(const std::string& value)
 	__weak Emu51AppViewController* weakSelf = self;
 	self.executionTimer = [NSTimer timerWithTimeInterval:1.0 / 240.0 repeats:YES block:^(NSTimer*) {
 		Emu51AppViewController* controller = weakSelf;
-		if (controller != nil && controller.app != nullptr && controller.app->running()) {
-			controller.app->tick();
+		if (controller != nil && controller.app != nullptr && controller.app->access(false)->running()) {
+			controller.app->access()->tick();
 			// An unpaused MTKView already draws at its display cadence. Forcing
 			// additional draws at the 240 Hz CPU service rate can exhaust Metal
 			// drawables and block this same thread before its next execution tick.
@@ -737,6 +757,7 @@ NSString* nsString(const std::string& value)
 		[NSEvent removeMonitor:self.eventMonitor];
 		self.eventMonitor = nil;
 	}
+    self.app->stopBackgroundExecution();
 	ImGui_ImplMetal_Shutdown();
 	ImGui_ImplOSX_Shutdown();
 	ImGui::DestroyContext();
@@ -745,7 +766,7 @@ NSString* nsString(const std::string& value)
 
 - (BOOL)prepareToQuit
 {
-	const bool allowed = self.app == nullptr || self.app->prepareToQuit();
+	const bool allowed = self.app == nullptr || self.app->access()->prepareToQuit();
 	if (!allowed)
 		[self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 	return allowed;
@@ -775,18 +796,18 @@ NSString* nsString(const std::string& value)
 	ImGui_ImplOSX_NewFrame(view);
 	ImGui::NewFrame();
 
-	self.app->draw();
+	self.app->access()->draw();
 	[self updateFileMenuItems];
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
 	[self updateExecutionMenuItems];
 	[self updateWindowMenuItems];
 	[self updateWindowTitle];
-	if (self.app->consumeQuitRequested()) {
+	if (self.app->access()->consumeQuitRequested()) {
 		[NSApp terminate:nil];
 		return;
 	}
-	view.paused = !(self.app->shouldAnimate() || [self shouldKeepDrawingForInteraction]);
+	view.paused = !(self.app->access(false)->shouldAnimate() || [self shouldKeepDrawingForInteraction]);
 
 	ImGui::Render();
 	id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
@@ -909,6 +930,11 @@ NSString* nsString(const std::string& value)
 	[self.viewController compileAndLoadAssemblyEditor:sender];
 }
 
+- (IBAction)showPeripherals:(id)sender
+{
+    [self.viewController showPeripherals:sender];
+}
+
 - (IBAction)showHardwareModule:(id)sender
 {
 	[self.viewController showHardwareModule:sender];
@@ -927,6 +953,11 @@ NSString* nsString(const std::string& value)
 - (IBAction)newDisassemblyView:(id)sender
 {
 	[self.viewController newDisassemblyView:sender];
+}
+
+- (IBAction)toggleRegisters:(id)sender
+{
+    [self.viewController toggleRegisters:sender];
 }
 
 - (IBAction)toggleAssemblyEditor:(id)sender
@@ -1259,8 +1290,17 @@ int main()
 		NSMenuItem* windowMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:windowMenuItem];
 		NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
-		if (*viewController.app->hardwareModuleName()) {
-			NSMenuItem* hardwareItem = [[NSMenuItem alloc] initWithTitle:nsString(viewController.app->hardwareModuleName())
+        NSMenuItem* registersItem = [[NSMenuItem alloc] initWithTitle:@"Registers"
+            action:@selector(toggleRegisters:) keyEquivalent:@""];
+        registersItem.target = appDelegate;
+        viewController.registersMenuItem = registersItem;
+        [windowMenu addItem:registersItem];
+        NSMenuItem* peripheralsItem = [[NSMenuItem alloc] initWithTitle:@"Peripherals"
+            action:@selector(showPeripherals:) keyEquivalent:@""];
+        peripheralsItem.target = appDelegate;
+        [windowMenu addItem:peripheralsItem];
+		if (*viewController.app->access()->hardwareModuleName()) {
+			NSMenuItem* hardwareItem = [[NSMenuItem alloc] initWithTitle:nsString(viewController.app->access()->hardwareModuleName())
 				action:@selector(showHardwareModule:) keyEquivalent:@""];
 			hardwareItem.target = appDelegate;
 			[windowMenu addItem:hardwareItem];

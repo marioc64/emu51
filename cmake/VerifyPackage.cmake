@@ -38,6 +38,9 @@ endif()
 if(NOT DEFINED DATADIR)
     set(DATADIR share)
 endif()
+if(NOT DEFINED INCLUDEDIR)
+    set(INCLUDEDIR include)
+endif()
 if(NOT DEFINED GUI_EXPECTED)
     set(GUI_EXPECTED TRUE)
 endif()
@@ -92,11 +95,32 @@ foreach(path IN ITEMS README.md RELEASE.md THIRD_PARTY_NOTICES.md HISTORY.md LIC
         CONTRIBUTING.md CYCLE_ACCURATE_EXECUTION.md MODULES.md
         licenses/imgui/LICENSE.txt licenses/ImGuiColorTextEdit/LICENSE
         licenses/kason/LICENSE licenses/codicons/LICENSE
-        licenses/portable-file-dialogs/portable-file-dialogs.COPYING licenses/glfw/COPYING.txt)
+        licenses/portable-file-dialogs/portable-file-dialogs.COPYING licenses/glfw/COPYING.txt
+        licenses/peripheral-sdk/LICENSE licenses/peripheral-sdk/COPYING)
     if(NOT EXISTS "${root}/${DOCDIR}/${path}")
         message(FATAL_ERROR "Missing packaged documentation/license: ${path}")
     endif()
 endforeach()
+foreach(path IN ITEMS "${INCLUDEDIR}/emu51/peripheral.h"
+        "${INCLUDEDIR}/emu51/devices.h"
+        "${INCLUDEDIR}/emu51/audio.h" "${INCLUDEDIR}/emu51/audio_host.h"
+        "${DATADIR}/doc/emu51-peripheral-sdk/LICENSE" "${DATADIR}/doc/emu51-peripheral-sdk/COPYING"
+        "${DATADIR}/doc/emu51-peripheral-sdk/README.md" "${DATADIR}/doc/emu51-peripheral-sdk/AUDIO.md")
+    if(NOT EXISTS "${root}/${path}")
+        message(FATAL_ERROR "Missing installed peripheral SDK file: ${path}")
+    endif()
+endforeach()
+if(HOST_AUDIO_EXPECTED)
+    foreach(path IN ITEMS "${DOCDIR}/licenses/miniaudio/LICENSE"
+            "${DATADIR}/doc/emu51-peripheral-sdk/licenses/miniaudio/LICENSE")
+        if(NOT EXISTS "${root}/${path}")
+            message(FATAL_ERROR "Missing installed miniaudio license: ${path}")
+        endif()
+    endforeach()
+    if(APPLE AND GUI_EXPECTED AND NOT EXISTS "${root}/emu51_imgui.app/Contents/Resources/licenses/miniaudio/LICENSE")
+        message(FATAL_ERROR "Missing miniaudio bundle license")
+    endif()
+endif()
 if(WIN32)
     set(suffix .exe)
 else()
@@ -145,7 +169,9 @@ if(GUI_EXPECTED)
         foreach(path IN ITEMS Contents/MacOS/emu51_imgui Contents/Info.plist
                 Contents/Resources/asm/mod851 Contents/Resources/THIRD_PARTY_NOTICES.md
                 Contents/Resources/LICENSE Contents/Resources/COPYRIGHT Contents/Resources/emu51.icns
-                Contents/Resources/licenses/imgui/LICENSE.txt Contents/Resources/licenses/codicons/LICENSE)
+                Contents/Resources/licenses/imgui/LICENSE.txt Contents/Resources/licenses/codicons/LICENSE
+                Contents/Resources/licenses/peripheral-sdk/LICENSE
+                Contents/Resources/licenses/peripheral-sdk/COPYING)
             if(NOT EXISTS "${app}/${path}")
                 message(FATAL_ERROR "Missing bundle content: ${path}")
             endif()
@@ -156,6 +182,9 @@ if(GUI_EXPECTED)
             endif()
         endforeach()
         file(READ "${app}/Contents/Info.plist" plist)
+        if(NOT plist MATCHES "<key>NSMicrophoneUsageDescription</key>")
+            message(FATAL_ERROR "Bundle is missing its audio capture permission description")
+        endif()
         if(NOT plist MATCHES "<key>CFBundleIconFile</key>[ \t\r\n]*<string>emu51.icns</string>")
             message(FATAL_ERROR "Bundle does not declare its application icon")
         endif()

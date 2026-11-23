@@ -17,6 +17,9 @@ public:
 
 // Optional local hardware. Returning true claims a data-space bus access;
 // program fetches and image loading always retain the application's normal map.
+// During Run, advance/bus callbacks execute on the simulation worker. draw/show
+// stay on the UI thread; the host serializes model access between them. Never
+// call ImGui/native window APIs from advance or bus callbacks.
 class Emu51Hardware {
 public:
     virtual ~Emu51Hardware() = default;

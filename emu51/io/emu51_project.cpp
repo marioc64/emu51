@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <memory>
@@ -25,11 +26,34 @@ struct StoredEditor {
     char path[4096], name[4096], baseDirectory[4096], text[1024 * 1024 + 1];
     int line, column;
 };
+struct StoredPeripheralDevice {
+    char id[49];
+    int kind, address;
+    double referenceVolts, voltage;
+    int conversionTicks, digitalValue, audioDirections;
+    double inputGainDb;
+    int audioBufferMs;
+    int activeLow, initiallyPressed, bounceMs, columns, rows, i2cAddress;
+    double clockHz;
+    char storagePath[4096];
+    int displayDigits, barSegments, commonAnode, displayColon;
+    double persistenceMs;
+    int displayColor, displayStyle, displayAddress;
+};
+struct StoredPeripheralWire { char a[65], b[65]; int aBit, bBit, width; };
+struct StoredAnalogWire { char from[65], to[65]; };
+struct StoredPeripheralPosition { char id[49]; double x, y; char name[129]; };
+struct StoredLiveBox { char id[49]; double x, y, width, height; int momentaryKeys; };
 struct StoredProject {
     int version, unified, debuggerOpen, traceEnabled, cycleExact, stepsPerFrame;
     int serialTerminalOpen, serialLineEnding, serialFileLineEnding, serialFileLineDelayMs;
     char hardwareModule[128], cpuModel[16];
     double crystalMHz;
+    StoredPeripheralDevice devices[32]; std::size_t deviceCount;
+    StoredPeripheralWire digital[128]; std::size_t digitalCount;
+    StoredAnalogWire analog[64]; std::size_t analogCount;
+    StoredPeripheralPosition positions[33]; std::size_t positionCount;
+    StoredLiveBox liveBoxes[33]; std::size_t liveBoxCount;
     StoredProgram programs[32];
     std::size_t programCount;
     char reloadPath[4096];
@@ -72,6 +96,64 @@ const kason_schema* projectSchema()
         KaSON_FIELD_INT(StoredEditor, column, "column", KaSON_REQUIRED),
     };
     KaSON_SCHEMA_DEFINE(editorSchema, StoredEditor, editorFields, 32);
+    static const kason_schema_field deviceFields[] = {
+        KaSON_FIELD_STRING(StoredPeripheralDevice, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_INT(StoredPeripheralDevice, kind, "kind", KaSON_REQUIRED),
+        KaSON_FIELD_INT(StoredPeripheralDevice, address, "address", KaSON_DEFAULT_INT(32768)),
+        KaSON_FIELD_DOUBLE(StoredPeripheralDevice, referenceVolts, "reference_volts", KaSON_DEFAULT_DOUBLE(5)),
+        KaSON_FIELD_DOUBLE(StoredPeripheralDevice, voltage, "voltage", KaSON_DEFAULT_DOUBLE(2.5)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, conversionTicks, "conversion_ticks", KaSON_DEFAULT_INT(768)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, digitalValue, "digital_value", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, audioDirections, "audio_directions", KaSON_DEFAULT_INT(2)),
+        KaSON_FIELD_DOUBLE(StoredPeripheralDevice, inputGainDb, "input_gain_db", KaSON_DEFAULT_DOUBLE(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, audioBufferMs, "audio_buffer_ms", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, activeLow, "active_low", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, initiallyPressed, "initially_pressed", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, bounceMs, "bounce_ms", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, columns, "columns", KaSON_DEFAULT_INT(16)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, rows, "rows", KaSON_DEFAULT_INT(2)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, i2cAddress, "i2c_address", KaSON_DEFAULT_INT(80)),
+        KaSON_FIELD_DOUBLE(StoredPeripheralDevice, clockHz, "clock_hz", KaSON_DEFAULT_DOUBLE(2000000)),
+        KaSON_FIELD_STRING(StoredPeripheralDevice, storagePath, "storage_path", KaSON_DEFAULT_STRING("")),
+        KaSON_FIELD_INT(StoredPeripheralDevice, displayDigits, "display_digits", KaSON_DEFAULT_INT(4)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, barSegments, "bar_segments", KaSON_DEFAULT_INT(10)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, commonAnode, "common_anode", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, displayColon, "display_colon", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_DOUBLE(StoredPeripheralDevice, persistenceMs, "persistence_ms", KaSON_DEFAULT_DOUBLE(20)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, displayColor, "display_color", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, displayStyle, "display_style", KaSON_DEFAULT_INT(7)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, displayAddress, "display_address", KaSON_DEFAULT_INT(112)),
+    };
+    KaSON_SCHEMA_DEFINE(deviceSchema, StoredPeripheralDevice, deviceFields, 32);
+    static const kason_schema_field digitalFields[] = {
+        KaSON_FIELD_STRING(StoredPeripheralWire, a, "a", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredPeripheralWire, b, "b", KaSON_REQUIRED),
+        KaSON_FIELD_INT(StoredPeripheralWire, aBit, "a_bit", KaSON_REQUIRED),
+        KaSON_FIELD_INT(StoredPeripheralWire, bBit, "b_bit", KaSON_REQUIRED),
+        KaSON_FIELD_INT(StoredPeripheralWire, width, "width", KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(digitalSchema, StoredPeripheralWire, digitalFields, 16);
+    static const kason_schema_field analogFields[] = {
+        KaSON_FIELD_STRING(StoredAnalogWire, from, "from", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredAnalogWire, to, "to", KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(analogSchema, StoredAnalogWire, analogFields, 8);
+    static const kason_schema_field positionFields[] = {
+        KaSON_FIELD_STRING(StoredPeripheralPosition, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredPeripheralPosition, x, "x", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredPeripheralPosition, y, "y", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredPeripheralPosition, name, "name", KaSON_DEFAULT_STRING("")),
+    };
+    KaSON_SCHEMA_DEFINE(positionSchema, StoredPeripheralPosition, positionFields, 8);
+    static const kason_schema_field liveBoxFields[] = {
+        KaSON_FIELD_STRING(StoredLiveBox, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredLiveBox, x, "x", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredLiveBox, y, "y", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredLiveBox, width, "width", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredLiveBox, height, "height", KaSON_REQUIRED),
+        KaSON_FIELD_BOOL(StoredLiveBox, momentaryKeys, "momentary_keys", KaSON_DEFAULT_BOOL(false)),
+    };
+    KaSON_SCHEMA_DEFINE(liveBoxSchema, StoredLiveBox, liveBoxFields, 8);
     static const kason_schema_field fields[] = {
         KaSON_FIELD_INT(StoredProject, version, "version", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, unified, "unified_memory", KaSON_REQUIRED),
@@ -83,6 +165,11 @@ const kason_schema* projectSchema()
         KaSON_FIELD_INT(StoredProject, serialFileLineDelayMs, "serial_file_line_delay_ms", KaSON_DEFAULT_INT(0)),
         KaSON_FIELD_STRING(StoredProject, cpuModel, "cpu_model", KaSON_DEFAULT_STRING("8051")),
         KaSON_FIELD_STRING(StoredProject, hardwareModule, "hardware_module", KaSON_DEFAULT_STRING("")),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, devices, deviceCount, "peripheral_devices", &deviceSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, digital, digitalCount, "peripheral_digital_wires", &digitalSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, analog, analogCount, "peripheral_analog_wires", &analogSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, positions, positionCount, "peripheral_layout", &positionSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, liveBoxes, liveBoxCount, "peripheral_live_layout", &liveBoxSchema, KaSON_DEFAULT_EMPTY_ARRAY),
         KaSON_FIELD_BOOL(StoredProject, cycleExact, "cycle_exact", KaSON_REQUIRED),
         KaSON_FIELD_DOUBLE(StoredProject, crystalMHz, "crystal_mhz", KaSON_REQUIRED),
         KaSON_FIELD_INT(StoredProject, stepsPerFrame, "instructions_per_frame", KaSON_REQUIRED),
@@ -97,7 +184,12 @@ const kason_schema* projectSchema()
     KaSON_SCHEMA_DEFINE(schema, StoredProject, fields, 32);
     static const bool initialized = kason_schema_init(&programSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&watchSchema) == KaSON_SCHEMA_SUCCESS &&
-        kason_schema_init(&editorSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&schema) == KaSON_SCHEMA_SUCCESS;
+        kason_schema_init(&editorSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&deviceSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&digitalSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&analogSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&positionSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&liveBoxSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&schema) == KaSON_SCHEMA_SUCCESS;
     return initialized ? &schema : nullptr;
 }
 
@@ -142,6 +234,42 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
     p.serialFileLineEnding = s.serialFileLineEnding;
     p.serialFileLineDelayMs = s.serialFileLineDelayMs;
     p.hardwareModule = s.hardwareModule;
+    for (std::size_t i = 0; i < s.deviceCount; ++i) {
+        const auto& d = s.devices[i];
+        p.peripherals.devices.push_back({d.id, static_cast<Emu51PeripheralKind>(d.kind), d.address,
+            d.referenceVolts, d.voltage, d.conversionTicks, d.digitalValue, d.audioDirections, d.inputGainDb, d.audioBufferMs, d.activeLow != 0, d.initiallyPressed != 0,
+            d.bounceMs, d.columns, d.rows, d.i2cAddress, d.clockHz, resolvePath(d.storagePath,base),
+            d.displayDigits, d.barSegments, d.commonAnode != 0, d.displayColon != 0, d.persistenceMs,
+            d.displayColor, d.displayStyle, d.displayAddress});
+    }
+    for (std::size_t i = 0; i < s.digitalCount; ++i) {
+        const auto& w = s.digital[i]; p.peripherals.digital.push_back({w.a, w.b, w.aBit, w.bBit, w.width});
+    }
+    for (std::size_t i = 0; i < s.analogCount; ++i)
+        p.peripherals.analog.push_back({s.analog[i].from, s.analog[i].to});
+    emu51ValidatePeripheralConfig(p.peripherals);
+    std::set<std::string> positioned;
+    for (std::size_t i = 0; i < s.positionCount; ++i) {
+        const auto& n = s.positions[i];
+        if (!std::isfinite(n.x) || !std::isfinite(n.y) || std::abs(n.x) > 100000 || std::abs(n.y) > 100000 ||
+            std::any_of(n.name,n.name+std::strlen(n.name),[](unsigned char ch) { return ch < 32; }) ||
+            !positioned.insert(n.id).second || (std::string(n.id) != "cpu" &&
+                std::none_of(p.peripherals.devices.begin(),p.peripherals.devices.end(),[&](const auto& d) { return d.id == n.id; })))
+            throw std::runtime_error("Invalid peripheral block position");
+        p.peripheralLayout.push_back({n.id,n.x,n.y,n.name});
+    }
+    positioned.clear();
+    for (std::size_t i = 0; i < s.liveBoxCount; ++i) {
+        const auto& b = s.liveBoxes[i];
+        if (!std::isfinite(b.x) || !std::isfinite(b.y) || !std::isfinite(b.width) || !std::isfinite(b.height) ||
+            b.x < 0 || b.y < 0 || b.x > 100000 || b.y > 100000 || b.width < 80 || b.height < 48 || b.width > 4096 || b.height > 4096 ||
+            !positioned.insert(b.id).second || (std::string(b.id) != "cpu" &&
+                std::none_of(p.peripherals.devices.begin(),p.peripherals.devices.end(),[&](const auto& d) { return d.id == b.id; })))
+            throw std::runtime_error("Invalid peripheral Live box layout");
+        p.peripheralLiveLayout.push_back({b.id,b.x,b.y,b.width,b.height,b.momentaryKeys != 0});
+    }
+    if (!p.hardwareModule.empty() && !p.peripherals.devices.empty())
+        throw std::runtime_error("A project cannot enable both a hardware module and a peripheral graph");
     p.execution = {s.cycleExact != 0, s.crystalMHz, s.stepsPerFrame};
     p.reloadPath = resolvePath(s.reloadPath, base);
     p.reloadBinaryAddress = static_cast<std::uint16_t>(s.reloadBinaryAddress);
@@ -211,7 +339,9 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
         if (path.empty()) throw std::runtime_error("project path is empty");
         auto s = std::make_unique<StoredProject>();
         if (p.programs.size() > std::size(s->programs) || p.watchpoints.size() > std::size(s->watchpoints) ||
-            p.watches.size() > std::size(s->watches)) throw std::runtime_error("project has too many program loads or watches");
+            p.watches.size() > std::size(s->watches) || p.peripheralLayout.size() > std::size(s->positions) ||
+            p.peripheralLiveLayout.size() > std::size(s->liveBoxes))
+            throw std::runtime_error("project has too many program loads, watches, or peripheral block positions");
         const auto base = projectBase(path);
         copyText(s->cpuModel, emu51ModelInfo(p.cpuModel).id);
         s->version = 1; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
@@ -220,6 +350,35 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
         s->serialFileLineEnding = p.serialFileLineEnding;
         s->serialFileLineDelayMs = p.serialFileLineDelayMs;
         copyText(s->hardwareModule, p.hardwareModule);
+        emu51ValidatePeripheralConfig(p.peripherals);
+        for (const auto& d : p.peripherals.devices) {
+            auto& to = s->devices[s->deviceCount++]; copyText(to.id, d.id);
+            to.kind = static_cast<int>(d.kind); to.address = d.address; to.referenceVolts = d.referenceVolts;
+            to.voltage = d.voltage; to.conversionTicks = d.conversionTicks;
+            to.digitalValue = d.digitalValue; to.audioDirections = d.audioDirections; to.inputGainDb = d.inputGainDb; to.audioBufferMs = d.audioBufferMs;
+            to.activeLow = d.activeLow; to.initiallyPressed = d.initiallyPressed; to.bounceMs = d.bounceMs;
+            to.columns = d.columns; to.rows = d.rows; to.i2cAddress = d.i2cAddress; to.clockHz = d.clockHz;
+            copyText(to.storagePath,portablePath(d.storagePath,base));
+            to.displayDigits=d.displayDigits; to.barSegments=d.barSegments; to.commonAnode=d.commonAnode;
+            to.displayColon=d.displayColon; to.persistenceMs=d.persistenceMs; to.displayColor=d.displayColor;
+            to.displayStyle=d.displayStyle; to.displayAddress=d.displayAddress;
+        }
+        for (const auto& w : p.peripherals.digital) {
+            auto& to = s->digital[s->digitalCount++]; copyText(to.a, w.a); copyText(to.b, w.b);
+            to.aBit = w.aBit; to.bBit = w.bBit; to.width = w.width;
+        }
+        for (const auto& w : p.peripherals.analog) {
+            auto& to = s->analog[s->analogCount++]; copyText(to.from, w.from); copyText(to.to, w.to);
+        }
+        for (const auto& n : p.peripheralLayout) {
+            auto& to = s->positions[s->positionCount++]; copyText(to.id,n.id); to.x = n.x; to.y = n.y;
+            copyText(to.name,n.name);
+        }
+        for (const auto& b : p.peripheralLiveLayout) {
+            auto& to = s->liveBoxes[s->liveBoxCount++]; copyText(to.id,b.id);
+            to.x = b.x; to.y = b.y; to.width = b.width; to.height = b.height;
+            to.momentaryKeys = b.momentaryKeys;
+        }
         s->cycleExact = p.execution.cycleExact; s->crystalMHz = p.execution.crystalMHz; s->stepsPerFrame = p.execution.stepsPerFrame;
         copyText(s->reloadPath, portablePath(p.reloadPath, base)); s->reloadBinaryAddress = p.reloadBinaryAddress;
         auto& editor = s->editor;

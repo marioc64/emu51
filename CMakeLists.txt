@@ -60,6 +60,8 @@ if(EMU51_LOCAL_EXTENSION)
 	# This guard precedes every install rule, including the standalone tools.
 	install(CODE "message(FATAL_ERROR \"Installing a local hardware extension build is disabled. Use a separate standard build for releases.\")")
 endif()
+option(EMU51_PERIPHERAL_HOST_AUDIO "Build the optional native peripheral audio backend" ON)
+add_subdirectory("peripheral-sdk")
 add_subdirectory("emu51")
 if(EMU51_LOCAL_EXTENSION)
 	add_subdirectory("${EMU51_LOCAL_EXTENSION}" "local-hardware")

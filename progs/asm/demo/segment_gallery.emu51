@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "seven",
+      "kind": 15,
+      "display_digits": 1
+    },
+    {
+      "id": "fourteen",
+      "kind": 16,
+      "display_digits": 1,
+      "display_color": 1,
+      "display_style": 14
+    },
+    {
+      "id": "sixteen",
+      "kind": 17,
+      "display_digits": 1,
+      "display_color": 2,
+      "display_style": 16
+    },
+    {
+      "id": "bar",
+      "kind": 18,
+      "bar_segments": 10,
+      "display_color": 3
+    },
+    {
+      "id": "ground",
+      "kind": 4,
+      "digital_value": 0
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "seven.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "ground.out",
+      "b": "seven.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "fourteen.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.P2",
+      "b": "fourteen.segments",
+      "a_bit": 0,
+      "b_bit": 8,
+      "width": 7
+    },
+    {
+      "a": "ground.out",
+      "b": "fourteen.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "sixteen.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.P2",
+      "b": "sixteen.segments",
+      "a_bit": 0,
+      "b_bit": 8,
+      "width": 8
+    },
+    {
+      "a": "cpu.P3",
+      "b": "sixteen.segments",
+      "a_bit": 0,
+      "b_bit": 16,
+      "width": 1
+    },
+    {
+      "a": "ground.out",
+      "b": "sixteen.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "bar.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.P2",
+      "b": "bar.segments",
+      "a_bit": 0,
+      "b_bit": 8,
+      "width": 2
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "segment_gallery.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "segment_gallery.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "segment_gallery.asm",
+    "name": "segment_gallery.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "seven",
+      "x": 420,
+      "y": 0,
+      "name": "seven"
+    },
+    {
+      "id": "fourteen",
+      "x": 850,
+      "y": 0,
+      "name": "fourteen"
+    },
+    {
+      "id": "sixteen",
+      "x": 1280,
+      "y": 0,
+      "name": "sixteen"
+    },
+    {
+      "id": "bar",
+      "x": 420,
+      "y": 500,
+      "name": "bar"
+    },
+    {
+      "id": "ground",
+      "x": 850,
+      "y": 500,
+      "name": "ground"
+    }
+  ]
+}

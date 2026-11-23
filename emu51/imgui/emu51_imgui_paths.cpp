@@ -12,9 +12,7 @@ namespace fs = std::filesystem;
 
 constexpr const char* kAppConfigDirName = "emu51";
 constexpr const char* kImGuiIniFileName = "imgui.ini";
-constexpr const char* kImGuiLayoutFileName = "imgui_layout_state.txt";
-constexpr const char* kRecentProgramsFileName = "recent_programs.txt";
-constexpr const char* kRecentProjectsFileName = "recent_projects.txt";
+constexpr const char* kStateFileName = "state.json";
 constexpr const char* kSettingsFileName = "settings.json";
 
 std::string getEnvOrEmpty(const char* name)
@@ -82,22 +80,13 @@ std::string emu51GetImguiIniPath()
 	return (configDir / kImGuiIniFileName).string();
 }
 
-std::string emu51GetImguiLayoutPath()
+std::string emu51GetStatePath()
 {
 	const fs::path configDir = getConfigDir();
 	if (configDir.empty())
 		return {};
 
-	return (configDir / kImGuiLayoutFileName).string();
-}
-
-std::string emu51GetRecentProgramsPath()
-{
-	const fs::path configDir = getConfigDir();
-	if (configDir.empty())
-		return {};
-
-	return (configDir / kRecentProgramsFileName).string();
+	return (configDir / kStateFileName).string();
 }
 
 std::string emu51GetSettingsPath()
@@ -106,12 +95,6 @@ std::string emu51GetSettingsPath()
 	if (configDir.empty())
 		return {};
 	return (configDir / kSettingsFileName).string();
-}
-
-std::string emu51GetRecentProjectsPath()
-{
-	const fs::path configDir = getConfigDir();
-	return configDir.empty() ? std::string{} : (configDir / kRecentProjectsFileName).string();
 }
 
 std::string emu51GetEditorRecoveryDirectory()

@@ -23,6 +23,7 @@ with a reusable emulation engine and a Dear ImGui interface. See
 - Saved layouts, Follow PC settings, and execution preferences.
 - Crystal-paced execution using the classic 12-clock 8051 timing model.
 - Serial modes 0–3, Timer 1/SMOD and 8052 Timer 2 baud clocks, serial interrupts, and a byte-oriented terminal.
+- Configurable peripheral graphs: 8255, ADC0804, Covox, LCD, keypad, switches/LEDs, shift registers, I²C EEPROM, AY-3-8910, and optional host audio.
 - A standalone assembler, bounded console runner, and dispatch benchmark.
 
 The timing mode paces emulated machine cycles against wall time. It does not
@@ -77,6 +78,62 @@ Other multi-configuration builds also put executables or app bundles under their
 configuration directory. Useful build options are `-DEMU51_WERROR=ON` for warnings
 as errors and `-DEMU51_ASAN=ON` for AddressSanitizer/UBSan with Clang or GCC.
 
+## Peripherals
+
+Open **Window → Peripherals** to edit a graph or inspect its signals in **Live**.
+Examples are loaded with **File → Open project**.
+
+For microphone loopback, open the [example project](progs/asm/demo/microphone_covox.emu51),
+then use **Live → List audio devices → Open selected audio devices** and **Run**.
+Retain **System default** or select a physical microphone/playback device.
+The example connects ADC data directly to P0 and P1 directly to Covox, with P3
+controlling conversions. Its circular echo combines half the input with half
+the delayed buffer byte, storing the result in both the buffer and P1.
+`BUFFER_SIZE EQU 4096` sets the default delay to about 0.737 seconds. The
+[assembly source](progs/asm/demo/microphone_covox.asm) and
+[loopback instructions](PERIPHERALS.md#microphone--adc--p0-p1--covox--audio-output) are included.
+
+For generated music without an ADC, open [covox_duet.emu51](progs/asm/demo/covox_duet.emu51),
+open playback in **Live**, then **Run**. Two timer interrupts synthesize and mix
+square-wave voices on P1 and sequence pitch/gate events from code memory.
+Player status is in IRAM `30h..53h`. The [assembly source](progs/asm/demo/covox_duet.asm)
+and [score/state documentation](PERIPHERALS.md#two-voice-covox-duet) are included.
+
+CPU and peripheral/audio generation run on a dedicated execution worker.
+Editing, file dialogs and graphics stalls can proceed while sound continues.
+In **Live → Audio signals**, **Audio buffer (ms)** lets you test a smaller or
+larger buffer; the setting is saved with the project.
+
+Peripherals places its tabs beside the window name in the title bar; narrow
+docked panes provide tab scrolling arrows. The **Graph** tab shows draggable blocks for the 8051/8052 CPU and all devices,
+with every supported digital/analog port visible. Drag connector circles for
+whole ports or numbered connectors for individual bits; select a wire to edit
+its bit range. Analog squares and XDATA bus links have distinct colors. Wheel
+zooms and middle/right drag pans. Right-click the canvas for **Add**, **Fit**,
+**Arrange blocks**, and the **Inspector** toggle. New blocks appear at the
+right-click position. The inspector edits selected block/wire settings and names. The Peripherals title supports the same docking targets as the other
+windows. Projects also save block positions and names.
+The wiring tables remain available for precise edits. Click **Apply** in the
+Peripherals title bar to activate graph and inspector settings; this validates
+the draft, resets the CPU and pauses execution. Save Project stores the active
+graph, live source values, and block names/positions.
+Native audio requires explicit device opening and follows Run/Pause in Cycle
+exact mode. See [Peripherals](PERIPHERALS.md) for wiring and audio instructions.
+
+The **Live** tab is a compact hardware front panel: displays, LEDs, switches,
+buttons and keypads, with audio and adjustable source controls as utilities.
+Enable **Edit layout** to drag headers and resize corners; turn it off to use
+controls. **Arrange** packs boxes into rows and **Compact** restores small device
+sizes. **Save Project** retains the arrangement. CPU state and bare ICs stay out
+of Live; wiring and device configuration remain in Graph.
+Box contents scale when resized, including display pixels, text and controls.
+Keypads offer **Toggle** (click to hold/release) and **While pressed** modes;
+the selected mode is saved with the project.
+
+Registers can be closed with its title-bar **X** and reopened with
+**Window → Registers** on every platform. Visibility and docking are retained
+in the per-user window layout.
+
 ## CPU models
 
 Choose **8051** or **8052** in **Execution settings → CPU model**. The default is
@@ -127,6 +184,13 @@ menu to change modes, clear memory, or fill a range. The generic examples under
 `progs/` do not require proprietary board firmware; `mtask2.asm` expects unified
 memory, as described in its source comments.
 
+[Peripheral examples](PERIPHERALS.md#front-panel-serial-and-sound-chip-examples)
+include an interactive LCD/keypad panel, chained shift registers, a persistent
+EEPROM counter, an AY-3-8910 chord player, and
+[segment-display examples](PERIPHERALS.md#segment-display-examples) covering
+multiplexed clocks, BCD decoders, MAX7219/MAX7221, HT16K33 and TM1637. [SID.md](SID.md) assesses a separate
+GPL reSID integration; SID is not yet an implemented device.
+
 ## Project sessions
 
 Use **File → Save project** to create a `.emu51` project, **Save project as...**
@@ -144,8 +208,10 @@ Projects retain the program load sequence, binary load addresses, reload target,
 unified/separate memory mode, execution settings, numeric breakpoints,
 watchpoints, named watches, debugger visibility, and the trace-recording choice. They also
 retain the editor's file, cursor, visibility, and unsaved text. Saving a project
-does not save over source files or clear the editor's modified flag. Restored
-drafts remain modified and use the normal save/discard/cancel protection.
+does not save over source files or clear the editor's modified flag relative to
+the `.asm` file. Text already stored in the project closes without a save prompt.
+Further edits use the normal save/discard/cancel protection until saved to the
+source file or project.
 
 Custom local builds may also retain a hardware-module requirement. Opening such
 a project requires the matching local build; an unavailable module is reported
@@ -346,12 +412,21 @@ Preferences use the per-user `emu51` directory:
 | Windows | `%APPDATA%\emu51\` (or `%USERPROFILE%\AppData\Roaming\emu51\` when APPDATA is absent) |
 | Linux | `$XDG_CONFIG_HOME/emu51/`, otherwise `~/.config/emu51/` |
 
-`settings.json` holds execution preferences. `imgui.ini` and
-`imgui_layout_state.txt` hold window/layout state, including each disassembly
-view's Follow PC choice. `recent_programs.txt` holds recent program paths,
-`recent_projects.txt` holds recent project paths, and
-`editor-recovery/` holds recovery sessions. Persistence can be unavailable if the
-configuration directory cannot be created.
+`settings.json` holds execution preferences. `state.json` holds docking/layout
+state, each disassembly view's Follow PC choice, Registers and peripheral
+inspector visibility, and both recent program and project lists. These are
+saved together by atomic replacement. `imgui.ini` holds ImGui window positions,
+sizes, and collapsed state; `editor-recovery/` holds recovery sessions.
+
+When `state.json` is absent, the application imports `imgui_layout_state.txt`,
+`recent_programs.txt`, and `recent_projects.txt` automatically. The old files
+remain as backups and are no longer updated. An existing `state.json` takes
+precedence; an invalid or unsupported file is preserved and disables layout/history
+saving for that session. Persistence can be unavailable if the configuration
+directory cannot be created.
+
+Follow PC sits in the disassembly title bar; narrow windows show a compact
+checkbox with a Follow PC tooltip.
 
 ## Assembler CLI
 
@@ -458,7 +533,21 @@ excluded from public sources and binary packages.
 ## License and third-party code
 
 Copyright (C) 2001–2026 Mariusz Kasolik. Project code, documentation, and examples
-are licensed under **GNU GPL version 2 only** (`GPL-2.0-only`), without warranty.
+are licensed under **GNU GPL version 2 only** (`GPL-2.0-only`), without warranty,
+except for the independently buildable [peripheral SDK](peripheral-sdk/README.md).
+The SDK's headers, implementation, documentation and examples use
+**LGPL-2.1-only**; its emulator host adapter remains GPL-2.0-only. The SDK currently
+provides a headless C API for bus maps, digital port/bit wiring and analog signals,
+plus an ideal Covox-style parallel DAC, an 8255A Mode 0/BSR profile and an
+ADC0804 functional profile. The GPL CPU adapters connect XDATA and
+P0..P3 with pin/latch semantics and instruction-boundary timing. Its
+[factory registry](peripheral-sdk/REGISTRY.md) supports discovery, typed parameters
+and custom C factories. Run the
+`emu51_peripheral_gpio_demo` build target for a CPU-to-DAC example, or
+`emu51_peripheral_adc_demo` for an interrupt-driven CPU/8255/ADC/DAC board.
+The desktop [Peripherals window](PERIPHERALS.md) configures and saves these graphs. The optional [native audio host](peripheral-sdk/AUDIO.md)
+connects analog endpoints to selected input/output devices through bounded
+callback queues; the audio demo provides explicit device/channel selection.
 See [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Vendored components and embedded
 font data retain their respective licenses.

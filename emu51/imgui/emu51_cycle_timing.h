@@ -29,24 +29,26 @@ public:
 		initialized_ = true;
 	}
 
-	void update(Clock::time_point now, double crystalMHz)
+	// Returns true when pacing rebases (initialization, invalid/backward time,
+	// or a host pause longer than one second). Live audio must rebase too.
+	bool update(Clock::time_point now, double crystalMHz)
 	{
 		if (!validCrystalMHz(crystalMHz)) {
 			reset(now);
-			return;
+			return true;
 		}
-		updateBudget(now, static_cast<std::uint64_t>(std::llround(crystalMHz * 1'000'000.0)), 12'000'000'000ULL);
+		return updateBudget(now, static_cast<std::uint64_t>(std::llround(crystalMHz * 1'000'000.0)), 12'000'000'000ULL);
 	}
 
 	// A logical frame is 1/60 second, independent of display refresh and service
 	// frequency. In this mode callers consume one budget unit per instruction.
-	void updateInstructions(Clock::time_point now, unsigned instructionsPerFrame)
+	bool updateInstructions(Clock::time_point now, unsigned instructionsPerFrame)
 	{
 		if (instructionsPerFrame == 0 || instructionsPerFrame > 1'000'000) {
 			reset(now);
-			return;
+			return true;
 		}
-		updateBudget(now, static_cast<std::uint64_t>(instructionsPerFrame) * 60, 1'000'000'000ULL);
+		return updateBudget(now, static_cast<std::uint64_t>(instructionsPerFrame) * 60, 1'000'000'000ULL);
 	}
 
 	bool cyclesDue() const { return cycleBudget_ > 0; }
@@ -66,13 +68,13 @@ public:
 	}
 
 private:
-	void updateBudget(Clock::time_point now, std::uint64_t rate, std::uint64_t unitsPerCycle)
+	bool updateBudget(Clock::time_point now, std::uint64_t rate, std::uint64_t unitsPerCycle)
 	{
 		// A long suspension (for example, system sleep) starts a fresh interval.
 		// Ordinary frame jitter and unconsumed work retain their cycle balance.
 		if (!initialized_ || now < lastUpdate_ || now - lastUpdate_ > std::chrono::seconds(1)) {
 			reset(now);
-			return;
+			return true;
 		}
 		const auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastUpdate_).count();
 		lastUpdate_ = now;
@@ -82,6 +84,7 @@ private:
 		const auto units = static_cast<std::uint64_t>(elapsedNs) * rate + cycleRemainder_;
 		cycleBudget_ += static_cast<std::int64_t>(units / unitsPerCycle);
 		cycleRemainder_ = units % unitsPerCycle;
+		return false;
 	}
 
 	Clock::time_point lastUpdate_{};

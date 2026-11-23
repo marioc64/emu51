@@ -3,7 +3,11 @@ Copyright (C) 2001–2026 Mariusz Kasolik
 
 Project code, documentation, and examples authored for emu51 are licensed under
 the GNU General Public License, version 2 only (GPL-2.0-only). See LICENSE for
-the full terms. This program is distributed without any warranty; without even
+the full terms. The independent peripheral-sdk/ subtree (including its headers,
+implementation, documentation, build rules, tests and examples) is instead
+LGPL-2.1-only; see peripheral-sdk/LICENSE and peripheral-sdk/COPYING. The emulator
+host adapter in emu51/peripherals/ remains GPL-2.0-only. This program is
+distributed without any warranty; without even
 the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 Vendored code and assets retain their respective licenses. In particular,

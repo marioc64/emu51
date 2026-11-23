@@ -11,3 +11,7 @@
 # Preserve the upstream TinyBASIC source/image bytes, including mixed line endings.
 /third_party/tb51/tb51.asm -text -whitespace
 /third_party/tb51/tb51.hex -text -whitespace
+
+# Preserve the pinned upstream miniaudio bytes, including its trailing spaces.
+/third_party/miniaudio/miniaudio.h -text -whitespace
+/third_party/miniaudio/LICENSE -text

@@ -2395,7 +2395,7 @@ void test_cycle_timing_reset_and_validation() {
     Fixture f;
     Emu51CycleTiming timing;
     const Emu51CycleTiming::Clock::time_point start{};
-    timing.update(start, 12.0);
+    check(timing.update(start, 12.0), "cycle_timing_first_rebase_signal", "initialization did not report a rebase");
     check(!timing.cyclesDue(), "cycle_timing_first_update", "first update should establish the clock origin");
     timing.update(start + milliseconds(10), 12.0); // Unconsumed work.
     timing.reset(start + seconds(5)); // Pause/resume, reset, or settings Apply.
@@ -2406,9 +2406,9 @@ void test_cycle_timing_reset_and_validation() {
     check(run_due_cycles(timing, f.cpu) == 2000,
           "cycle_timing_resume_new_frequency", "expected 2000 cycles at 24 MHz after resuming for 1 ms");
 
-    timing.update(start + seconds(10), 12.0);
+    check(timing.update(start + seconds(10), 12.0), "cycle_timing_suspend_rebase_signal", "long suspension did not report a rebase");
     check(!timing.cyclesDue(), "cycle_timing_long_suspension", "long suspension created catch-up work");
-    timing.update(start + seconds(10) + milliseconds(1), 12.0);
+    check(!timing.update(start + seconds(10) + milliseconds(1), 12.0), "cycle_timing_continuous_signal", "ordinary execution reported a rebase");
     check(run_due_cycles(timing, f.cpu) == 1000,
           "cycle_timing_after_suspension", "expected 1000 cycles after a fresh 1 ms interval");
     timing.update(start, 12.0); // Defensive handling of an out-of-order timestamp.

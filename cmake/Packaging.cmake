@@ -35,6 +35,11 @@ emu51_package_license("third_party/kason/LICENSE" kason)
 emu51_package_license("third_party/codicons/LICENSE" codicons)
 emu51_package_license("third_party/portable-file-dialogs.COPYING" portable-file-dialogs)
 emu51_package_license("third_party/imgui/examples/libs/glfw/COPYING.txt" glfw)
+emu51_package_license("peripheral-sdk/LICENSE" peripheral-sdk)
+emu51_package_license("peripheral-sdk/COPYING" peripheral-sdk)
+if(EMU51_PERIPHERAL_HOST_AUDIO)
+    emu51_package_license("${EMU51_MINIAUDIO_DIR}/LICENSE" miniaudio)
+endif()
 
 if(APPLE AND TARGET emu51_imgui)
     set_target_properties(emu51_imgui PROPERTIES
@@ -148,5 +153,7 @@ add_test(NAME emu51_installed_package
         "-DBINDIR=${CMAKE_INSTALL_BINDIR}"
         "-DDOCDIR=${CMAKE_INSTALL_DOCDIR}"
         "-DDATADIR=${CMAKE_INSTALL_DATADIR}"
+        "-DINCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}"
+        "-DHOST_AUDIO_EXPECTED=${EMU51_PERIPHERAL_HOST_AUDIO}"
         "-DGUI_EXPECTED=$<TARGET_EXISTS:emu51_imgui>"
         -P "${PROJECT_SOURCE_DIR}/cmake/VerifyPackage.cmake")

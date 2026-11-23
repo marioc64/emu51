@@ -59,32 +59,52 @@ Instruction mode uses the same mechanism, consuming one unit per instruction.
 
 Pause/resume, CPU reset, program loading, and settings changes rebase the pacing
 interval. A gap longer than one second, or a backward time value in a test,
-starts a fresh interval instead of replaying suspended time. Ordinary jitter
+starts a fresh interval instead of replaying suspended time. When native audio
+is running, this also rebases the audio bridge's frame timeline: callbacks may
+have continued during the suspension. CPU/peripheral state and emulated time
+are preserved; the native device stays open. Otherwise the callback would keep
+requesting future frame indices while every newly generated frame was stale.
+Ordinary jitter
 and unfinished work retain the budget. When a host cannot keep up, execution
 slows relative to wall time rather than discarding ordinary accumulated work.
 
-The frontends service execution independently of drawing:
+The desktop runs CPU instructions, timers and peripherals on a dedicated
+**execution worker**, independently of UI event loops and graphics submission.
+It normally services wall-clock debt every millisecond. A busy batch yields the
+model lock after roughly one millisecond (checked every 64 instructions), so
+Pause and debugger commands can take effect promptly. Each batch is also
+limited to 65,536 instructions; Step Over/Out retain their one-million-step
+limit. Headless/manual servicing retains its four-millisecond batch limit.
 
-- macOS uses a common-mode NSTimer with a nominal 240 Hz interval.
-  An unpaused MetalKit view renders at its own display cadence. The execution
-  timer requests a redraw only while the view is paused; forcing draws at the
-  CPU service rate can exhaust drawable buffers and block the same main thread
-  that services execution.
-- Linux/Windows use timed GLFW event waits, nominally 240 Hz while running, with
-  rendering paced separately at approximately 60 Hz.
+UI reads and machine edits acquire exclusive model access at batch boundaries.
+The text editor releases that access during highlighting/layout/rendering, and
+its breakpoint/edit callbacks reacquire it briefly. Native file dialogs,
+assembly preparation, project writes, recovery autosaves and graphics backend
+work run outside the model guard. CPU/audio production therefore continues
+through slow editor rendering, modal dialogs, minimized windows and GPU waits.
+Applying a program or changing machine/device settings is synchronized with the
+worker; reset, stepping, breakpoints and watchpoints retain their CPU semantics.
 
-These are requested service intervals, not real-time scheduling guarantees.
-Each service call executes at most 65,536 instructions. A four-millisecond wall
-budget is checked every 64 instructions, so that deadline is a responsiveness
-target rather than a strict upper bound. Step Over/Out use bounded service
-batches too and stop after one million instructions if the expected return is
-not reached. Pause, debugger stops, resets, and relevant machine edits cancel
-pending step tasks.
+- macOS keeps its common-mode UI refresh timer. Its `tick()` call wakes the
+  worker instead of executing CPU work on the main thread. Metal rendering has
+  its own display cadence; the execution worker uses interactive QoS.
+- Linux/Windows wait for events with a nominal 60 Hz animated redraw cadence.
+  `tick()` likewise signals the worker. A pending final redraw after a worker
+  debugger stop ensures the stopped state is visible before idle event waits.
+- Both frontends stop and join the worker before destroying UI/native resources.
+  Native sound-card callbacks remain separate and only access audio queues.
 
-The toolbar reports completed machine cycles per second in crystal mode and the
-percentage of the requested rate. At 12 MHz, 1.000 Mcycles/s is 100%. The core
-contains no host sleeps. A blocked main thread, such as a synchronous dialog,
-still suspends CPU servicing; no worker thread currently runs the CPU.
+A worker thread improves scheduling isolation; it is not a hard real-time OS
+reservation. Audio still needs a buffer for scheduler jitter and heavy host
+load. Live audio buffering is configurable in the Peripherals window. The
+requested oscillator rate must remain within the host's emulation capacity.
+System sleep can suspend both the worker and UI; after a long suspension CPU
+pacing and audio timelines rebase together.
+
+The toolbar reports completed machine cycles per second and the percentage of
+the requested rate. At 12 MHz, 1.000 Mcycles/s is 100%. The core contains no host
+sleeps. The worker sleeps/yields only in the host service layer, retaining
+fractional cycle debt and instruction/interrupt timing.
 
 ## Core behavior and limits
 
@@ -104,8 +124,9 @@ The following limits remain:
   modeled.
 - Idle mode and power-down execution behavior are not modeled.
 - Timer 0/1 counter mode suppresses automatic increments; external pulses are not
-  sampled. Timer 2 samples T2/T2EX levels at instruction boundaries, so pulses
-  entirely within an instruction are not observed.
+  sampled in standalone hosts. With the optional GPIO interface, Timer 0/1 count
+  sampled falling edges on P3.4/P3.5. Timer 2 samples T2/T2EX levels at instruction
+  boundaries, so pulses entirely within an instruction are not observed.
 - The core's `c_time` is an `unsigned long`; on Windows it is 32 bits and wraps
   after about 71.6 minutes at one million cycles/second. GUI and console totals
   use separate 64-bit accounting. The pacer does not use `c_time` as its clock.
@@ -114,6 +135,18 @@ CPU selection chooses 8051 or 8052. Frequency settings do not select a CPU model
 or change the classic 12-clock instruction timing to 1T/6T.
 Applications requiring exact pin transitions or complete peripherals need a
 more detailed event/timing model.
+
+## Optional peripheral GPIO host
+
+The headless peripheral SDK integration exposes P0..P3 as connectable digital
+ports. Ordinary port reads sample pins; RMW operands read latches. Byte/bit writes
+settle at the instruction's start timestamp. Peripheral time advances to the end
+boundary before pin sampling, timer/UART updates and interrupt arbitration.
+Interrupt entry separately advances devices and timers for its two cycles,
+without another arbitration pass. Connected INT0/INT1 support level/edge requests;
+timer gates and external counters use sampled pin levels/edges. Detailed
+within-instruction transitions and interrupt sampling delays are not modeled.
+See [the SDK guide](peripheral-sdk/README.md) for host setup and limitations.
 
 ## CPU memory and Timer 2
 
@@ -131,7 +164,8 @@ in baud mode. T2EX capture/reload requires EXEN2, and in baud mode only sets EXF
 Timer 2 also advances during interrupt entry.
 
 Host code can set external T2/T2EX levels with `setTimer2Inputs()`. Levels are
-ANDed with the P1.0/P1.1 latches and sampled at instruction boundaries. A falling
+ANDed with the resolved P1.0/P1.1 pins when GPIO is connected (otherwise the
+latches) and sampled at instruction boundaries. A falling
 edge on T2 advances counter mode once; a falling T2EX edge captures or reloads
 at the modeled end of the instruction. Oscillator-phase sampling is not modeled.
 T2MOD, down-counting and clock-output extensions are excluded from this classic

@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "tm1637",
+      "kind": 24,
+      "display_digits": 4,
+      "display_colon": true,
+      "display_color": 0
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "tm1637.DIO",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "tm1637.CLK",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "tm1637_counter.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "tm1637_counter.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "tm1637_counter.asm",
+    "name": "tm1637_counter.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "tm1637",
+      "x": 420,
+      "y": 0,
+      "name": "tm1637"
+    }
+  ]
+}

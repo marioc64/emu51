@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: LGPL-2.1-only
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+if(@EMU51_PERIPHERAL_HOST_AUDIO@)
+    find_dependency(Threads)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/emu51PeripheralsTargets.cmake")
+set(emu51Peripherals_core_FOUND TRUE)
+set(emu51Peripherals_audio_host_FOUND @EMU51_PERIPHERAL_HOST_AUDIO@)
+check_required_components(emu51Peripherals)

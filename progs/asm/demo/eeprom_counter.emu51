@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "eeprom",
+      "kind": 13,
+      "storage_path": "eeprom_counter.bin"
+    },
+    {
+      "id": "led",
+      "kind": 6,
+      "active_low": false
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "eeprom.SDA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "eeprom.SCL",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "eeprom.WP",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P2",
+      "b": "led.in",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "eeprom_counter.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "eeprom_counter.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "eeprom_counter.asm",
+    "name": "eeprom_counter.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "eeprom",
+      "x": 420,
+      "y": 0,
+      "name": "eeprom"
+    },
+    {
+      "id": "led",
+      "x": 850,
+      "y": 0,
+      "name": "led"
+    }
+  ]
+}

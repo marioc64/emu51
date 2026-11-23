@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#pragma once
+// Generated from the redistributable assembly example; no runtime source path.
+inline constexpr const char* emu51CovoxDuetFirmware = R"e51firmware(@EMU51_COVOX_DUET_FIRMWARE@)e51firmware";
+inline constexpr const char* emu51MicrophoneCovoxFirmware = R"e51firmware(@EMU51_MICROPHONE_FIRMWARE@)e51firmware";

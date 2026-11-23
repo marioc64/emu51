@@ -903,14 +903,14 @@ inline void emu51::_op_mov_direct_direct()
 inline void emu51::_op_inc_direct()
 {
 	const auto addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) + 1));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) + 1));
 	++PC;
 }
 
 inline void emu51::_op_dec_direct()
 {
 	const auto addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) - 1));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) - 1));
 	++PC;
 }
 
@@ -1064,42 +1064,42 @@ inline void emu51::_op_clr_bit()
 inline void emu51::_op_xrl_direct_a()
 {
 	const std::uint8_t addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) ^ Acc));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) ^ Acc));
 	++PC;
 }
 
 inline void emu51::_op_xrl_direct_imm()
 {
 	const std::uint8_t addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) ^ readProg(PC + 1)));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) ^ readProg(PC + 1)));
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
 inline void emu51::_op_orl_direct_a()
 {
 	const std::uint8_t addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) | Acc));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) | Acc));
 	++PC;
 }
 
 inline void emu51::_op_orl_direct_imm()
 {
 	const std::uint8_t addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) | readProg(PC + 1)));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) | readProg(PC + 1)));
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
 inline void emu51::_op_anl_direct_a()
 {
 	const std::uint8_t addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) & Acc));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) & Acc));
 	++PC;
 }
 
 inline void emu51::_op_anl_direct_imm()
 {
 	const std::uint8_t addr = readProg(++PC);
-	writeDirect(addr, static_cast<std::uint8_t>(readDirect(addr) & readProg(PC + 1)));
+	writeDirect(addr, static_cast<std::uint8_t>(readLatch(addr) & readProg(PC + 1)));
 	PC = static_cast<std::uint16_t>(PC + 2);
 }
 
@@ -1107,7 +1107,7 @@ inline void emu51::_op_djnz_direct()
 {
 	const std::uint8_t addr = readProg(++PC);
 	++PC;
-	const auto value = static_cast<std::uint8_t>(readDirect(addr) - 1);
+	const auto value = static_cast<std::uint8_t>(readLatch(addr) - 1);
 	writeDirect(addr, value);
 	if (value != 0)
 		PC = static_cast<std::uint16_t>(PC + static_cast<signed char>(readProg(PC)));
@@ -1143,7 +1143,7 @@ inline void emu51::_op_mov_c_bit()
 inline void emu51::_op_cpl_bit()
 {
 	const std::uint8_t bit = readProg(++PC);
-	checkB(bit) ? clrB(bit) : setB(bit);
+	checkLatchBit(bit) ? clrB(bit) : setB(bit);
 	++PC;
 }
 
@@ -1204,7 +1204,7 @@ inline void emu51::_op_bit_branch(bool branchWhenSet, bool clearBitWhenTaken)
 	const std::uint8_t bit = readProg(++PC);
 	++PC;
 
-	const bool condition = checkB(bit);
+	const bool condition = clearBitWhenTaken ? checkLatchBit(bit) : checkB(bit);
 	const bool take = branchWhenSet ? condition : !condition;
 	if (take)
 	{

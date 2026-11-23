@@ -31,7 +31,7 @@ bool readEditorSource(const fs::path& path, std::string& text)
 
 fs::path Emu51ImguiApp::chooseProjectPath(bool save)
 {
-    if (projectPathPicker_) return projectPathPicker_(save);
+    if (projectPathPicker_) return withoutExecutionLock([&] { return projectPathPicker_(save); });
     if (!pfd::settings::available()) {
         statusMessage_ = "file dialog unavailable";
         return {};
@@ -43,18 +43,23 @@ fs::path Emu51ImguiApp::chooseProjectPath(bool save)
             initial = loadedProgramPath_;
             initial.replace_extension(".emu51");
         }
-        auto selected = fs::path(pfd::save_file("Save project", initial.string(), filters).result());
+        auto selected = withoutExecutionLock([&] { return fs::path(pfd::save_file("Save project", initial.string(), filters).result()); });
         if (!selected.empty() && !selected.has_extension()) selected += ".emu51";
         return selected;
     }
-    const auto selected = pfd::open_file("Open project", projectPath_, filters).result();
+    // The macOS backend treats a filename as "default name", which is invalid
+    // for choose file. Open dialogs need a directory, including on repeat opens.
+    auto initial = fs::path(projectPath_).parent_path();
+    std::error_code error;
+    if (!fs::is_directory(initial,error)) initial.clear();
+    const auto selected = withoutExecutionLock([&] { return pfd::open_file("Open project", initial.string(), filters).result(); });
     return selected.empty() ? fs::path{} : fs::path(selected.front());
 }
 
 void Emu51ImguiApp::requestOpenProject()
 {
     const auto path = chooseProjectPath(false);
-    cycleTiming_.reset();
+    resetTimingAfterUiWork();
     if (!path.empty()) openProjectFromPath(path);
 }
 
@@ -67,7 +72,7 @@ void Emu51ImguiApp::saveProject()
 void Emu51ImguiApp::saveProjectAs()
 {
     const auto path = chooseProjectPath(true);
-    cycleTiming_.reset();
+    resetTimingAfterUiWork();
     if (!path.empty()) saveProjectToPath(path);
 }
 
@@ -92,42 +97,7 @@ void Emu51ImguiApp::openRecentProjectFile(int index)
 void Emu51ImguiApp::clearRecentProjectFiles()
 {
     recentProjectPaths_.clear();
-    saveRecentProjectPaths();
-}
-
-void Emu51ImguiApp::loadRecentProjectPaths()
-{
-    const auto path = emu51GetRecentProjectsPath();
-    if (path.empty()) return;
-    std::ifstream input(path);
-    if (input) loadRecentProjectPaths(input);
-}
-
-void Emu51ImguiApp::loadRecentProjectPaths(std::istream& input)
-{
-    recentProjectPaths_.clear();
-    std::string line;
-    while (recentProjectPaths_.size() < kMaxRecentProjects && std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        const auto path = normalizedProgramPath(line);
-        if (!path.empty() && std::find(recentProjectPaths_.begin(), recentProjectPaths_.end(), path) == recentProjectPaths_.end())
-            recentProjectPaths_.push_back(path);
-    }
-}
-
-void Emu51ImguiApp::saveRecentProjectPaths(std::ostream& output) const
-{
-    for (const auto& path : recentProjectPaths_) output << path << '\n';
-}
-
-void Emu51ImguiApp::saveRecentProjectPaths() const
-{
-    if (!persistState_) return;
-    const auto path = emu51GetRecentProjectsPath();
-    if (path.empty()) return;
-    std::ostringstream output;
-    saveRecentProjectPaths(output);
-    emu51WriteTextFileAtomically(path, output.str());
+    saveState();
 }
 
 void Emu51ImguiApp::rememberRecentProjectPath(const fs::path& path)
@@ -137,7 +107,7 @@ void Emu51ImguiApp::rememberRecentProjectPath(const fs::path& path)
     std::erase(recentProjectPaths_, normalized);
     recentProjectPaths_.insert(recentProjectPaths_.begin(), normalized);
     if (recentProjectPaths_.size() > kMaxRecentProjects) recentProjectPaths_.resize(kMaxRecentProjects);
-    saveRecentProjectPaths();
+    saveState();
 }
 
 bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
@@ -157,7 +127,15 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
             return false;
         }
     }
+    if (peripherals_) for (const auto& device : peripherals_->config().devices)
+        if (!device.storagePath.empty() && target == normalizedProgramPath(device.storagePath)) {
+            statusMessage_ = "choose a project path different from the EEPROM image";
+            return false;
+        }
     Emu51Project project;
+    if (peripherals_) project.peripherals = peripherals_->config();
+    project.peripheralLayout = peripheralEditor_.positions(project.peripherals);
+    project.peripheralLiveLayout = peripheralLive_.layout(project.peripherals);
     project.cpuModel = cpu_.model();
     project.unified = unifiedMode_;
     project.execution = {cycleExact_, crystalMHz_, stepsPerFrame_};
@@ -186,14 +164,16 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
     editor.name = assemblyEditorState_.sourceName;
     editor.baseDirectory = assemblyEditorBaseDirectory().empty() ? fs::current_path().string() : assemblyEditorBaseDirectory().string();
     editor.draft = editor.present && (assemblyEditorState_.dirty || editor.path.empty());
-    if (editor.draft) editor.text = assemblyEditor_->GetText();
+    if (editor.draft) editor.text = observedAssemblyEditorText_;
     assemblyEditor_->GetMainCursor(editor.line, editor.column);
     std::string error;
-    if (!emu51SaveProject(path, project, error)) {
+    if (!withoutExecutionLock([&] { return emu51SaveProject(path, project, error); })) {
         statusMessage_ = error;
         return false;
     }
     projectPath_ = target;
+    projectSavedEditorText_ = observedAssemblyEditorText_;
+    clearEditorRecovery();
     rememberRecentProjectPath(projectPath_);
     statusMessage_ = "saved project " + fs::path(projectPath_).filename().string();
     return true;
@@ -202,12 +182,17 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
 bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
 {
     std::string error;
-    const auto project = emu51LoadProject(path, error);
+    const auto project = withoutExecutionLock([&] { return emu51LoadProject(path, error); });
     if (!project) { statusMessage_ = error; return false; }
     if (!project->hardwareModule.empty() && (!hardware_ || project->hardwareModule != hardware_->id())) {
         statusMessage_ = "project requires unavailable hardware module: " + project->hardwareModule;
         return false;
     }
+    std::unique_ptr<Emu51PeripheralSession> peripheralCandidate;
+    try {
+        if (!project->peripherals.devices.empty())
+            peripheralCandidate = withoutExecutionLock([&] { return Emu51PeripheralSession::create(project->peripherals, project->execution.crystalMHz); });
+    } catch (const std::exception& e) { statusMessage_ = e.what(); return false; }
     std::vector<emu51_asm::AssemblyImage> images;
     std::string editorText;
     const auto prepare = [&]() {
@@ -215,7 +200,7 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
         for (const auto& program : project->programs) {
             if (program.fromEditor) {
                 emu51_asm::Assembler assembler;
-                auto compiled = assembler.assemble_string(program.path, program.sourceText, fs::path(program.path).parent_path());
+                auto compiled = withoutExecutionLock([&] { return assembler.assemble_string(program.path, program.sourceText, fs::path(program.path).parent_path()); });
                 if (!compiled.success()) {
                     const auto& diagnostic = compiled.diagnostics.front();
                     statusMessage_ = diagnostic.file + ":" + std::to_string(diagnostic.line) + ": " + diagnostic.message;
@@ -223,7 +208,7 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
                 }
                 images.push_back(std::move(compiled.image));
             } else {
-                auto prepared = emu51_asm::prepare_program_file(program.path, {program.binaryAddress});
+                auto prepared = withoutExecutionLock([&] { return emu51_asm::prepare_program_file(program.path, {program.binaryAddress}); });
                 if (!prepared.result.success) {
                     statusMessage_ = program.path + ": " + prepared.result.message;
                     return false;
@@ -233,7 +218,7 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
         }
         const auto& editor = project->editor;
         editorText = editor.draft ? editor.text : std::string{};
-        if (editor.present && !editor.draft && !readEditorSource(editor.path, editorText)) {
+        if (editor.present && !editor.draft && !withoutExecutionLock([&] { return readEditorSource(editor.path, editorText); })) {
             statusMessage_ = "unable to open project source: " + editor.path;
             return false;
         }
@@ -247,6 +232,11 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     // before resetting the machine; choosing Discard has not changed any files.
     if (dirty && !assemblyEditorState_.dirty && !prepare()) return false;
 
+    installPeripheralSession(std::move(peripheralCandidate));
+    peripheralDraft_ = project->peripherals;
+    peripheralEditor_.restore(project->peripheralLayout);
+    peripheralLive_.restore(project->peripheralLiveLayout);
+    peripheralsOpen_ = peripheralsOpen_ || !peripheralDraft_.devices.empty();
     cpu_.setModel(project->cpuModel);
     resetMachine();
     internalRamMonitor_.start = clampMonitorAddress(internalRamMonitor_, internalRamMonitor_.start);
@@ -284,8 +274,9 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     assemblyEditor_->ClearMarkers();
     observedAssemblyEditorText_ = assemblyEditor_->GetText();
     editorDiagnostics_.clear();
-    clearEditorRecovery();
     if (editor.present && editor.draft) markAssemblyEditorChanged();
+    projectSavedEditorText_ = observedAssemblyEditorText_;
+    clearEditorRecovery();
     assemblyEditor_->SetCursor(editor.line, editor.column);
     updateEditorSourceMatch();
     binaryLoadDialog_.open = fillRangeDialog_.open = setProgramCounterDialog_.open = executionSettingsDialog_.open = false;

@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "cd4511",
+      "kind": 19
+    },
+    {
+      "id": "ls47",
+      "kind": 20
+    },
+    {
+      "id": "cathode",
+      "kind": 15,
+      "display_digits": 1,
+      "display_color": 1
+    },
+    {
+      "id": "anode",
+      "kind": 15,
+      "display_digits": 1,
+      "common_anode": true,
+      "display_color": 2
+    },
+    {
+      "id": "ground",
+      "kind": 4,
+      "digital_value": 0
+    },
+    {
+      "id": "high",
+      "kind": 4,
+      "digital_value": 255
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "cd4511.BCD",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "cpu.P1",
+      "b": "ls47.BCD",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "cpu.P3",
+      "b": "cd4511.LE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "cd4511.LT",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "cd4511.BI",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "ls47.LT",
+      "a_bit": 3,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "ls47.BI",
+      "a_bit": 4,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "ls47.RBI",
+      "a_bit": 5,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cd4511.segments",
+      "b": "cathode.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 7
+    },
+    {
+      "a": "ls47.segments",
+      "b": "anode.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 7
+    },
+    {
+      "a": "ground.out",
+      "b": "cathode.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "high.out",
+      "b": "anode.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "ground.out",
+      "b": "cathode.segments",
+      "a_bit": 0,
+      "b_bit": 7,
+      "width": 1
+    },
+    {
+      "a": "high.out",
+      "b": "anode.segments",
+      "a_bit": 0,
+      "b_bit": 7,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "segment_decoders.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "segment_decoders.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "segment_decoders.asm",
+    "name": "segment_decoders.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "cd4511",
+      "x": 420,
+      "y": 0,
+      "name": "cd4511"
+    },
+    {
+      "id": "ls47",
+      "x": 850,
+      "y": 0,
+      "name": "ls47"
+    },
+    {
+      "id": "cathode",
+      "x": 1280,
+      "y": 0,
+      "name": "cathode"
+    },
+    {
+      "id": "anode",
+      "x": 420,
+      "y": 500,
+      "name": "anode"
+    },
+    {
+      "id": "ground",
+      "x": 850,
+      "y": 500,
+      "name": "ground"
+    },
+    {
+      "id": "high",
+      "x": 1280,
+      "y": 500,
+      "name": "high"
+    }
+  ]
+}

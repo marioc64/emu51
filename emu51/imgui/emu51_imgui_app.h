@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -9,18 +10,25 @@
 #include <fstream>
 #include <iosfwd>
 #include <memory>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "imgui.h"
 #include "emu51.h"
 #include "assembler.h"
 #include "emu51_cycle_timing.h"
+#include "emu51_execution_worker.h"
 #include "emu51_execution_settings.h"
+#include "emu51_ui_state.h"
 #include "emu51_project.h"
 #include "emu51_hardware.h"
+#include "emu51_peripheral_session.h"
+#include "emu51_peripheral_editor.h"
+#include "emu51_peripheral_live.h"
 #include "emu51_imgui_menu.h"
 
 class TextEditor;
@@ -34,6 +42,19 @@ public:
 	Emu51ImguiApp();
 	~Emu51ImguiApp();
 
+    // Frontends keep an Access alive while reading/editing the live model.
+    // Rendering backends and event waits run outside this guard.
+    class Access {
+    public:
+        Access(Emu51ImguiApp& app, bool notify) : app_(app), lock_(app.executionWorker_.access(notify)) {}
+        Emu51ImguiApp* operator->() { return &app_; }
+    private:
+        Emu51ImguiApp& app_;
+        Emu51ExecutionWorker::Access lock_;
+    };
+    Access access(bool notify = true) { return Access(*this, notify); }
+    bool startBackgroundExecution();
+    void stopBackgroundExecution();
 	void draw();
 	void tick();
 	bool shouldAnimate() const;
@@ -88,6 +109,11 @@ public:
 	void showSerialTerminal() override;
 	const char* hardwareModuleName() const override;
 	void showHardwareModule() override;
+	void showPeripherals() override { peripheralsOpen_ = true; }
+    bool registersVisible() const override { return registersOpen_; }
+    void setRegistersVisible(bool visible) override {
+        registersOpen_ = visible; focusRegisters_ = visible; markLayoutStateDirty();
+    }
 	bool loadHardwareProgram(const std::filesystem::path& path, std::uint16_t address, bool unified, double crystalMHz) override;
 	void resetHardwareCpu() override { resetCpuState(true); }
 	const std::string& hardwareStatus() const override { return statusMessage_; }
@@ -153,6 +179,7 @@ public:
 		bool cycleExact = true;
 		double crystalMHz = Emu51CycleTiming::kDefaultCrystalMHz;
 		bool saveFailed = false;
+        std::string applyError;
 	};
 
 	struct SetProgramCounterDialog {
@@ -189,6 +216,7 @@ public:
 				Disassembly,
 				InternalRamMonitor,
 				Monitor,
+				Peripherals,
 		};
 
 		Kind kind = Kind::Registers;
@@ -234,6 +262,7 @@ private:
 	static constexpr std::size_t kTraceCapacity = 4096;
 	bool traceEnabled_ = false;
 	bool debuggerOpen_ = false;
+    bool registersOpen_ = true, focusRegisters_ = false;
 	bool instructionExecuting_ = false;
 	std::optional<std::uint16_t> skipBreakpoint_;
 	std::optional<std::uint16_t> runToAddress_;
@@ -307,9 +336,46 @@ private:
 	std::optional<StepTask> stepTask_;
 	void tickAt(Emu51CycleTiming::Clock::time_point now);
 	friend struct Emu51ImguiAppTestAccess;
+    mutable Emu51ExecutionWorker executionWorker_;
+    std::atomic<bool> executionRedrawPending_{false};
+    void resetTimingAfterUiWork() {
+        // The manual/headless path may have been blocked. A running worker
+        // continued producing frames and must retain its pacing interval.
+        if (!executionWorker_.started()) cycleTiming_.reset();
+    }
+    template<class Work> decltype(auto) withoutExecutionLock(Work&& work) const {
+        auto released = executionWorker_.releaseUi();
+        return std::forward<Work>(work)();
+    }
 	// Headless integration tests disable user preferences and recovery I/O.
 	explicit Emu51ImguiApp(bool persistState, bool attachHardware = true);
 	std::unique_ptr<Emu51Hardware> hardware_;
+    std::unique_ptr<Emu51PeripheralSession> peripherals_;
+    Emu51PeripheralConfig peripheralDraft_;
+    Emu51PeripheralEditor peripheralEditor_;
+    Emu51PeripheralLive peripheralLive_;
+    std::string liveAudioMessage_;
+    std::set<std::string> liveHeldKeypads_, liveKeypadsThisFrame_;
+    int audioScopeSpan_ = 1;
+    float audioScopeZoom_ = 1;
+    void drawPeripheralLive(const Emu51PeripheralConfig&);
+    void drawPeripheralLiveDevice(const Emu51PeripheralDevice&,float);
+    void drawPeripheralAudio(const Emu51PeripheralDevice&,float);
+    void drawPeripheralKeys(const Emu51PeripheralDevice&,unsigned,unsigned);
+    void releaseLiveKeypads();
+    bool peripheralsOpen_ = false;
+    std::string peripheralMessage_;
+    std::vector<std::string> audioCaptureDevices_, audioPlaybackDevices_;
+    int audioCaptureDevice_ = -1, audioPlaybackDevice_ = -1;
+    int audioCaptureChannel_ = 0, audioPlaybackChannel_ = -1;
+    int audioBufferMs_ = 0;
+    bool applyPeripheralConfig(const Emu51PeripheralConfig&, double crystalMHz);
+    void installPeripheralSession(std::unique_ptr<Emu51PeripheralSession>);
+    bool syncPeripheralAudio();
+    void resetCpuAndPeripherals();
+    void drawPeripherals();
+    bool flushPeripheralStorage();
+    bool applyPeripheralAudioBuffer(int milliseconds);
 	enum class UnsavedChoice { Save, Discard, Cancel };
 	enum class RecoveryChoice { Restore, Discard, Keep };
 	std::function<UnsavedChoice()> unsavedChangesPrompt_;
@@ -322,13 +388,11 @@ private:
 	Emu51CycleTiming::Clock::time_point recoverySaveDue_{};
 	std::unique_ptr<Emu51EditorRecovery> editorRecovery_;
 	std::string observedAssemblyEditorText_;
+	// Source-file dirtiness is independent of text safely stored in a project.
+	std::optional<std::string> projectSavedEditorText_;
 	std::string untitledSourceBaseDirectory_;
 	std::string projectPath_;
 	std::vector<std::string> recentProjectPaths_;
-	void loadRecentProjectPaths();
-	void loadRecentProjectPaths(std::istream& in);
-	void saveRecentProjectPaths() const;
-	void saveRecentProjectPaths(std::ostream& out) const;
 	void rememberRecentProjectPath(const std::filesystem::path& path);
 	std::vector<Emu51ProjectProgram> projectPrograms_;
 	std::function<std::filesystem::path(bool save)> projectPathPicker_;
@@ -478,12 +542,12 @@ private:
 	const FloatingPaneState* findFloatingPaneState(const PaneKey& pane) const;
 	FloatingPaneState& ensureFloatingPaneState(const PaneKey& pane);
 	void markLayoutStateDirty();
-	void loadLayoutState();
-	void loadLayoutState(std::istream& in);
-	void saveLayoutState() const;
-	void saveLayoutState(std::ostream& out) const;
-	void loadRecentProgramPaths();
-	void saveRecentProgramPaths() const;
+    std::filesystem::path statePath_;
+    bool statePersistenceBlocked_ = false;
+    void loadState(const std::filesystem::path& path);
+    bool saveState() const;
+    Emu51UiState captureUiState() const;
+    void applyUiState(const Emu51UiState& state);
 	void rememberRecentProgramPath(const std::filesystem::path& path);
 	void snapPane(const PaneKey& pane, Emu51ImguiSnapTarget target);
 	void setPaneSnapTarget(const PaneKey& pane, Emu51ImguiSnapTarget target);

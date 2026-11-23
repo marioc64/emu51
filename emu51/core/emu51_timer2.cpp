@@ -6,7 +6,7 @@
 unsigned emu51::advance_timer2(std::uint8_t cycles)
 {
     auto& control = SFR[0xc8];
-    const auto pins = static_cast<std::uint8_t>(P1 & timer2Pins_ & 3);
+    const auto pins = static_cast<std::uint8_t>(readPort(1) & timer2Pins_ & 3);
     const bool t2Edge = (previousTimer2Pins_ & 1) && !(pins & 1);
     const bool exEdge = (previousTimer2Pins_ & 2) && !(pins & 2);
     previousTimer2Pins_ = pins;

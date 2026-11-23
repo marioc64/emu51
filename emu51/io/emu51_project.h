@@ -2,6 +2,7 @@
 #pragma once
 
 #include "emu51_execution_settings.h"
+#include "emu51_peripheral_config.h"
 #include "../core/emu51_model.h"
 
 #include <cstdint>
@@ -37,6 +38,9 @@ struct Emu51Project {
     int serialLineEnding = 0, serialFileLineEnding = 0, serialFileLineDelayMs = 0;
     Emu51Model cpuModel = Emu51Model::i8051;
     std::string hardwareModule;
+    Emu51PeripheralConfig peripherals;
+    std::vector<Emu51PeripheralBlockPosition> peripheralLayout;
+    std::vector<Emu51PeripheralLiveBox> peripheralLiveLayout;
     Emu51ExecutionSettings execution;
     std::vector<Emu51ProjectProgram> programs;
     std::string reloadPath;

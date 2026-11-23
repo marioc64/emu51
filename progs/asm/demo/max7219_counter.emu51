@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "max7219",
+      "kind": 21,
+      "display_digits": 8
+    },
+    {
+      "id": "max7221",
+      "kind": 22,
+      "display_digits": 8,
+      "display_color": 2
+    },
+    {
+      "id": "wired_digits",
+      "kind": 15,
+      "display_digits": 8,
+      "display_color": 1
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "max7219.DIN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "max7219.CLK",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "max7221.CLK",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "max7219.LOAD",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "max7221.LOAD",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "max7219.DOUT",
+      "b": "max7221.DIN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "max7219.segments",
+      "b": "wired_digits.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "max7219.commons",
+      "b": "wired_digits.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "max7219_counter.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "max7219_counter.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "max7219_counter.asm",
+    "name": "max7219_counter.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "max7219",
+      "x": 420,
+      "y": 0,
+      "name": "max7219"
+    },
+    {
+      "id": "max7221",
+      "x": 850,
+      "y": 0,
+      "name": "max7221"
+    },
+    {
+      "id": "wired_digits",
+      "x": 1280,
+      "y": 0,
+      "name": "wired digits"
+    }
+  ]
+}

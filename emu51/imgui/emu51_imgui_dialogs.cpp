@@ -26,6 +26,7 @@ void Emu51ImguiApp::drawExecutionSettingsDialog()
     if (executionSettingsDialog_.cpuModel != static_cast<int>(cpu_.model()))
         ImGui::TextWrapped("Changing the CPU model resets and pauses execution. Loaded program memory is preserved.");
     ImGui::TextDisabled("CPU model is saved with the project.");
+    if (peripherals_) ImGui::TextWrapped("Changing the crystal frequency also resets the peripheral graph and closes audio devices.");
     ImGui::TextDisabled("Select a matching $MOD51 or $MOD52 in assembly sources.");
 	ImGui::Text("Run mode setting");
 	const ImGuiStyle& style = ImGui::GetStyle();
@@ -56,22 +57,29 @@ void Emu51ImguiApp::drawExecutionSettingsDialog()
 		ImGui::TextDisabled("Enter a frequency from 0.000001 to 1000 MHz.");
 
 	ImGui::BeginDisabled(!validSettings);
-	if (ImGui::Button("Apply")) {
-		setCpuModel(static_cast<Emu51Model>(executionSettingsDialog_.cpuModel));
-		stepsPerFrame_ = clampStepsPerFrame(executionSettingsDialog_.stepsPerFrame);
-		cycleExact_ = executionSettingsDialog_.cycleExact;
-		if (validMHz)
-			crystalMHz_ = executionSettingsDialog_.crystalMHz;
-		cycleTiming_.reset();
-		statusMessage_ = cycleExact_ ? "updated cycle exact timing" : "updated instructions per frame";
-		executionSettingsDialog_.saveFailed = !saveExecutionSettings();
-		if (!executionSettingsDialog_.saveFailed)
-			ImGui::CloseCurrentPopup();
-	}
-	ImGui::EndDisabled();
+    if (ImGui::Button("Apply")) {
+        executionSettingsDialog_.applyError.clear();
+        const bool changedClock = peripherals_ && validMHz && executionSettingsDialog_.crystalMHz != crystalMHz_;
+        if (changedClock && !applyPeripheralConfig(peripherals_->config(), executionSettingsDialog_.crystalMHz)) {
+            executionSettingsDialog_.applyError = peripheralMessage_;
+        } else {
+            setCpuModel(static_cast<Emu51Model>(executionSettingsDialog_.cpuModel));
+            stepsPerFrame_ = clampStepsPerFrame(executionSettingsDialog_.stepsPerFrame);
+            cycleExact_ = executionSettingsDialog_.cycleExact;
+            if (validMHz) crystalMHz_ = executionSettingsDialog_.crystalMHz;
+            cycleTiming_.reset();
+            statusMessage_ = cycleExact_ ? "updated cycle exact timing" : "updated instructions per frame";
+            executionSettingsDialog_.saveFailed = !saveExecutionSettings();
+            if (!executionSettingsDialog_.saveFailed) ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::EndDisabled();
 	ImGui::SameLine();
 	if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
 		ImGui::CloseCurrentPopup();
+    if (!executionSettingsDialog_.applyError.empty()) {
+        ImGui::TextWrapped("%s", executionSettingsDialog_.applyError.c_str());
+    }
 	if (executionSettingsDialog_.saveFailed)
 		ImGui::TextUnformatted("Settings applied, but could not save configuration.");
 

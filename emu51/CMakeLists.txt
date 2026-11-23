@@ -23,7 +23,7 @@ add_library(emu51_kason STATIC
 set_target_properties(emu51_kason PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED TRUE C_EXTENSIONS FALSE)
 target_include_directories(emu51_kason SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/third_party/kason")
 
-add_library(emu51_settings_lib "imgui/emu51_execution_settings.cpp" "io/emu51_project.cpp")
+add_library(emu51_settings_lib "imgui/emu51_execution_settings.cpp" "imgui/emu51_ui_state.cpp" "io/emu51_project.cpp")
 target_include_directories(emu51_settings_lib PUBLIC "${EMU51_IMGUI_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/io")
 target_link_libraries(emu51_settings_lib PRIVATE emu51_kason emu51_editor_files_lib emu51_warnings)
 
@@ -87,6 +87,63 @@ target_compile_definitions(emu51_tests PRIVATE
 target_include_directories(emu51_bench PRIVATE "${EMU51_CORE_DIR}")
 add_test(NAME emu51_tests COMMAND emu51_tests)
 
+# GPL host integration stays outside the independently LGPL-licensed SDK.
+set(microphone_source "${PROJECT_SOURCE_DIR}/progs/asm/demo/microphone_covox.asm")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${microphone_source}")
+file(READ "${microphone_source}" EMU51_MICROPHONE_FIRMWARE)
+set(covox_music_source "${PROJECT_SOURCE_DIR}/progs/asm/demo/covox_duet.asm")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${covox_music_source}")
+file(READ "${covox_music_source}" EMU51_COVOX_DUET_FIRMWARE)
+configure_file("peripherals/emu51_peripheral_firmware.h.in"
+    "generated/emu51_peripheral_firmware.h" @ONLY)
+find_package(Threads REQUIRED)
+add_library(emu51_peripheral_host_lib "peripherals/emu51_peripheral_bus.cpp"
+    "peripherals/emu51_peripheral_gpio.cpp"
+    "peripherals/emu51_peripheral_config.cpp" "peripherals/emu51_peripheral_session.cpp")
+target_include_directories(emu51_peripheral_host_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/peripherals"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(emu51_peripheral_host_lib PUBLIC emu51_core_lib emu51_peripheral_sdk Threads::Threads PRIVATE emu51_warnings emu51_editor_files_lib)
+if(TARGET emu51_peripheral_audio_host)
+    target_link_libraries(emu51_peripheral_host_lib PUBLIC emu51_peripheral_audio_host)
+    target_compile_definitions(emu51_peripheral_host_lib PUBLIC EMU51_GUI_HOST_AUDIO=1)
+endif()
+# Project settings carry the peripheral configuration and its public include paths.
+target_link_libraries(emu51_settings_lib PUBLIC emu51_peripheral_host_lib)
+add_executable(emu51_peripheral_cpu_tests "peripheral_tests.cpp"
+    "${PROJECT_SOURCE_DIR}/peripheral-sdk/examples/parallel_expander.c")
+target_include_directories(emu51_peripheral_cpu_tests PRIVATE "${PROJECT_SOURCE_DIR}/peripheral-sdk/examples")
+target_link_libraries(emu51_peripheral_cpu_tests PRIVATE emu51_peripheral_host_lib emu51_warnings)
+add_test(NAME emu51_peripheral_cpu_tests COMMAND emu51_peripheral_cpu_tests)
+add_executable(emu51_peripheral_gpio_tests "peripheral_gpio_tests.cpp")
+target_link_libraries(emu51_peripheral_gpio_tests PRIVATE emu51_peripheral_host_lib emu51_warnings)
+add_test(NAME emu51_peripheral_gpio_tests COMMAND emu51_peripheral_gpio_tests)
+add_executable(emu51_peripheral_gpio_demo "peripherals/examples/gpio_dac.cpp")
+target_link_libraries(emu51_peripheral_gpio_demo PRIVATE emu51_peripheral_host_lib emu51_warnings)
+add_executable(emu51_peripheral_adc_demo "peripherals/examples/adc_board.cpp")
+target_link_libraries(emu51_peripheral_adc_demo PRIVATE emu51_peripheral_host_lib emu51_asm_lib emu51_warnings)
+add_test(NAME emu51_peripheral_adc_board COMMAND emu51_peripheral_adc_demo)
+add_test(NAME emu51_peripheral_adc_board_table COMMAND emu51_peripheral_adc_demo --table)
+add_executable(emu51_echo_tests "peripheral_echo_tests.cpp")
+target_link_libraries(emu51_echo_tests PRIVATE emu51_peripheral_host_lib emu51_asm_lib emu51_warnings)
+add_test(NAME emu51_echo_tests COMMAND emu51_echo_tests)
+add_executable(emu51_covox_duet_tests "peripheral_music_tests.cpp")
+target_link_libraries(emu51_covox_duet_tests PRIVATE emu51_peripheral_host_lib emu51_asm_lib emu51_warnings)
+add_test(NAME emu51_covox_duet_tests COMMAND emu51_covox_duet_tests)
+if(TARGET emu51_peripheral_audio_host)
+    add_executable(emu51_covox_duet "peripherals/examples/covox_duet.cpp")
+    target_link_libraries(emu51_covox_duet PRIVATE emu51_settings_lib emu51_asm_lib emu51_warnings)
+    add_test(NAME emu51_covox_duet_null COMMAND emu51_covox_duet --null --seconds 0.2)
+    add_executable(emu51_microphone_covox "peripherals/examples/microphone_covox.cpp")
+    target_link_libraries(emu51_microphone_covox PRIVATE emu51_settings_lib emu51_asm_lib emu51_warnings)
+    if(APPLE)
+        target_link_options(emu51_microphone_covox PRIVATE
+            "LINKER:-sectcreate,__TEXT,__info_plist,${PROJECT_SOURCE_DIR}/peripheral-sdk/examples/AudioDemoInfo.plist")
+        set_property(TARGET emu51_microphone_covox APPEND PROPERTY LINK_DEPENDS
+            "${PROJECT_SOURCE_DIR}/peripheral-sdk/examples/AudioDemoInfo.plist")
+    endif()
+    add_test(NAME emu51_microphone_covox_null COMMAND emu51_microphone_covox --null --seconds 0.15 --repeat 3)
+endif()
+
 if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	# Vendored ImGui + ImGuiColorTextEdit: built without our strict warnings.
 	add_library(emu51_thirdparty_imgui OBJECT
@@ -109,6 +166,10 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	# include directories are marked SYSTEM so warnings from their headers
 	# don't fire inside our translation units.
 	add_library(emu51_imgui_common OBJECT
+		"imgui/emu51_execution_worker.cpp"
+		"imgui/emu51_peripheral_editor.cpp"
+        "imgui/emu51_peripheral_live.cpp"
+        "imgui/emu51_segment_display.cpp"
 		"imgui/emu51_imgui_actions.cpp"
 		"imgui/emu51_hardware.cpp"
 		"imgui/emu51_imgui_app.cpp"
@@ -123,6 +184,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 		"imgui/emu51_imgui_monitor.cpp"
 		"imgui/emu51_imgui_paths.cpp"
 		"imgui/emu51_imgui_project.cpp"
+        "imgui/emu51_imgui_peripherals.cpp"
 		"imgui/emu51_imgui_seg.cpp"
 		"imgui/emu51_imgui_serial.cpp"
 	)
@@ -140,7 +202,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	target_compile_definitions(emu51_imgui_common PRIVATE
 		"$<$<PLATFORM_ID:Windows>:NOMINMAX;WIN32_LEAN_AND_MEAN>"
 	)
-	target_link_libraries(emu51_imgui_common PRIVATE emu51_editor_files_lib emu51_warnings)
+	target_link_libraries(emu51_imgui_common PRIVATE emu51_peripheral_host_lib emu51_editor_files_lib emu51_warnings)
 
 	# Exercise application workflows without a native window or graphics backend.
 	add_executable(emu51_ui_tests "ui_tests.cpp"
@@ -158,6 +220,11 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	target_link_libraries(emu51_ui_tests PRIVATE
 		emu51_asm_lib emu51_settings_lib emu51_editor_files_lib emu51_warnings)
 	add_test(NAME emu51_ui_tests COMMAND emu51_ui_tests)
+    add_test(NAME emu51_execution_worker_tests COMMAND emu51_ui_tests --worker-only)
+    if (APPLE)
+        add_test(NAME emu51_project_picker_tests COMMAND emu51_ui_tests --project-picker-only)
+        set_tests_properties(emu51_project_picker_tests PROPERTIES TIMEOUT 30)
+    endif()
 endif()
 
 if (APPLE AND TARGET emu51_imgui_common)
@@ -208,6 +275,7 @@ if (APPLE AND TARGET emu51_imgui_common)
 	)
 	set_target_properties(emu51_imgui PROPERTIES
 		MACOSX_BUNDLE TRUE
+		MACOSX_BUNDLE_INFO_PLIST "${EMU51_IMGUI_DIR}/macos/Info.plist.in"
 		XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
 	)
 	set_source_files_properties(${EMU51_ASM_MODULE_FILES} PROPERTIES

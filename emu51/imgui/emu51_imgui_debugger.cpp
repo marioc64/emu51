@@ -143,6 +143,7 @@ void Emu51ImguiApp::toggleEditorBreakpoint(std::size_t line)
 void Emu51ImguiApp::configureEditorDebugger()
 {
     assemblyEditor_->SetLineDecorator(-2.0f, [this](TextEditor::Decorator& decoration) {
+        auto guard = access(false);
         const auto address = editorLineAddress(static_cast<std::size_t>(decoration.line + 1));
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         ImGui::BeginDisabled(!address);
@@ -163,6 +164,7 @@ void Emu51ImguiApp::configureEditorDebugger()
         }
     });
     assemblyEditor_->SetLineNumberContextMenuCallback([this](int line) {
+        auto guard = access();
         trackAssemblyEditorChanges();
         const auto address = editorLineAddress(static_cast<std::size_t>(line + 1));
         if (ImGui::MenuItem("Breakpoint", nullptr, address && breakpoints_.contains(*address), address.has_value()))
@@ -181,10 +183,13 @@ void Emu51ImguiApp::toggleBreakpoint(std::uint16_t address)
 void Emu51ImguiApp::stopForDebugger(const std::string& reason)
 {
     running_ = false;
+    std::string audioError;
+    if (peripherals_ && !peripherals_->syncAudio(false, audioError))
+        peripheralMessage_ = audioError + "; reopen audio devices to retry";
     stepTask_.reset();
     runToAddress_.reset();
     skipBreakpoint_.reset();
-    statusMessage_ = reason;
+    statusMessage_ = audioError.empty() ? reason : reason + "; " + peripheralMessage_;
     cycleTiming_.reset();
 }
 

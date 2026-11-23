@@ -118,6 +118,7 @@ inline const char* paneKindLabel(Emu51ImguiApp::PaneKey::Kind kind)
 {
 	switch (kind) {
 	case Emu51ImguiApp::PaneKey::Kind::Registers:          return "registers";
+	case Emu51ImguiApp::PaneKey::Kind::Peripherals:        return "peripherals";
 	case Emu51ImguiApp::PaneKey::Kind::AssemblyEditor:     return "assembly_editor";
 	case Emu51ImguiApp::PaneKey::Kind::Disassembly:        return "disassembly";
 	case Emu51ImguiApp::PaneKey::Kind::InternalRamMonitor: return "internal_ram";
@@ -129,6 +130,7 @@ inline const char* paneKindLabel(Emu51ImguiApp::PaneKey::Kind kind)
 inline bool parsePaneKind(const std::string& text, Emu51ImguiApp::PaneKey::Kind* kind)
 {
 	if (text == "registers")            *kind = Emu51ImguiApp::PaneKey::Kind::Registers;
+	else if (text == "peripherals")     *kind = Emu51ImguiApp::PaneKey::Kind::Peripherals;
 	else if (text == "assembly_editor") *kind = Emu51ImguiApp::PaneKey::Kind::AssemblyEditor;
 	else if (text == "disassembly")     *kind = Emu51ImguiApp::PaneKey::Kind::Disassembly;
 	else if (text == "internal_ram")    *kind = Emu51ImguiApp::PaneKey::Kind::InternalRamMonitor;

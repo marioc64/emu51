@@ -2,7 +2,8 @@
 
 The release version is set by `project("emu51" VERSION ...)` in the top-level
 CMake file. It is currently **1.0.0**. Keep the README heading, history, and release
-examples consistent when changing that version. Project code uses GPL-2.0-only;
+examples consistent when changing that version. Project code uses GPL-2.0-only,
+except the independent peripheral-sdk/ subtree, which uses LGPL-2.1-only;
 retain [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT), and all
 [third-party notices](THIRD_PARTY_NOTICES.md).
 
@@ -61,6 +62,9 @@ The default install/archive tree contains:
 | `share/applications/emu51.desktop` | Linux desktop launcher |
 | `share/icons/hicolor/*/apps/emu51.png` | Linux application icons |
 | `share/doc/emu51/` | README, contributor/timing/release/history guides, LICENSE, COPYRIGHT, notices, and vendor license texts |
+| `include/emu51/`, `lib/` | Peripheral SDK C header, static library and relocatable CMake package (library directory follows GNUInstallDirs) |
+| `share/doc/emu51-peripheral-sdk/` | SDK guide, LGPL 2.1 and referenced GPL 2 license texts |
+| `share/doc/emu51-peripheral-sdk/AUDIO.md` | Audio bridge/native host guide; optional host installs the miniaudio MIT-0 license as well |
 | `SHA256SUMS` | Checksums for installed files |
 
 Windows executables have an `.exe` suffix. GNUInstallDirs overrides can change

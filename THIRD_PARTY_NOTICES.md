@@ -1,6 +1,7 @@
 # Third-party notices
 
-Project code authored for emu51 uses GPL-2.0-only; see [LICENSE](LICENSE) and
+Project code authored for emu51 uses GPL-2.0-only, except the independent
+LGPL-2.1-only peripheral SDK; see [LICENSE](LICENSE) and
 [COPYRIGHT](COPYRIGHT). The components below retain their own licenses. Preserve
 their attribution and license notices when redistributing sources or binaries.
 
@@ -100,6 +101,22 @@ GPL-2.0-only.
 
 These firmware/example files are included in source distributions and are not
 installed into binary app packages.
+
+## miniaudio
+
+The optional native peripheral audio host uses David Reid's miniaudio 0.11.26,
+under its **MIT No Attribution (MIT-0)** license option. The unmodified header
+and complete upstream license are retained. The platform-independent SDK audio
+bridge and project-owned native adapter use LGPL-2.1-only.
+
+- [Upstream release](https://github.com/mackron/miniaudio/releases/tag/0.11.26)
+- [License](third_party/miniaudio/LICENSE)
+- [Provenance and checksums](third_party/miniaudio/README.emu51.md)
+
+When native audio is built, its full upstream license is installed with SDK and
+application notices, including the macOS bundle. The audio example embeds its
+own microphone-purpose description. Native device access starts only through
+explicit host open/start calls; automatic tests use the software null backend.
 
 ## Installed notices
 

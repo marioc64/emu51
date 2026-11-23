@@ -204,6 +204,9 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 	}
 
 	if (ImGui::BeginMenu("Window")) {
+        const bool registersVisible = target.registersVisible();
+        if (ImGui::MenuItem("Registers", nullptr, registersVisible)) target.setRegistersVisible(!registersVisible);
+		if (ImGui::MenuItem("Peripherals")) target.showPeripherals();
 		if (*target.hardwareModuleName() && ImGui::MenuItem(target.hardwareModuleName())) target.showHardwareModule();
 		const bool internalRamVisible = target.internalRamMonitorVisible();
 		if (ImGui::MenuItem("Internal RAM Monitor", nullptr, internalRamVisible))

@@ -19,6 +19,8 @@ void emu51::writeDirect(std::uint8_t address, std::uint8_t value)
     if (!hasSfr(address)) return;
     if (address != 0x99) {
         SFR[address] = value;
+        if (portIo_ && address >= 0x80 && address <= 0xb0 && !(address & 0x0f))
+            portIo_->writePort((address - 0x80) >> 4, value);
         if (address == 0x98) sync_serial_mode();
         return;
     }

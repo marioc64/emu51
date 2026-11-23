@@ -264,6 +264,7 @@ void emu51::init()
 		SFR[i] = IRAM[i] = 0;
 	}
 	timer2Pins_ = previousTimer2Pins_ = 0x03;
+	previousPort3_ = 0xff;
 	R = IRAM; // PSW was reset to bank 0; discard the previously selected bank.
 	// Some SFR registers has other default value than 0
 	P0 = 0xff;
@@ -273,10 +274,36 @@ void emu51::init()
 	SP = 0x07;
 
 	PC = 0x0000;
+	if (portIo_) portIo_->reset();
+}
+
+void emu51::sync_port_latches()
+{
+	if (!portIo_) return;
+	for (unsigned port = 0; port < 4; ++port)
+		portIo_->writePort(port, SFR[0x80 + (port << 4)]);
+}
+
+void emu51::sample_external_interrupts(std::uint8_t pins)
+{
+	// Connected INT0/INT1: falling-edge requests latch; level requests follow
+	// the resolved pin. Bare-core hosts retain the explicit trigger API.
+	for (unsigned source = 0; source < 2; ++source) {
+		const auto pin = static_cast<std::uint8_t>(bit2 << source);
+		const auto mode = static_cast<std::uint8_t>(bit0 << (source * 2));
+		const auto request = static_cast<std::uint8_t>(bit1 << (source * 2));
+		if (TCON & mode) {
+			if ((previousPort3_ & pin) && !(pins & pin)) TCON |= request;
+		} else {
+			if (pins & pin) TCON &= static_cast<std::uint8_t>(~request);
+			else TCON |= request;
+		}
+	}
 }
 
 int emu51::process()
 {
+	sync_port_latches(); // Include legacy host edits through raw SFR references.
 	const std::uint8_t code = readProg(PC);
 	const std::uint8_t cycles = asm51[code].cycles;
 	exec_opcode_switch(code);
@@ -313,21 +340,31 @@ int emu51::finalize_instruction(std::uint8_t cycles)
 void emu51::advance_cycles(std::uint8_t cycles)
 {
 	c_time += cycles;
+	// Device deadlines resolve at the completed instruction/entry boundary,
+	// before pin sampling, timer/UART work, and interrupt arbitration.
+	if (portIo_) portIo_->advance(cycles);
+	const auto port3 = readPort(3);
+	const bool t0Edge = portIo_ && (previousPort3_ & bit4) && !(port3 & bit4);
+	const bool t1Edge = portIo_ && (previousPort3_ & bit5) && !(port3 & bit5);
+	if (portIo_) sample_external_interrupts(port3);
+	previousPort3_ = port3;
 
 	std::uint8_t modeT0, modeT1;
 	const bool gateT0 = (TMOD & 0x08) != 0;
 	const bool ctT0 = (TMOD & 0x04) != 0;
 	const bool gateT1 = (TMOD & 0x80) != 0;
 	const bool ctT1 = (TMOD & 0x40) != 0;
-	const bool runT0 = checkB(0x8c) && (!gateT0 || (P3 & bit2)); // TR0 && (!GATE0 || INT0 high)
-	const bool runT1 = checkB(0x8e) && (!gateT1 || (P3 & bit3)); // TR1 && (!GATE1 || INT1 high)
+	const bool runT0 = checkB(0x8c) && (!gateT0 || (port3 & bit2)); // TR0 && (!GATE0 || INT0 high)
+	const bool runT1 = checkB(0x8e) && (!gateT1 || (port3 & bit3)); // TR1 && (!GATE1 || INT1 high)
+	const unsigned ticks0 = ctT0 ? (t0Edge ? 1u : 0u) : cycles;
+	const unsigned ticks1 = ctT1 ? (t1Edge ? 1u : 0u) : cycles;
 
 	// Advance timers without polling interrupts.
 	modeT0 = TMOD & 0x03;
 	modeT1 = (TMOD & 0x30) >> 4;
-	auto inc_mode0 = [cycles](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self) {
+	auto inc_mode0 = [](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self, unsigned ticks) {
 		unsigned val = (static_cast<unsigned>(th) << 5) | (static_cast<unsigned>(tl) & 0x1f);
-		val += static_cast<unsigned>(cycles);
+		val += ticks;
 		const unsigned overflows = val >> 13;
 		if (val > 0x1fff) {
 			val &= 0x1fff;
@@ -337,9 +374,9 @@ void emu51::advance_cycles(std::uint8_t cycles)
 		tl = static_cast<std::uint8_t>((tl & 0xe0) | (val & 0x1f));
 		return overflows;
 	};
-	auto inc_mode1 = [cycles](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self) {
+	auto inc_mode1 = [](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self, unsigned ticks) {
 		const unsigned val = (static_cast<unsigned>(th) << 8) | static_cast<unsigned>(tl);
-		const unsigned next = val + static_cast<unsigned>(cycles);
+		const unsigned next = val + ticks;
 		if (next > 0xffff) {
 			self->setB(tfBit);
 		}
@@ -348,8 +385,8 @@ void emu51::advance_cycles(std::uint8_t cycles)
 		tl = static_cast<std::uint8_t>(wrapped & 0xff);
 		return next >> 16;
 	};
-	auto inc_mode2 = [cycles](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self) {
-		const unsigned next = static_cast<unsigned>(tl) + static_cast<unsigned>(cycles);
+	auto inc_mode2 = [](std::uint8_t &th, std::uint8_t &tl, std::uint8_t tfBit, emu51* self, unsigned ticks) {
+		const unsigned next = static_cast<unsigned>(tl) + ticks;
 		unsigned overflows = 0;
 		if (next > 0xff) {
 			self->setB(tfBit);
@@ -362,8 +399,8 @@ void emu51::advance_cycles(std::uint8_t cycles)
 		}
 		return overflows;
 	};
-	auto inc_mode3_counter = [cycles](std::uint8_t &counter, std::uint8_t tfBit, emu51* self) {
-		const unsigned next = static_cast<unsigned>(counter) + static_cast<unsigned>(cycles);
+	auto inc_mode3_counter = [](std::uint8_t &counter, std::uint8_t tfBit, emu51* self, unsigned ticks) {
+		const unsigned next = static_cast<unsigned>(counter) + ticks;
 		if (next > 0xff)
 			self->setB(tfBit);
 		counter = static_cast<std::uint8_t>(next & 0xff);
@@ -371,41 +408,41 @@ void emu51::advance_cycles(std::uint8_t cycles)
 
 	// Timer 0
 	if (modeT0 == 3) {
-		if (runT0 && !ctT0)
-			inc_mode3_counter(TL0, 0x8d, this);
+		if (runT0 && ticks0)
+			inc_mode3_counter(TL0, 0x8d, this, ticks0);
 		if (checkB(0x8e)) // TR1 controls TH0 in mode 3
-			inc_mode3_counter(TH0, 0x8f, this);
+			inc_mode3_counter(TH0, 0x8f, this, cycles);
 	}
-	else if (runT0 && !ctT0)
+	else if (runT0 && ticks0)
 	{
 		switch (modeT0)
 		{
 		case 0:
-			inc_mode0(TH0, TL0, 0x8d, this);
+			inc_mode0(TH0, TL0, 0x8d, this, ticks0);
 			break;
 		case 1:
-			inc_mode1(TH0, TL0, 0x8d, this);
+			inc_mode1(TH0, TL0, 0x8d, this, ticks0);
 			break;
 		case 2:
-			inc_mode2(TH0, TL0, 0x8d, this);
+			inc_mode2(TH0, TL0, 0x8d, this, ticks0);
 			break;
 		case 3:
 			break;
 		}
 	}
 	unsigned timer1Overflows = 0;
-	if (modeT0 != 3 && runT1 && !ctT1)
+	if (modeT0 != 3 && runT1 && ticks1)
 	{
 		switch (modeT1)
 		{
 		case 0:
-			timer1Overflows = inc_mode0(TH1, TL1, 0x8f, this);
+			timer1Overflows = inc_mode0(TH1, TL1, 0x8f, this, ticks1);
 			break;
 		case 1:
-			timer1Overflows = inc_mode1(TH1, TL1, 0x8f, this);
+			timer1Overflows = inc_mode1(TH1, TL1, 0x8f, this, ticks1);
 			break;
 		case 2:
-			timer1Overflows = inc_mode2(TH1, TL1, 0x8f, this);
+			timer1Overflows = inc_mode2(TH1, TL1, 0x8f, this, ticks1);
 			break;
 		case 3:
 			break;
@@ -417,6 +454,7 @@ void emu51::advance_cycles(std::uint8_t cycles)
 
 int emu51::process_table()
 {
+    sync_port_latches();
     const std::uint8_t code = readProg(PC);
     opcode_dispatch_table()[code](this);
     return finalize_instruction(asm51[code].cycles);
@@ -611,7 +649,9 @@ void emu51::setB(std::uint8_t bit) // (bit) <- 1
 	tmpB = bit & 0xf8;
 	if (bit >= 128)
 	{         // bit set in SFR area
-		if (hasSfr(tmpB)) SFR[tmpB] |= static_cast<std::uint8_t>(1 << tmpbit);
+		if (tmpB >= 0x80 && tmpB <= 0xb0 && !(tmpB & 0x0f))
+			writeDirect(tmpB, static_cast<std::uint8_t>(readLatch(tmpB) | (1 << tmpbit)));
+		else if (hasSfr(tmpB)) SFR[tmpB] |= static_cast<std::uint8_t>(1 << tmpbit);
 	}
 	else {  // bit set in int. RAM
 		tmpB = (tmpB >> 3) + 32;
@@ -626,7 +666,9 @@ void emu51::clrB(std::uint8_t bit) // (bit) <- 0
 	tmpB = bit & 0xf8;
 	if (bit >= 128)
 	{         // bit clear in SFR area
-		if (hasSfr(tmpB)) SFR[tmpB] &= static_cast<std::uint8_t>(~(1 << tmpbit));
+		if (tmpB >= 0x80 && tmpB <= 0xb0 && !(tmpB & 0x0f))
+			writeDirect(tmpB, static_cast<std::uint8_t>(readLatch(tmpB) & ~(1 << tmpbit)));
+		else if (hasSfr(tmpB)) SFR[tmpB] &= static_cast<std::uint8_t>(~(1 << tmpbit));
 	}
 	else {  // bit clear in int. RAM
 		tmpB = (tmpB >> 3) + 32;
@@ -641,12 +683,17 @@ bool emu51::checkB(std::uint8_t bit) // returns (bit)
 	tmpB = bit & 0xf8;
 	if (bit >= 128)
 	{         // bit check in SFR area
-		return (hasSfr(tmpB) ? SFR[tmpB] : 0xff) & (1 << tmpbit);
+		return readDirect(tmpB) & (1 << tmpbit);
 	}
 	else {  // bit check in int. RAM
 		tmpB = (tmpB >> 3) + 32;
 		return IRAM[tmpB] & (1 << tmpbit);
 	}
+}
+bool emu51::checkLatchBit(std::uint8_t bit) const
+{
+	const auto address = static_cast<std::uint8_t>(bit >= 0x80 ? bit & 0xf8 : 0x20 + (bit >> 3));
+	return (readLatch(address) & (1 << (bit & 7))) != 0;
 }
 bool emu51::check_RS0(void)
 {

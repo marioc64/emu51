@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,50 @@ constexpr ImU32 kRegisterBitOutlineColor = IM_COL32(125, 34, 34, 255);
 constexpr ImU32 kAssemblyPcHighlightColor = IM_COL32(24, 56, 30, 255);
 constexpr ImVec4 kPcHeaderColor = ImVec4(1.0f, 0.55f, 0.55f, 1.0f);
 constexpr ImVec4 kDptrHeaderColor = ImVec4(0.55f, 0.8f, 1.0f, 1.0f);
+
+bool disassemblyTitleFollowPc(const char* caption, bool& followPc)
+{
+    auto* window = ImGui::GetCurrentWindow();
+    if (window->Hidden) return false;
+    const auto& style = ImGui::GetStyle();
+    const auto title = window->TitleBarRect();
+    const float font = ImGui::GetFontSize();
+    const float collapseLeft = style.WindowMenuButtonPosition == ImGuiDir_Left ? font+2*style.ItemInnerSpacing.x : 0;
+    const float collapseRight = style.WindowMenuButtonPosition == ImGuiDir_Right ? font+style.ItemInnerSpacing.x : 0;
+    const float left = title.Min.x+window->WindowBorderSize+style.FramePadding.x+collapseLeft;
+    const float right = title.Max.x-window->WindowBorderSize-style.FramePadding.x-font-2*style.ItemInnerSpacing.x-collapseRight;
+    const float fullWidth = ImGui::GetFrameHeight()+style.ItemInnerSpacing.x+ImGui::CalcTextSize("Follow PC").x;
+    const bool showLabel = right-left >= fullWidth+4*font;
+    const float width = showLabel ? fullWidth : ImGui::GetFrameHeight();
+    if (right-left < width) return false;
+    const float checkboxX = right-width;
+    auto& dc = window->DC;
+    const auto saved = std::make_tuple(dc.CursorPos,dc.CursorPosPrevLine,dc.CursorMaxPos,dc.IdealMaxPos,
+        dc.CurrLineSize,dc.PrevLineSize,dc.CurrLineTextBaseOffset,dc.PrevLineTextBaseOffset,
+        dc.IsSameLine,dc.IsSetPos,dc.NavLayerCurrent,window->SkipItems);
+    // The caption is drawn here so it can ellipsize before the title control.
+    // Native collapse/close buttons keep their normal rendering and behavior.
+    ImRect clip(ImVec2(left,title.Min.y),ImVec2(right,title.Max.y));
+    clip.ClipWith(window->OuterRectClipped);
+    ImGui::PushClipRect(clip.Min,clip.Max,false);
+    const ImVec2 textMin(left,title.Min.y+style.FramePadding.y);
+    const ImVec2 textMax(checkboxX-style.ItemInnerSpacing.x,title.Max.y);
+    if (textMax.x > textMin.x)
+        ImGui::RenderTextEllipsis(window->DrawList,textMin,textMax,textMax.x,caption,nullptr,nullptr);
+    dc.NavLayerCurrent = ImGuiNavLayer_Menu;
+    dc.CursorPos = ImVec2(checkboxX,title.Min.y);
+    dc.IsSameLine = false; dc.CurrLineSize = ImVec2(0,0); dc.CurrLineTextBaseOffset = 0;
+    window->SkipItems = false; // Title controls remain available when collapsed.
+    const bool changed = ImGui::Checkbox(showLabel ? "Follow PC###follow_pc" : "###follow_pc",&followPc);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Follow PC: keep this view aligned with the program counter.");
+    else if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(textMin,textMax) &&
+        ImGui::CalcTextSize(caption).x > textMax.x-textMin.x) ImGui::SetTooltip("%s",caption);
+    ImGui::PopClipRect();
+    std::tie(dc.CursorPos,dc.CursorPosPrevLine,dc.CursorMaxPos,dc.IdealMaxPos,
+        dc.CurrLineSize,dc.PrevLineSize,dc.CurrLineTextBaseOffset,dc.PrevLineTextBaseOffset,
+        dc.IsSameLine,dc.IsSetPos,dc.NavLayerCurrent,window->SkipItems) = saved;
+    return changed;
+}
 
 const std::vector<std::string> kProgramFileFilters = {
 	"Program files", "*.asm *.s03 *.hex *.ihx *.ihex *.bin",
@@ -516,14 +561,13 @@ Emu51ImguiApp::Emu51ImguiApp(bool persistState, bool attachHardware)
 	emu51ConfigureAsmEditor(*assemblyEditor_);
 	configureEditorDebugger();
 	assemblyEditor_->SetTransactionCallback([this](std::vector<TextEditor::Change>&) {
+        auto guard = access();
 		markAssemblyEditorChanged();
 	});
 	configureAddressSpace();
 	resetMachine();
 	if (persistState_) {
 		loadExecutionSettings();
-		loadRecentProgramPaths();
-		loadRecentProjectPaths();
 		editorRecovery_ = Emu51EditorRecovery::create(emu51GetEditorRecoveryDirectory());
 		recoveryCheckPending_ = true;
 	}
@@ -534,34 +578,77 @@ Emu51ImguiApp::Emu51ImguiApp(bool persistState, bool attachHardware)
 	internalRamMonitor_.start = 0;
 	addMonitorView(MonitorView::MemoryKind::ExternalData, 0);
 	if (persistState_)
-		loadLayoutState();
+		loadState(emu51GetStatePath());
 }
 
 Emu51ImguiApp::~Emu51ImguiApp()
 {
+    stopBackgroundExecution();
+    cpu_.setPortIo(nullptr);
+    peripherals_.reset();
 	if (!quitApproved_)
 		saveEditorRecovery();
 	if (persistState_)
-		saveLayoutState();
+		saveState();
 }
 
+bool Emu51ImguiApp::startBackgroundExecution()
+{
+    try {
+        executionWorker_.start([this] {
+            bool changed = running_ || (peripherals_ && peripherals_->audioRunning());
+            try { tickAt(Emu51CycleTiming::Clock::now()); }
+            catch (const std::exception& error) {
+                stopForDebugger(std::string("Execution worker failed: ") + error.what());
+                changed = true;
+            }
+            // A task may start and stop while the UI is rendering its editor.
+            // Retain a final redraw even if it never observes running_ == true.
+            if (changed || running_) executionRedrawPending_.store(true, std::memory_order_release);
+            return running_;
+        });
+        return true;
+    } catch (const std::exception& error) {
+        statusMessage_ = std::string("Cannot start execution worker: ") + error.what();
+        return false;
+    }
+}
+void Emu51ImguiApp::stopBackgroundExecution()
+{
+    executionWorker_.stop();
+    if (running_ || (peripherals_ && peripherals_->audioRunning())) stopForDebugger("execution stopped");
+}
 void Emu51ImguiApp::tick()
 {
+    if (executionWorker_.started()) { executionWorker_.notify(); return; }
 	tickAt(Emu51CycleTiming::Clock::now());
 }
 
 void Emu51ImguiApp::tickAt(Emu51CycleTiming::Clock::time_point now)
 {
+	// tick() captured now before startup, which can block in the native backend.
+	// Discard that timestamp; the next tick uses the post-start pacing baseline.
+	if (syncPeripheralAudio()) return;
 	if (!running_)
 		return;
 	using Clock = Emu51CycleTiming::Clock;
 	if (!stepTask_) {
-		if (cycleExact_)
-			cycleTiming_.update(now, crystalMHz_);
-		else
-			cycleTiming_.updateInstructions(now, static_cast<unsigned>(stepsPerFrame_));
+		const bool rebased = cycleExact_ ? cycleTiming_.update(now, crystalMHz_) :
+            cycleTiming_.updateInstructions(now, static_cast<unsigned>(stepsPerFrame_));
+        if (rebased && peripherals_ && peripherals_->audioRunning()) {
+            // Native callbacks continued while the main thread was suspended.
+            // Pacing discarded that wall interval, so its audio frame indices
+            // must start a new epoch too; otherwise all future audio is stale.
+            std::string error;
+            if (!peripherals_->resyncAudio(error)) {
+                stopForDebugger(error);
+                peripheralMessage_ = error;
+            } else peripheralMessage_ = "Audio timing resynchronized after a host pause.";
+            cycleTiming_.reset(); // use a fresh timestamp after resynchronizing
+            return;
+        }
 	}
-	const auto deadline = Clock::now() + std::chrono::milliseconds(4);
+	const auto deadline = Clock::now() + std::chrono::milliseconds(executionWorker_.onWorkerThread() ? 1 : 4);
 	for (int step = 0; running_ && step < 65536 &&
 		(stepTask_ || cycleTiming_.cyclesDue()); ++step) {
 		if (stopBeforeInstruction())
@@ -587,7 +674,9 @@ void Emu51ImguiApp::tickAt(Emu51CycleTiming::Clock::time_point now)
 
 bool Emu51ImguiApp::shouldAnimate() const
 {
-	return running_ || virtualScrollActive_ || recoverySavePending_ || (hardware_ && hardware_->wantsRedraw());
+	return running_ || executionRedrawPending_.load(std::memory_order_acquire) || virtualScrollActive_ ||
+        (peripheralsOpen_ && (peripheralEditor_.interacting() || peripheralLive_.interacting())) ||
+        recoverySavePending_ || (hardware_ && hardware_->wantsRedraw());
 }
 
 bool Emu51ImguiApp::consumeQuitRequested()
@@ -608,6 +697,8 @@ bool Emu51ImguiApp::loadHardwareProgram(const fs::path& path, std::uint16_t addr
 {
 	if (!hardware_ || !Emu51CycleTiming::validCrystalMHz(crystalMHz)) return false;
 	if (!loadProgram(path.string().c_str(), true, true, address, true, unified)) return false;
+	installPeripheralSession(nullptr);
+    peripheralDraft_ = {};
 	hardware_->setEnabled(true);
 	crystalMHz_ = crystalMHz;
 	cycleExact_ = true;
@@ -662,7 +753,7 @@ void Emu51ImguiApp::openRecentProgramFile(int index)
 void Emu51ImguiApp::clearRecentProgramFiles()
 {
 	recentProgramPaths_.clear();
-	saveRecentProgramPaths();
+	saveState();
 }
 
 bool Emu51ImguiApp::canSaveAssemblyEditorFile() const
@@ -684,7 +775,7 @@ void Emu51ImguiApp::saveAssemblyEditorFileAs()
 		return;
 
 	const fs::path path = chooseAssemblyEditorSavePath();
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 	if (!path.empty())
 		saveAssemblyEditorFileToPath(path);
 }
@@ -710,25 +801,28 @@ bool Emu51ImguiApp::saveAssemblyEditorChanges()
 {
 	const fs::path path = assemblyEditorState_.sourcePath.empty()
 		? chooseAssemblyEditorSavePath() : fs::path(assemblyEditorState_.sourcePath);
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 	return !path.empty() && saveAssemblyEditorFileToPath(path);
 }
 
 bool Emu51ImguiApp::confirmAssemblyEditorChanges()
 {
 	trackAssemblyEditorChanges();
-	if (!assemblyEditorState_.dirty)
+	if (!assemblyEditorState_.dirty ||
+        (projectSavedEditorText_ && observedAssemblyEditorText_ == *projectSavedEditorText_))
 		return true;
 	// Keep a recoverable copy even if a native save/confirmation dialog blocks.
 	saveEditorRecovery();
 	UnsavedChoice choice = UnsavedChoice::Cancel;
 	if (unsavedChangesPrompt_) {
-		choice = unsavedChangesPrompt_();
+		choice = withoutExecutionLock([&] { return unsavedChangesPrompt_(); });
 	} else if (pfd::settings::available()) {
-		const auto button = pfd::message("Unsaved assembly source",
-			"Save changes to " + assemblyEditorState_.sourceName +
-			"?\n\nYes: Save changes\nNo: Discard changes\nCancel: Keep editing",
-			pfd::choice::yes_no_cancel, pfd::icon::warning).result();
+        const auto message = "Save changes to " + assemblyEditorState_.sourceName +
+            "?\n\nYes: Save changes\nNo: Discard changes\nCancel: Keep editing";
+        const auto button = withoutExecutionLock([&] {
+            return pfd::message("Unsaved assembly source", message,
+                pfd::choice::yes_no_cancel, pfd::icon::warning).result();
+        });
 		if (button == pfd::button::yes)
 			choice = UnsavedChoice::Save;
 		else if (button == pfd::button::no)
@@ -736,7 +830,7 @@ bool Emu51ImguiApp::confirmAssemblyEditorChanges()
 	} else {
 		statusMessage_ = "confirmation dialog unavailable; save the assembly source first";
 	}
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 	return choice == UnsavedChoice::Discard ||
 		(choice == UnsavedChoice::Save && saveAssemblyEditorChanges());
 }
@@ -757,7 +851,7 @@ void Emu51ImguiApp::trackAssemblyEditorChanges()
 {
 	if (assemblyEditor_ == nullptr)
 		return;
-	std::string text = assemblyEditor_->GetText();
+	std::string text = withoutExecutionLock([&] { return assemblyEditor_->GetText(); });
 	if (text != observedAssemblyEditorText_) {
 		observedAssemblyEditorText_ = std::move(text);
 		markAssemblyEditorChanged();
@@ -769,18 +863,20 @@ void Emu51ImguiApp::saveEditorRecovery()
 {
 	trackAssemblyEditorChanges();
 	recoverySavePending_ = false;
-	if (!persistState_ || !assemblyEditorState_.dirty || assemblyEditor_ == nullptr)
+	if (!persistState_ || !assemblyEditorState_.dirty || assemblyEditor_ == nullptr ||
+        (projectSavedEditorText_ && observedAssemblyEditorText_ == *projectSavedEditorText_))
 		return;
-	if (!editorRecovery_ || !editorRecovery_->save({assemblyEditorState_.sourcePath,
-		assemblyEditorState_.sourceName, assemblyEditor_->GetText()}))
-		statusMessage_ = "unable to write recovery draft; save the assembly source";
+    const auto path = assemblyEditorState_.sourcePath;
+    const auto name = assemblyEditorState_.sourceName;
+    const auto text = observedAssemblyEditorText_;
+    if (!editorRecovery_ || !withoutExecutionLock([&] { return editorRecovery_->save({path, name, text}); }))
+        statusMessage_ = "unable to write recovery draft; save the assembly source";
 }
 
 void Emu51ImguiApp::clearEditorRecovery()
 {
 	recoverySavePending_ = false;
-	if (editorRecovery_)
-		editorRecovery_->clear();
+    if (editorRecovery_) withoutExecutionLock([&] { editorRecovery_->clear(); });
 }
 
 void Emu51ImguiApp::recoverAssemblyEditor(const fs::path& root)
@@ -810,7 +906,7 @@ void Emu51ImguiApp::recoverAssemblyEditor(const fs::path& root)
 			else if (button == pfd::button::no)
 				choice = RecoveryChoice::Discard;
 		}
-		cycleTiming_.reset();
+		resetTimingAfterUiWork();
 		if (choice == RecoveryChoice::Discard) {
 			recovery->clear();
 			continue;
@@ -820,6 +916,7 @@ void Emu51ImguiApp::recoverAssemblyEditor(const fs::path& root)
 		editorRecovery_ = std::move(recovery);
 		assemblyEditor_->SetText(draft->text);
 		observedAssemblyEditorText_ = assemblyEditor_->GetText();
+		projectSavedEditorText_.reset();
 		assemblyEditor_->ClearMarkers();
 		assemblyEditorState_.sourcePath = draft->sourcePath;
 		assemblyEditorState_.sourceName = draft->sourceName;
@@ -871,13 +968,13 @@ bool Emu51ImguiApp::canFormatAssemblyEditorText() const
 void Emu51ImguiApp::selectAllAssemblyEditorText()
 {
 	if (canUseAssemblyEditorTextCommands())
-		assemblyEditor_->SelectAll();
+		withoutExecutionLock([&] { assemblyEditor_->SelectAll(); });
 }
 
 void Emu51ImguiApp::undoAssemblyEditorText()
 {
 	if (canUndoAssemblyEditorText()) {
-		assemblyEditor_->Undo();
+		withoutExecutionLock([&] { assemblyEditor_->Undo(); });
 		trackAssemblyEditorChanges();
 	}
 }
@@ -885,7 +982,7 @@ void Emu51ImguiApp::undoAssemblyEditorText()
 void Emu51ImguiApp::redoAssemblyEditorText()
 {
 	if (canRedoAssemblyEditorText()) {
-		assemblyEditor_->Redo();
+		withoutExecutionLock([&] { assemblyEditor_->Redo(); });
 		trackAssemblyEditorChanges();
 	}
 }
@@ -893,19 +990,19 @@ void Emu51ImguiApp::redoAssemblyEditorText()
 void Emu51ImguiApp::copyAssemblyEditorText()
 {
 	if (canUseAssemblyEditorTextCommands())
-		assemblyEditor_->Copy();
+		withoutExecutionLock([&] { assemblyEditor_->Copy(); });
 }
 
 void Emu51ImguiApp::cutAssemblyEditorText()
 {
 	if (canUseAssemblyEditorTextCommands())
-		assemblyEditor_->Cut();
+		withoutExecutionLock([&] { assemblyEditor_->Cut(); });
 }
 
 void Emu51ImguiApp::pasteAssemblyEditorText()
 {
 	if (canUseAssemblyEditorTextCommands())
-		assemblyEditor_->Paste();
+		withoutExecutionLock([&] { assemblyEditor_->Paste(); });
 }
 
 void Emu51ImguiApp::formatAssemblyEditorText()
@@ -916,7 +1013,7 @@ void Emu51ImguiApp::formatAssemblyEditorText()
 
 bool Emu51ImguiApp::hasAssemblyEditorSource() const
 {
-	return assemblyEditor_ != nullptr && !assemblyEditor_->GetText().empty();
+	return assemblyEditor_ != nullptr && !assemblyEditor_->IsEmpty();
 }
 
 bool Emu51ImguiApp::hasCompiledAssemblyEditorOutput() const
@@ -927,20 +1024,20 @@ bool Emu51ImguiApp::hasCompiledAssemblyEditorOutput() const
 void Emu51ImguiApp::compileAssemblyEditor()
 {
 	compileAssemblyEditorImage(true);
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 }
 
 void Emu51ImguiApp::loadCompiledAssemblyEditorOutput()
 {
 	loadCompiledAssemblyEditorOutput(true, false);
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 }
 
 void Emu51ImguiApp::compileAndLoadAssemblyEditor()
 {
 	if (compileAssemblyEditorImage(false))
 		loadCompiledAssemblyEditorOutput(false, true);
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 }
 
 bool Emu51ImguiApp::running() const
@@ -986,7 +1083,7 @@ void Emu51ImguiApp::resetCpuState(bool stopRunning)
 	cycleCount_ = 0;
 	statusMessage_ = stopRunning ? "cpu reset and stopped" : "cpu reset";
 	cancelSerialFileSend();
-	cpu_.init();
+	resetCpuAndPeripherals();
 	if (hardware_) hardware_->reset();
 	updateDisassemblyFollowRange();
 	if (!stopRunning)
@@ -1046,6 +1143,7 @@ bool Emu51ImguiApp::saveExecutionSettings() const
 void Emu51ImguiApp::setCpuModel(Emu51Model model)
 {
     if (cpu_.model() == model) return;
+    if (peripherals_) { std::string error; (void)peripherals_->syncAudio(false, error); }
     cpu_.setModel(model);
     resetCpuState(true);
     trace_.clear();
@@ -1061,6 +1159,7 @@ void Emu51ImguiApp::requestExecutionSettings()
 	executionSettingsDialog_.cycleExact = cycleExact_;
 	executionSettingsDialog_.crystalMHz = crystalMHz_;
 	executionSettingsDialog_.saveFailed = false;
+    executionSettingsDialog_.applyError.clear();
 	executionSettingsDialog_.open = true;
 }
 
@@ -1178,6 +1277,7 @@ void Emu51ImguiApp::resetSnappedPanes()
 
 void Emu51ImguiApp::draw()
 {
+    executionRedrawPending_.store(false, std::memory_order_release);
 	virtualScrollActive_ = false;
 	if (recoveryCheckPending_)
 		recoverAssemblyEditor(emu51GetEditorRecoveryDirectory());
@@ -1195,10 +1295,12 @@ void Emu51ImguiApp::draw()
 	drawRegisters();
 	drawDebugger();
 	drawSerialTerminal();
+    drawPeripherals();
 	drawAssemblyEditor();
 	drawDisassemblyViews();
 	drawMonitorViews();
 	if (hardware_) hardware_->draw(*this);
+    syncPeripheralAudio();
 	drawSetProgramCounterDialog();
 	drawFillRangeDialog();
 	drawSnapSplitters();
@@ -1206,7 +1308,7 @@ void Emu51ImguiApp::draw()
 	if (recoverySavePending_ && Emu51CycleTiming::Clock::now() >= recoverySaveDue_)
 		saveEditorRecovery();
 	if (persistState_ && layoutStateDirty_)
-		saveLayoutState();
+		saveState();
 }
 
 void Emu51ImguiApp::drawMainMenu()
@@ -1264,7 +1366,10 @@ void Emu51ImguiApp::drawAssemblyEditor()
 				kAssemblyPcHighlightColor, "Program counter", "Program counter");
 		}
 	}
-	assemblyEditor_->Render("##assembly_editor_text", editorSize, false);
+    {
+        auto released = executionWorker_.releaseUi();
+        assemblyEditor_->Render("##assembly_editor_text", editorSize, false);
+    }
 	// The editor's transaction callback does not report undo/redo. Observe the
 	// final text immediately, including shortcuts handled inside Render().
 	trackAssemblyEditorChanges();
@@ -1318,20 +1423,23 @@ void Emu51ImguiApp::drawDisassemblyViews()
 void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 {
 	char title[64];
+	char windowId[64];
 	char popupId[64];
 	const PaneKey pane{PaneKey::Kind::Disassembly, view.id};
-	std::snprintf(title, sizeof(title), "Disassembly @ %04X###disassembly_%d", view.start, view.id);
+	std::snprintf(title, sizeof(title), "Disassembly @ %04X", view.start);
+    std::snprintf(windowId,sizeof(windowId),"###disassembly_%d",view.id);
 	std::snprintf(popupId, sizeof(popupId), "Goto###goto_%d", view.id);
-	ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoNavInputs;
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoNavInputs;
 	applyWindowPlacement(pane, ImVec2(230.0f, 400.0f), &flags);
-	ImGui::Begin(title, &view.open, flags);
+    const bool visible = ImGui::Begin(windowId,&view.open,flags);
+    if (!view.open) executionRedrawPending_.store(true,std::memory_order_release);
 	registerPaneWindow(pane);
 	drawPaneSnapContextMenu(pane);
-	if (ImGui::BeginMenuBar()) {
-		if (ImGui::Checkbox("Follow PC", &view.followPc))
-			markLayoutStateDirty();
-		ImGui::EndMenuBar();
-	}
+    if (disassemblyTitleFollowPc(title,view.followPc)) markLayoutStateDirty();
+    if (!visible) { ImGui::End(); return; }
+    notePaneActivity(pane,ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+    captureFloatingPaneState(pane);
 	const float childHeight = ImGui::GetContentRegionAvail().y;
 	const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
 	const int visibleRows = std::max(1, static_cast<int>(std::ceil(childHeight / lineHeight)));
@@ -1347,9 +1455,6 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 	const bool disassemblyActive =
 		ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
 		ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-	notePaneActivity(pane, disassemblyActive);
-	captureFloatingPaneState(pane);
-
 	if (disassemblyActive && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
 		std::snprintf(view.gotoAddress, sizeof(view.gotoAddress), "%04X", view.start);
 		view.openGotoPopup = true;
@@ -1492,6 +1597,7 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 
 void Emu51ImguiApp::drawRegisters()
 {
+    if (!registersOpen_) return;
 	const PaneKey pane{PaneKey::Kind::Registers, 0};
 	const int registerBank = (cpu_.PSW >> 3) & 0x03;
 	const unsigned registerBankBase = static_cast<unsigned>(registerBank << 3);
@@ -1555,7 +1661,14 @@ void Emu51ImguiApp::drawRegisters()
 
 	ImGuiWindowFlags flags = 0;
 	applyWindowPlacement(pane, ImVec2(860.0f, 520.0f), &flags);
-	if (!ImGui::Begin("Registers", nullptr, flags)) {
+    if (focusRegisters_) { ImGui::SetNextWindowFocus(); focusRegisters_ = false; }
+    const bool visible = ImGui::Begin("Registers", &registersOpen_, flags);
+    if (!registersOpen_) {
+        markLayoutStateDirty();
+        // Closing during drawing changes the snapped layout for the next frame.
+        executionRedrawPending_.store(true,std::memory_order_release);
+    }
+	if (!visible) {
 		ImGui::End();
 		return;
 	}
@@ -1635,16 +1748,17 @@ void Emu51ImguiApp::resetMachine()
 	std::fill(romMemory_.begin(), romMemory_.end(), 0);
 	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
 	invalidateInstructionCache();
-	cpu_.init();
+	resetCpuAndPeripherals();
 	if (hardware_) hardware_->reset();
 }
 
 void Emu51ImguiApp::requestProgramLoad(bool resetCpuBeforeLoad)
 {
-	std::string path = chooseProgramPath(
-		resetCpuBeforeLoad ? "Open program" : "Load program",
-		loadedProgramPath_);
-	cycleTiming_.reset();
+    const auto previousPath = loadedProgramPath_;
+    const auto path = withoutExecutionLock([&] {
+        return chooseProgramPath(resetCpuBeforeLoad ? "Open program" : "Load program", previousPath);
+    });
+	resetTimingAfterUiWork();
 	if (path.empty()) {
 		if (!pfd::settings::available())
 			statusMessage_ = "file dialog unavailable";
@@ -1694,8 +1808,9 @@ bool Emu51ImguiApp::loadProgram(
 	std::optional<bool> memoryMode)
 {
 	const std::string requestedPath = path != nullptr ? path : "";
-	const auto prepared = emu51_asm::prepare_program_file(
-		fs::path(requestedPath), emu51_asm::ProgramLoadOptions{binaryLoadAddress});
+    const auto prepared = withoutExecutionLock([&] {
+        return emu51_asm::prepare_program_file(fs::path(requestedPath), emu51_asm::ProgramLoadOptions{binaryLoadAddress});
+    });
 	const auto& result = prepared.result;
 	if (result.success) {
 		if (memoryMode) unifiedMode_ = *memoryMode;
@@ -1714,7 +1829,7 @@ bool Emu51ImguiApp::loadProgram(
 		updateDisassemblyFollowRange();
 	}
 	statusMessage_ = result.message;
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 	return result.success;
 }
 
@@ -1747,6 +1862,7 @@ bool Emu51ImguiApp::loadAssemblyFileIntoEditor(const fs::path& path)
 	// Loading normalizes CRLF, tabs and UTF-8 BOMs. Track the editor's
 	// representation so that normalization alone never looks like an edit.
 	observedAssemblyEditorText_ = assemblyEditor_->GetText();
+	projectSavedEditorText_.reset();
 	assemblyEditor_->ClearMarkers();
 	assemblyEditorState_.sourcePath = normalizedProgramPath(path);
 	assemblyEditorState_.sourceName = path.filename().empty() ? path.string() : path.filename().string();
@@ -1762,8 +1878,8 @@ bool Emu51ImguiApp::saveAssemblyEditorFileToPath(const fs::path& path)
 	if (assemblyEditor_ == nullptr || path.empty())
 		return false;
 
-	const std::string text = assemblyEditor_->GetText();
-	if (!emu51WriteTextFileAtomically(path, text)) {
+    const auto text = withoutExecutionLock([&] { return assemblyEditor_->GetText(); });
+    if (!withoutExecutionLock([&] { return emu51WriteTextFileAtomically(path, text); })) {
 		statusMessage_ = "failed to save assembly source; original file preserved";
 		return false;
 	}
@@ -1773,6 +1889,7 @@ bool Emu51ImguiApp::saveAssemblyEditorFileToPath(const fs::path& path)
 	assemblyEditorState_.sourceName = path.filename().empty() ? path.string() : path.filename().string();
 	assemblyEditorState_.dirty = false;
 	observedAssemblyEditorText_ = text;
+	projectSavedEditorText_.reset();
 	if (pathChanged)
 		assemblyEditorState_.compiledImage.reset();
 	clearEditorRecovery();
@@ -1782,8 +1899,9 @@ bool Emu51ImguiApp::saveAssemblyEditorFileToPath(const fs::path& path)
 
 fs::path Emu51ImguiApp::chooseAssemblyEditorSavePath()
 {
-	if (savePathPicker_)
-		return savePathPicker_();
+    if (savePathPicker_) {
+        return withoutExecutionLock([&] { return savePathPicker_(); });
+    }
 	if (!pfd::settings::available()) {
 		statusMessage_ = "file dialog unavailable";
 		return {};
@@ -1798,10 +1916,9 @@ fs::path Emu51ImguiApp::chooseAssemblyEditorSavePath()
 		defaultPath = startPath.empty() ? fs::path(filename) : fs::path(startPath) / filename;
 	}
 
-	const std::string selected = pfd::save_file(
-		"Save assembly file",
-		defaultPath.string(),
-		kAssemblyFileFilters).result();
+    const auto selected = withoutExecutionLock([&] {
+        return pfd::save_file("Save assembly file", defaultPath.string(), kAssemblyFileFilters).result();
+    });
 	if (selected.empty())
 		return {};
 	return withDefaultAssemblyExtension(fs::path(selected));
@@ -1821,12 +1938,12 @@ fs::path Emu51ImguiApp::assemblyEditorBaseDirectory() const
 
 void Emu51ImguiApp::formatAssemblyEditor()
 {
-	if (assemblyEditor_ == nullptr || assemblyEditor_->GetText().empty()) {
+	if (assemblyEditor_ == nullptr || assemblyEditor_->IsEmpty()) {
 		statusMessage_ = "no assembly source in editor";
 		return;
 	}
 
-	assemblyEditor_->FilterLines(formatAsmLine);
+	withoutExecutionLock([&] { assemblyEditor_->FilterLines(formatAsmLine); });
 	markAssemblyEditorChanged();
 	statusMessage_ = "formatted assembly source";
 }
@@ -1877,7 +1994,10 @@ bool Emu51ImguiApp::compileAssemblyEditorImage(bool updateStatus)
 	const std::string sourceName = assemblyEditorState_.sourcePath.empty()
 		? (assemblyEditorBaseDirectory() / assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
 	emu51_asm::Assembler assembler;
-	auto result = assembler.assemble_string(sourceName, assemblyEditor_->GetText(), assemblyEditorBaseDirectory());
+    const auto baseDirectory = assemblyEditorBaseDirectory();
+    auto result = withoutExecutionLock([&] {
+        return assembler.assemble_string(sourceName, assemblyEditor_->GetText(), baseDirectory);
+    });
 	updateAssemblyEditorDiagnostics(result.diagnostics);
 	if (!result.success()) {
 		statusMessage_ = result.diagnostics.empty() ? "assembly failed" : diagnosticText(result.diagnostics.front());
@@ -1910,7 +2030,7 @@ bool Emu51ImguiApp::loadCompiledAssemblyEditorOutput(bool updateStatus, bool res
 		assemblyEditorState_.compiledImage->sources.at(sourceName)});
 	invalidateInstructionCache();
 	updateDisassemblyFollowRange();
-	cycleTiming_.reset();
+	resetTimingAfterUiWork();
 	statusMessage_ = updateStatus ? "compiled output loaded" : "compiled and loaded";
 	setAssemblyEditorBuildStatus(true, updateStatus ? "Load succeeded" : "Compile and load succeeded",
 		resetBeforeLoad ? "Reset memory and CPU state, then loaded compiled program."
@@ -1963,11 +2083,13 @@ void Emu51ImguiApp::configureAddressSpace()
 	auto readData = [this](std::uint16_t addr) -> std::uint8_t {
 		noteMemoryAccess(WatchSpace::Data, addr, false);
 		std::uint8_t deviceValue = 0;
+        if (peripherals_ && peripherals_->readData(addr, deviceValue, !instructionExecuting_)) return deviceValue;
 		if (hardware_ && hardware_->enabled() && hardware_->readData(addr, deviceValue)) return deviceValue;
 		return unifiedMode_ ? unifiedMemory_[addr] : ramMemory_[addr];
 	};
 	auto writeData = [this](std::uint16_t addr, std::uint8_t data) {
 		noteMemoryAccess(WatchSpace::Data, addr, true);
+		if (peripherals_ && peripherals_->writeData(addr, data)) return;
 		if (hardware_ && hardware_->enabled() && hardware_->writeData(addr, data)) return;
 		if (unifiedMode_) {
 			invalidateSourceLocation(addr);
@@ -2009,7 +2131,7 @@ void Emu51ImguiApp::clearMemory()
 	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
 	invalidateInstructionCache();
 	cancelSerialFileSend();
-	cpu_.init();
+	resetCpuAndPeripherals();
 	if (hardware_) hardware_->reset();
 }
 
@@ -2027,7 +2149,7 @@ void Emu51ImguiApp::clearRam()
 	if (unifiedMode_)
 		invalidateInstructionCache();
 	cancelSerialFileSend();
-	cpu_.init();
+	resetCpuAndPeripherals();
 	if (hardware_) hardware_->reset();
 }
 
@@ -2047,7 +2169,7 @@ void Emu51ImguiApp::clearRom()
 	invalidateInstructionCache();
 	if (unifiedMode_) {
 		cancelSerialFileSend();
-		cpu_.init();
+		resetCpuAndPeripherals();
 		if (hardware_) hardware_->reset();
 	}
 }
@@ -2080,7 +2202,7 @@ void Emu51ImguiApp::fillRange(bool fillRom, std::uint16_t start, std::uint16_t e
 	statusMessage_ = unifiedMode_ ? "filled memory range" : (fillRom ? "filled program memory range" : "filled data memory range");
 	if (unifiedMode_ || !fillRom) {
 		cancelSerialFileSend();
-		cpu_.init();
+		resetCpuAndPeripherals();
 		if (hardware_) hardware_->reset();
 	}
 	cycleTiming_.reset();
@@ -2221,5 +2343,8 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 	}
 	if (!pendingWatchpointStop_.empty())
 		stopForDebugger(pendingWatchpointStop_);
+    if (peripherals_ && peripherals_->status() != E51P_OK && peripherals_->status() != E51P_CONTENTION) {
+        stopForDebugger("peripheral error (SDK status " + std::to_string(peripherals_->status()) + "); reset or edit the graph");
+    }
 	return opcode;
 }

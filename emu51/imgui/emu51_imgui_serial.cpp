@@ -82,15 +82,17 @@ void Emu51ImguiApp::requestSerialFileSend()
 {
     if (serialFileStream_.is_open()) return;
     std::filesystem::path selected;
-    if (serialFilePathPicker_) selected = serialFilePathPicker_();
+    if (serialFilePathPicker_) selected = withoutExecutionLock([&] { return serialFilePathPicker_(); });
     else if (pfd::settings::available()) {
-        const auto files = pfd::open_file("Send file to serial receiver", serialFilePath_.parent_path().string(),
-            {"All files", "*"}).result();
+        const auto initial = serialFilePath_.parent_path().string();
+        const auto files = withoutExecutionLock([&] {
+            return pfd::open_file("Send file to serial receiver", initial, {"All files", "*"}).result();
+        });
         if (!files.empty()) selected = files.front();
     } else {
         serialTerminalStatus_ = "File dialog unavailable.";
     }
-    cycleTiming_.reset();
+    resetTimingAfterUiWork();
     if (!selected.empty()) startSerialFileSend(selected);
 }
 

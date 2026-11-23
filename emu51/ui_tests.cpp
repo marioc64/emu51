@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_imgui_app.h"
 #include "emu51_editor_files.h"
+#include "emu51_segment_display.h"
 #include "TextEditor.h"
+#include "imgui_internal.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cfloat>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
+#include <tuple>
 
 namespace {
 namespace fs = std::filesystem;
@@ -39,6 +47,18 @@ void write(const fs::path& path, const std::string& text)
 
 struct Emu51ImguiAppTestAccess {
     using Choice = Emu51ImguiApp::UnsavedChoice;
+    static std::string stateJson(const Emu51ImguiApp& app)
+    {
+        std::string json;
+        check(emu51EncodeUiState(app.captureUiState(),json), "UI state encodes with Kason");
+        return json;
+    }
+    static void restoreState(Emu51ImguiApp& app, const std::string& json)
+    {
+        Emu51UiState state;
+        if (emu51DecodeUiState(json,state)) app.applyUiState(state);
+        else check(false,"UI state decodes with Kason");
+    }
     static std::unique_ptr<Emu51ImguiApp> create()
     {
         return std::unique_ptr<Emu51ImguiApp>(new Emu51ImguiApp(false, false));
@@ -49,6 +69,1249 @@ struct Emu51ImguiAppTestAccess {
         app.assemblyEditorState_.sourcePath = path.string();
         app.assemblyEditorState_.open = true;
         app.markAssemblyEditorChanged();
+    }
+    static void openAudioExample(Emu51ImguiApp& app, int example)
+    {
+        const auto path = fs::path(EMU51_REPO_ROOT)/"progs/asm/demo"/
+            (example == 3 ? "microphone_covox.emu51" : "covox_duet.emu51");
+        check(app.openProjectFromPath(path), "Open a portable audio example through the project loader");
+        app.compileAssemblyEditor();
+    }
+    static void configureAdcBoardFixture(Emu51ImguiApp& app)
+    {
+        check(app.applyPeripheralConfig(emu51PeripheralPreset(2),12), "Configure the ADC workflow fixture");
+        app.assemblyEditorState_.sourceName = "adc-workflow.asm";
+        app.assemblyEditorState_.open = true;
+        app.assemblyEditor_->SetText(R"(; ADC0804 -> 8255 -> Covox. Inspect IRAM 31h and dac.out.
+org 0
+    mov DPTR,#8003h
+    mov A,#098h       ; A input, B output, C upper input, lower output
+    movx @DPTR,A
+    mov DPTR,#8002h
+convert:
+    mov A,#004h       ; CS=0, WR=0, RD=1: reset converter
+    movx @DPTR,A
+    mov A,#006h       ; WR=1: sample input and start conversion
+    movx @DPTR,A
+wait_adc:
+    jb 0B2h,wait_adc  ; ADC INTR -> P3.2
+    mov A,#002h       ; RD=0: enable data
+    movx @DPTR,A
+    mov DPTR,#8000h
+    movx A,@DPTR
+    mov 031h,A
+    mov DPTR,#8001h
+    movx @DPTR,A      ; output sampled byte on DAC
+    mov DPTR,#8002h
+    sjmp convert
+end
+)");
+        app.markAssemblyEditorChanged();
+        app.compileAndLoadAssemblyEditor();
+    }
+#ifdef EMU51_GUI_HOST_AUDIO
+    static bool startNullAudio(Emu51ImguiApp& app)
+    {
+        if (!app.peripherals_) return false;
+        app.stopForDebugger("opening NULL audio fixture");
+        std::string error;
+        if (!app.peripherals_->enumerateAudio(app.audioCaptureDevices_,app.audioPlaybackDevices_,error,true) ||
+            !app.peripherals_->openAudio(-1,-1,0,-1,error)) return false;
+        app.cycleExact_ = true;
+        app.toggleRun();
+        app.syncPeripheralAudio();
+        return app.running_ && app.peripherals_->audioOpen();
+    }
+#endif
+    static void test_peripheral_editor(const fs::path& root)
+    {
+        Emu51PeripheralEditor editor;
+        auto config = emu51PeripheralPreset(4);
+        config.digital.clear(); config.analog.clear();
+        std::string message;
+        auto& io = ImGui::GetIO();
+        io.DisplaySize = {1280,840}; io.DeltaTime = 1.0f/60;
+        unsigned char* pixels; int width, height;
+        io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+        const auto frame = [&] {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos({20,20}); ImGui::SetNextWindowSize({1220,780});
+            ImGui::Begin("Circuit interaction test",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize);
+            editor.draw(config,Emu51Model::i8052,message);
+            ImGui::End(); ImGui::Render();
+        };
+        frame(); frame();
+        check(editor.blocks_.size() == 3 && editor.blocks_[0].title == "Intel 8052",
+            "Circuit canvas includes the actual CPU model and every device");
+        check(editor.pin("cpu.P0") && editor.pin("cpu.P0")->bits.size() == 8 && editor.pin("cpu.P3")->bits.size() == 8 &&
+            editor.pin("cpu.xdata") && editor.pin("covox.out") && editor.pin("audio.playback"),
+            "Canvas exposes every CPU port bit, XDATA and analog audio pins");
+        const auto original = config;
+        const auto cpuPosition = editor.blocks_[0].position;
+        const auto header = editor.screen({cpuPosition.x+35,cpuPosition.y+20});
+        io.AddMousePosEvent(header.x,header.y); frame();
+        io.AddMouseButtonEvent(0,true); frame();
+        io.AddMousePosEvent(header.x-25,header.y+30); frame();
+        check(editor.interacting(),"Paused circuit drag requests animation frames");
+        io.AddMouseButtonEvent(0,false); frame();
+        const auto positions = editor.positions(config);
+        const auto cpu = std::find_if(positions.begin(),positions.end(),[](const auto& p) { return p.id == "cpu"; });
+        check(cpu != positions.end() && cpu->x < cpuPosition.x-20 && cpu->y > cpuPosition.y+20 && config == original,
+            "Actual header dragging moves only presentation, without changing the circuit");
+        const auto drag = [&](const std::string& a, int ab, const std::string& b, int bb) {
+            const auto start = editor.anchor(*editor.pin(a),ab), end = editor.anchor(*editor.pin(b),bb);
+            io.AddMousePosEvent(start.x,start.y); frame();
+            io.AddMouseButtonEvent(0,true); frame();
+            io.AddMousePosEvent(end.x,end.y); frame();
+            io.AddMouseButtonEvent(0,false); frame();
+        };
+        drag("cpu.P1",-1,"covox.data",-1);
+        check(config.digital.size() == 1 && config.digital[0].a == "cpu.P1" && config.digital[0].width == 8,
+            "Dragging whole-port connectors creates an eight-bit digital wire");
+        drag("audio.playback",-1,"covox.out",-1);
+        check(config.analog.size() == 1 && config.analog[0].from == "covox.out" && config.analog[0].to == "audio.playback",
+            "Dragging analog input to output normalizes signal direction");
+        const auto connected = config;
+        check(!editor.connect(config,{"covox.out",-1},{"cpu.P0",-1},message) && config == connected,
+            "Analog-to-digital links are rejected without altering the draft");
+        check(!editor.connect(config,{"covox.out",-1},{"audio.playback",-1},message) && config == connected,
+            "An occupied analog input cannot receive a second source");
+        config.digital.clear();
+        drag("cpu.P1",2,"covox.data",5);
+        check(config.digital.size() == 1 && config.digital[0].aBit == 2 && config.digital[0].bBit == 5 && config.digital[0].width == 1,
+            "Dragging numbered connectors creates the selected bit permutation");
+        // A port slice still uses the same SDK topology and validation path.
+        config.digital = {{"cpu.P1","covox.data",2,3,3}};
+        auto session = Emu51PeripheralSession::create(config,12);
+        check(session->config().digital[0].width == 3,"Graph edits support multi-bit port slices");
+        const auto beforeZoom = editor.zoom_;
+        const auto zoomAt = editor.screen({100,100});
+        io.AddMousePosEvent(zoomAt.x,zoomAt.y); frame();
+        const auto beforeWorld = editor.world(io.MousePos);
+        io.AddMouseWheelEvent(0,1); frame();
+        const auto afterWorld = editor.world(io.MousePos);
+        check(editor.zoom_ > beforeZoom && std::abs(beforeWorld.x-afterWorld.x) < 0.01f && std::abs(beforeWorld.y-afterWorld.y) < 0.01f,
+            "Canvas zoom preserves the world point under the pointer");
+        const auto oldPan = editor.pan_;
+        const ImVec2 blank = {editor.origin_.x+editor.canvasSize_.x-10,editor.origin_.y+editor.canvasSize_.y-10};
+        io.AddMousePosEvent(blank.x,blank.y); frame(); io.AddMouseButtonEvent(2,true); frame();
+        io.AddMousePosEvent(blank.x-35,blank.y-20); frame(); io.AddMouseButtonEvent(2,false); frame();
+        check(editor.pan_.x < oldPan.x-30 && editor.pan_.y < oldPan.y-15,"Middle dragging pans the paused canvas");
+
+        const auto openCanvasMenu = [&]() -> ImGuiWindow* {
+            const auto at = ImVec2(editor.origin_.x+editor.canvasSize_.x-25,editor.origin_.y+25);
+            io.AddMousePosEvent(at.x,at.y); frame();
+            io.AddMouseButtonEvent(1,true); frame(); io.AddMouseButtonEvent(1,false); frame(); frame();
+            check(!GImGui->OpenPopupStack.empty(),"Right-click opens the graph popup while paused");
+            return GImGui->OpenPopupStack.empty() ? nullptr : GImGui->OpenPopupStack.back().Window;
+        };
+        const auto openSubmenu = [&](const char* label) -> ImGuiWindow* {
+            auto* popup = openCanvasMenu();
+            if (!popup) return nullptr;
+            ImGui::ActivateItemByID(popup->GetID(label)); frame(); frame();
+            check(GImGui->OpenPopupStack.Size == 2,"Graph popup opens its requested submenu");
+            return GImGui->OpenPopupStack.Size == 2 ? GImGui->OpenPopupStack.back().Window : nullptr;
+        };
+        const auto beforeRightPan = editor.pan_;
+        const ImVec2 panAt = {editor.origin_.x+editor.canvasSize_.x-40,editor.origin_.y+editor.canvasSize_.y-40};
+        io.AddMousePosEvent(panAt.x,panAt.y); frame(); io.AddMouseButtonEvent(1,true); frame();
+        io.AddMousePosEvent(panAt.x-35,panAt.y-20); frame(); io.AddMouseButtonEvent(1,false); frame(); frame();
+        check(editor.pan_.x < beforeRightPan.x-30 && editor.pan_.y < beforeRightPan.y-15 && GImGui->OpenPopupStack.empty(),
+            "Right dragging pans without opening the context menu on release");
+        const float inspectorCanvasWidth = editor.canvasSize_.x;
+        if (auto* popup = openCanvasMenu()) { ImGui::ActivateItemByID(popup->GetID("Inspector")); frame(); frame(); }
+        check(!editor.inspectorVisible() && editor.canvasSize_.x > inspectorCanvasWidth+250,
+            "Popup inspector toggle collapses the panel and gives its width to the canvas");
+        if (auto* popup = openCanvasMenu()) { ImGui::ActivateItemByID(popup->GetID("Inspector")); frame(); frame(); }
+        check(editor.inspectorVisible(),"Popup restores the inspector");
+        const auto deviceCount = config.devices.size();
+        if (auto* submenu = openSubmenu("Add")) {
+            const auto at = editor.popupPosition_;
+            ImGui::ActivateItemByID(submenu->GetID("Voltage source")); frame(); frame();
+            check(config.devices.size() == deviceCount+1 && config.devices.back().kind == Emu51PeripheralKind::Voltage,
+                "Add submenu creates the selected device type");
+            const auto id = config.devices.back().id;
+            const auto position = std::find_if(editor.positions_.begin(),editor.positions_.end(),[&](const auto& p) { return p.id == id; });
+            check(position != editor.positions_.end() && std::abs(position->x-at.x) < 0.01f && std::abs(position->y-at.y) < 0.01f,
+                "New blocks use the original right-click world position");
+            editor.removeDevice(config,id); frame();
+        }
+        if (auto* submenu = openSubmenu("Fit")) {
+            ImGui::ActivateItemByID(submenu->GetID("Actual size (100%)")); frame(); frame();
+            check(editor.zoom_ == 1,"Fit submenu can restore actual size");
+        }
+        editor.selected_ = "cpu";
+        if (auto* submenu = openSubmenu("Fit")) {
+            ImGui::ActivateItemByID(submenu->GetID("Selected block")); frame(); frame();
+            const auto block = std::find_if(editor.blocks_.begin(),editor.blocks_.end(),[](const auto& b) { return b.id == "cpu"; });
+            const auto center = editor.screen({block->position.x+block->size.x/2,block->position.y+block->size.y/2});
+            check(std::abs(center.x-editor.origin_.x-editor.canvasSize_.x/2) < 1 &&
+                std::abs(center.y-editor.origin_.y-editor.canvasSize_.y/2) < 1,"Selected-block fit centers that block");
+        }
+        if (auto* submenu = openSubmenu("Fit")) {
+            ImGui::ActivateItemByID(submenu->GetID("All blocks")); frame(); frame();
+            for (const auto& b : editor.blocks_) {
+                const auto lo = editor.screen(b.position), hi = editor.screen({b.position.x+b.size.x,b.position.y+b.size.y});
+                check(lo.x >= editor.origin_.x && hi.x <= editor.origin_.x+editor.canvasSize_.x &&
+                    lo.y >= editor.origin_.y && hi.y <= editor.origin_.y+editor.canvasSize_.y,"Fit all keeps every block in view");
+            }
+        }
+        auto* editorWindow = ImGui::FindWindowByName("Circuit interaction test");
+        const auto beforeRename = config;
+        editor.selected_ = "covox"; editor.wire_ = {}; frame();
+        ImGuiWindow* inspector = nullptr;
+        for (auto* window : GImGui->Windows)
+            if (window->ParentWindow == editorWindow && std::strstr(window->Name,"circuit-inspector")) inspector = window;
+        check(inspector != nullptr,"Selected block exposes its inspector");
+        if (inspector) {
+            ImGui::ActivateItemByID(inspector->GetID("##block-name"));
+            GImGui->NavNextActivateFlags |= ImGuiActivateFlags_PreferInput;
+            frame();
+            io.AddInputCharactersUTF8("Lead Covox"); frame();
+            io.AddKeyEvent(ImGuiKey_Enter,true); frame(); io.AddKeyEvent(ImGuiKey_Enter,false); frame();
+            const auto label = std::find_if(editor.blocks_.begin(),editor.blocks_.end(),[](const auto& b) { return b.id == "covox"; });
+            check(label != editor.blocks_.end() && label->title == "Lead Covox" && config == beforeRename,
+                "Typing a block name updates the visible title");
+        }
+        const auto namedConfig = config;
+        check(editor.rename("cpu","Main CPU") && !editor.rename("cpu","bad\nname") && !editor.rename("cpu",std::string(129,'x')) && config == namedConfig,
+            "CPU naming is presentation only and rejects invalid labels");
+
+        const auto namedPositions = editor.positions(config);
+        if (auto* popup = openCanvasMenu()) { ImGui::ActivateItemByID(popup->GetID("Arrange blocks")); frame(); frame(); }
+        for (const auto& old : namedPositions) {
+            const auto current = std::find_if(editor.positions_.begin(),editor.positions_.end(),[&](const auto& p) { return p.id == old.id; });
+            check(current != editor.positions_.end() && current->name == old.name,"Arranging blocks preserves user names");
+        }
+        editor.restore(namedPositions); frame();
+        auto app = create();
+        check(app->applyPeripheralConfig(config,12),"Canvas circuit applies through the normal transactional path");
+        app->peripheralEditor_ = editor;
+        app->cpu_.PC = 0x1234;
+        const auto savedLayout = editor.positions(config);
+        const auto path = root/"circuit-layout.emu51";
+        check(app->saveProjectToPath(path),"Projects save graphical block positions");
+        auto restored = create();
+        check(restored->openProjectFromPath(path) && restored->peripheralEditor_.positions(config) == savedLayout,
+            "Project reopening restores CPU and device positions");
+        check(app->cpu_.PC == 0x1234,"Saving graphical layout never resets the CPU");
+        std::string error;
+        auto project = emu51LoadProject(path,error);
+        check(project && project->peripheralLayout == savedLayout,"Layout serialization preserves fractional coordinates");
+        if (project) {
+            const auto validBytes = read(path);
+            project->peripheralLayout.push_back(project->peripheralLayout.front());
+            check(!emu51SaveProject(path,*project,error) && read(path) == validBytes,"Duplicate block layouts fail atomically");
+            project->peripheralLayout = {{"missing",0,0}};
+            check(!emu51SaveProject(path,*project,error),"Layout IDs must refer to the CPU or a configured device");
+            project->peripheralLayout = {{"cpu",100001,0}};
+            check(!emu51SaveProject(path,*project,error),"Out-of-range canvas coordinates are rejected");
+            auto old = validBytes;
+            const auto begin = old.find("\"peripheral_layout\"");
+            const auto end = old.find(']',begin);
+            check(begin != std::string::npos && end != std::string::npos,"Project layout is an optional JSON array");
+            if (begin != std::string::npos && end != std::string::npos) {
+                old.erase(begin,old.find(',',end)-begin+1); write(path,old);
+                const auto legacy = emu51LoadProject(path,error);
+                check(legacy && legacy->peripheralLayout.empty() && legacy->peripherals == config,
+                    "Existing projects without graphical layout still load their circuits");
+            }
+        }
+        editor.removeDevice(config,"covox");
+        check(config.digital.empty() && config.analog.empty() && editor.positions(config).size() == 2,
+            "Removing a block removes attached analog/digital wires and its saved position");
+        editor.removeDevice(config,"cpu");
+        editor.rebuild(config,Emu51Model::i8051);
+        check(editor.pin("cpu.P0") != nullptr,"The CPU block cannot be removed");
+        for (int preset = 1; preset <= 4; ++preset) {
+            const auto c = emu51PeripheralPreset(preset); editor.restore({}); editor.rebuild(c,Emu51Model::i8051);
+            const auto pins = Emu51PeripheralSession::describe(c,true);
+            for (const auto& p : pins) check(editor.pin(p.name) != nullptr,"Every described endpoint appears in every preset");
+            if (preset == 2) check(editor.pin("ppi.bus") && editor.pin("ppi.RESET") && editor.pin("adc.plus") && editor.pin("adc.minus"),
+                "Bus, reset and both analog ADC inputs remain visible");
+        }
+        io.AddMousePosEvent(-100,-100);
+    }
+    static void test_peripheral_window()
+    {
+        using PaneKey = Emu51ImguiApp::PaneKey;
+        auto app = create(); app->peripheralsOpen_ = true;
+        app->peripheralDraft_ = emu51PeripheralPreset(2);
+        app->peripheralMessage_ = "Graph status belongs in the popup, not above the canvas";
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,840}; io.DeltaTime = 1.0f/60;
+        const PaneKey pane{PaneKey::Kind::Peripherals,0};
+        const auto frame = [&] {
+            ImGui::NewFrame(); app->updateDragSnapState(); app->updateSnappedPaneLayout(); app->drawPeripherals(); ImGui::Render();
+        };
+        frame(); frame();
+        auto* window = ImGui::FindWindowByName("Peripherals");
+        check(window != nullptr,"Peripherals registers its own dockable window");
+        if (!window) return;
+        const auto* tabs = GImGui->TabBars.GetByKey(window->GetID("peripheral-tabs"));
+        check(tabs && std::abs(tabs->BarRect.Min.y-window->TitleBarRect().Min.y) < 1 &&
+            tabs->BarRect.Max.y <= window->TitleBarRect().Max.y &&
+            tabs->BarRect.Min.x > window->Pos.x+ImGui::CalcTextSize("Peripherals").x,
+            "Peripherals tabs share the title bar to the right of the window name");
+        ImGuiWindow* canvasWindow = nullptr;
+        for (auto* child : GImGui->Windows)
+            if (child->ParentWindow == window && std::strstr(child->Name,"circuit-area")) canvasWindow = child;
+        check(tabs && canvasWindow && std::abs(canvasWindow->Pos.y-window->DC.CursorStartPos.y) < 1 &&
+            canvasWindow->Pos.y-tabs->BarRect.Max.y <= ImGui::GetStyle().WindowPadding.y+1,
+            "Canvas uses the full content height below the integrated title bar");
+        const auto click = [&](ImVec2 at) {
+            io.AddMousePosEvent(at.x,at.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+            io.AddMouseButtonEvent(0,false); frame(); frame();
+        };
+        const auto chooseTab = [&](int index) {
+            const auto& tab = tabs->Tabs[index];
+            click({tabs->BarRect.Min.x+tab.Offset-tabs->ScrollingAnim+tab.Width/2,
+                (tabs->BarRect.Min.y+tabs->BarRect.Max.y)/2});
+            check(tabs->SelectedTabId == tab.ID,"Title-bar tabs select their corresponding content");
+        };
+        const auto floatingPosition = window->Pos;
+        for (int tab : {1,2,3,0}) chooseTab(tab);
+        check(window->Pos.x == floatingPosition.x && window->Pos.y == floatingPosition.y && !window->Collapsed && !app->dragSnapActive_,
+            "Clicking title-bar tabs neither moves nor collapses or docks the window");
+        const auto draft = app->peripheralDraft_;
+        app->peripheralDraft_.digital.resize(64,draft.digital.front());
+        chooseTab(1);
+        ImGui::SetScrollY(window,120); frame(); frame();
+        check(window->Scroll.y > 0 && std::abs(tabs->BarRect.Min.y-window->TitleBarRect().Min.y) < 1,
+            "Scrolling tab content leaves the integrated tab bar fixed in the title");
+        chooseTab(0); app->peripheralDraft_ = draft; frame(); frame();
+        PaneKey registered;
+        check(app->paneFromWindowId(window->ID,&registered) && registered == pane,
+            "Peripherals participates in the same title drag docking path as other panes");
+        const auto title = ImVec2(window->Pos.x+50,window->TitleBarRect().GetCenter().y);
+        io.AddMousePosEvent(title.x,title.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+        io.AddMousePosEvent(80,420); frame(); io.AddMouseButtonEvent(0,false); frame(); frame();
+        check(app->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Left && window->Size.x < 780,
+            "Actual title-bar dragging docks Peripherals and removes the old oversized minimum");
+        check(app->hasActivePane() && app->activePane_ == pane,"Docked Peripherals is available to the Window snap commands");
+        check(tabs->ScrollButtonEnabled,"Narrow docked title bars expose tab scrolling controls");
+        const float arrowWidth = ImGui::GetFontSize()-2;
+        for (int i = 0; i < 3; ++i) {
+            click({tabs->BarRect.Max.x+1+arrowWidth*1.5f,tabs->BarRect.GetCenter().y});
+        }
+        check(tabs->SelectedTabId == tabs->Tabs[3].ID && !window->Collapsed,
+            "Title-bar arrows reach the Live tab in a narrow dock");
+        for (int i = 0; i < 3; ++i) click({tabs->BarRect.Max.x+1+arrowWidth*0.5f,tabs->BarRect.GetCenter().y});
+        check(tabs->SelectedTabId == tabs->Tabs[0].ID,"Title-bar arrows return to Graph without hitting Close");
+        app->snapActivePane(Emu51ImguiSnapTarget::Right); frame();
+        check(app->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Right && window->Pos.x > 600,
+            "Window snap commands reposition Peripherals");
+        app->peripheralEditor_.setInspectorVisible(false);
+        const auto saved = stateJson(*app);
+        auto restored = create(); restoreState(*restored,saved);
+        check(restored->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Right && !restored->peripheralEditor_.inspectorVisible(),
+            "Docking and inspector visibility survive layout serialization");
+        app->snapActivePane(Emu51ImguiSnapTarget::None); frame();
+        check(window->Size.x >= 1000 && !(window->Flags & ImGuiWindowFlags_NoResize),
+            "Undocking restores the floating size and resize handles");
+        // The menu Float command keeps the dock's origin; move the restored,
+        // wider window fully on-screen before testing its actual close button.
+        ImGui::SetWindowPos(window,ImVec2(20,20)); frame();
+        click({window->TitleBarRect().Max.x-ImGui::GetStyle().FramePadding.x-ImGui::GetFontSize()/2,
+            window->TitleBarRect().GetCenter().y});
+        check(!app->peripheralsOpen_ && !app->paneExists(pane),"The close button beside the title-bar tabs still closes Peripherals");
+        io.AddMousePosEvent(-100,-100);
+        const PaneKey registers{PaneKey::Kind::Registers,0};
+        app->setPaneSnapTarget(registers,Emu51ImguiSnapTarget::Left);
+        const auto registersFrame = [&] {
+            ImGui::NewFrame(); app->updateSnappedPaneLayout(); app->drawRegisters(); ImGui::Render();
+        };
+        registersFrame(); registersFrame();
+        auto* registersWindow = ImGui::FindWindowByName("Registers");
+        check(registersWindow && app->registersVisible(),"Registers starts visible and retains docking support");
+        if (registersWindow) {
+            ImGui::ActivateItemByID(registersWindow->GetID("#CLOSE")); registersFrame(); registersFrame();
+            check(!app->registersVisible() && !app->paneExists(registers) && app->snappedPaneRects_.empty(),
+                "Closing Registers hides the pane and releases its docked space");
+            const auto closed = stateJson(*app);
+            auto reloaded = create(); restoreState(*reloaded,closed);
+            check(!reloaded->registersVisible(),"Registers visibility survives application layout persistence");
+            app->setRegistersVisible(true); registersFrame();
+            check(app->registersVisible() && !app->snappedPaneRects_.empty() && GImGui->NavWindow == registersWindow,
+                "Window menu visibility command reopens and focuses Registers in its previous dock");
+        }
+    }
+    static void test_peripheral_title_apply(const fs::path& root)
+    {
+        using PaneKey = Emu51ImguiApp::PaneKey;
+        auto app = create(); app->peripheralsOpen_ = true;
+        const auto config = emu51PeripheralPreset(1);
+        check(app->applyPeripheralConfig(config,12),"Title-bar Apply fixture starts with a DAC circuit");
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,840}; io.DeltaTime = 1.0f/60;
+        const auto frame = [&] {
+            ImGui::NewFrame(); app->updateDragSnapState(); app->updateSnappedPaneLayout(); app->drawPeripherals(); ImGui::Render();
+        };
+        frame(); frame();
+        auto* window = ImGui::FindWindowByName("Peripherals");
+        check(window != nullptr,"Apply fixture has a Peripherals title bar");
+        if (!window) return;
+        ImGui::SetWindowPos(window,{20,20}); frame();
+        const auto clickApply = [&] {
+            const auto title = window->TitleBarRect();
+            const auto& style = ImGui::GetStyle();
+            const float end = title.Max.x-style.FramePadding.x-ImGui::GetFontSize()-2*style.ItemInnerSpacing.x;
+            const float width = ImGui::CalcTextSize("Apply").x+2*style.FramePadding.x;
+            io.AddMousePosEvent(end-width/2,title.GetCenter().y); frame();
+            io.AddMouseButtonEvent(0,true); frame(); io.AddMouseButtonEvent(0,false); frame(); frame();
+        };
+        app->cpu_.PC = 0x1234;
+        clickApply();
+        check(app->cpu_.PC == 0x1234,"Apply is disabled when the graph has no pending changes");
+        app->peripheralEditor_.rename("dac","Output DAC");
+        const auto layout = app->peripheralEditor_.positions(config);
+        auto changed = config;
+        changed.digital.front().a = "cpu.P2"; // Use a port with pull-ups for the DAC.
+        changed.devices.front().referenceVolts = 3.3; // Inspector device setting.
+        app->peripheralDraft_ = changed; app->running_ = true;
+        const auto path = root/"title-applied.emu51";
+        check(app->saveProjectToPath(path),"Save before Apply succeeds without activating draft edits");
+        std::string error;
+        const auto beforeApply = emu51LoadProject(path,error);
+        check(beforeApply && beforeApply->peripherals == config && app->cpu_.PC == 0x1234 && app->running_,
+            "Unapplied wiring and inspector changes do not leak into Save Project or reset CPU");
+        clickApply();
+        check(app->peripherals_->config() == changed && app->peripheralDraft_ == changed &&
+            !app->running_ && app->cpu_.PC == 0 && app->peripheralEditor_.positions(changed) == layout,
+            "Clicking title-bar Apply activates wiring and inspector settings, resets/pauses CPU and keeps block presentation");
+        check(!window->Collapsed && app->snapTargetForPane({PaneKey::Kind::Peripherals,0}) == Emu51ImguiSnapTarget::None,
+            "Clicking Apply neither collapses nor docks the window");
+        app->cpu_.writeDirect(0xa0,128);
+        double voltage = 0;
+        check(app->peripherals_->sampleAnalog("dac.out",voltage) && std::abs(voltage-1.65) < 1e-6,
+            "Applied wiring and reference voltage actually drive the DAC from P2");
+        app->cpu_.PC = 0x2468;
+        clickApply();
+        check(app->cpu_.PC == 0x2468,"Successful Apply disables itself until another configuration change");
+        check(app->saveProjectToPath(path),"Save Project accepts the title-applied circuit");
+        const auto project = emu51LoadProject(path,error);
+        check(project && project->peripherals == changed && project->peripheralLayout == layout,
+            "Save Project includes applied edits and retains names and positions");
+
+        app->setPaneSnapTarget({PaneKey::Kind::Peripherals,0},Emu51ImguiSnapTarget::Right); frame(); frame();
+        auto* original = app->peripherals_.get();
+        app->peripheralDraft_.digital.front().width = 9;
+        app->cpu_.PC = 0x4321; app->running_ = true;
+        clickApply();
+        check(app->peripherals_.get() == original && app->cpu_.PC == 0x4321 && app->running_ &&
+            app->peripheralDraft_ != changed && app->peripheralMessage_ == app->statusMessage_,
+            "Docked title-bar Apply rejects invalid edits without replacing the circuit or stopping CPU");
+        check(!GImGui->OpenPopupStack.empty(),"Invalid Apply visibly explains its validation error");
+        if (!GImGui->OpenPopupStack.empty()) {
+            auto* popup = GImGui->OpenPopupStack.back().Window;
+            ImGui::ActivateItemByID(popup->GetID("Close")); frame(); frame();
+        }
+        check(GImGui->OpenPopupStack.empty(),"The Apply validation error can be dismissed with Close");
+        app->peripheralDraft_ = {};
+        clickApply();
+        check(!app->peripherals_ && !app->running_ && app->cpu_.PC == 0 && app->peripheralsOpen_,
+            "Apply in a narrow dock can disconnect the graph without hitting Close or the tab arrows");
+        auto* tabs = GImGui->TabBars.GetByKey(window->GetID("peripheral-tabs"));
+        tabs->NextSelectedTabId = ImHashStr("Live",0,tabs->ID); frame(); frame();
+        app->peripheralDraft_ = config;
+        clickApply();
+        check(app->peripherals_ && app->peripherals_->config() == config &&
+            tabs->SelectedTabId == ImHashStr("Live",0,tabs->ID),
+            "Apply is available from Live and renders the newly activated session immediately");
+        io.AddMousePosEvent(-100,-100);
+    }
+    static void test_live_device_layout(const fs::path& root)
+    {
+        Emu51PeripheralConfig config;
+        config.devices = {{"switch",Emu51PeripheralKind::Switch},{"button",Emu51PeripheralKind::Button},
+            {"source",Emu51PeripheralKind::Digital},{"display",Emu51PeripheralKind::Display7},{"audio",Emu51PeripheralKind::Audio}};
+        config.devices.back().audioDirections = E51P_AUDIO_CAPTURE | E51P_AUDIO_PLAYBACK;
+        for (const auto& device : std::vector<Emu51PeripheralDevice>{{"ppi",Emu51PeripheralKind::I8255},
+            {"adc",Emu51PeripheralKind::Adc0804},{"dac",Emu51PeripheralKind::Dac},{"shift",Emu51PeripheralKind::Shift595},
+            {"eeprom",Emu51PeripheralKind::Eeprom},{"ay",Emu51PeripheralKind::Ay38910,0x8100}})
+            config.devices.push_back(device);
+        auto app = create();
+        check(app->applyPeripheralConfig(config,12),"Live layout fixture configures interactive devices, display and audio");
+        app->peripheralsOpen_ = true;
+        app->peripheralLive_.restore({{"cpu",12,12,320,300},{"switch",350,12,280,180},
+            {"button",650,12,280,180},{"source",350,208,280,180},{"display",650,208,340,300},{"audio",1000,12,520,680}});
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,840}; io.DeltaTime = 1.0f/60;
+        const auto frame = [&] {
+            ImGui::NewFrame(); ImGui::SetNextWindowPos({20,20}); ImGui::SetNextWindowSize({1200,780});
+            ImGui::Begin("Live layout regression",nullptr,ImGuiWindowFlags_NoSavedSettings);
+            app->drawPeripheralLive(app->peripherals_->config()); ImGui::End(); ImGui::Render();
+        };
+        frame(); frame();
+        auto* window = ImGui::FindWindowByName("Live layout regression");
+        ImGuiWindow* canvas = nullptr;
+        for (auto* child : GImGui->Windows) if (child->ParentWindow == window && std::strstr(child->Name,"live-canvas")) canvas = child;
+        check(canvas != nullptr,"Live devices use a scrollable layout canvas");
+        if (!canvas) return;
+        const auto box = [&](const char* id) -> ImGuiWindow* {
+            const auto childId = ImHashStr("box",0,ImHashStr(id,0,canvas->ID));
+            for (auto* child : GImGui->Windows) if (child->ParentWindow == canvas && child->ChildId == childId) return child;
+            return nullptr;
+        };
+        for (const auto* id : {"switch","button","source","display","audio"})
+            check(box(id) != nullptr,"Front-panel devices and selected utility controls have Live boxes");
+        for (const auto* id : {"cpu","ppi","adc","dac","shift","eeprom","ay"})
+            check(box(id) == nullptr,"Live does not create CPU or bare IC boxes");
+        const auto controls = [&](const char* id) -> ImGuiWindow* {
+            for (auto* child : GImGui->Windows)
+                if (child->ParentWindow == box(id) && std::strstr(child->Name,"controls")) return child;
+            return nullptr;
+        };
+        const auto click = [&](ImVec2 at) {
+            io.AddMousePosEvent(at.x,at.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+            io.AddMouseButtonEvent(0,false); frame(); frame();
+        };
+        const auto drag = [&](ImVec2 at,ImVec2 by,bool shouldAnimate) {
+            io.AddMousePosEvent(at.x,at.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+            io.AddMousePosEvent(at.x+by.x,at.y+by.y); frame();
+            if (shouldAnimate) check(app->shouldAnimate(),"Paused Live dragging/resizing requests continuous redraws");
+            io.AddMouseButtonEvent(0,false); frame(); frame();
+        };
+        auto* switchControls = controls("switch");
+        check(switchControls != nullptr,"Device controls belong to their own box");
+        if (!switchControls || !box("switch")) return;
+        click({switchControls->DC.CursorStartPos.x+5,switchControls->DC.CursorStartPos.y+5});
+        check(app->peripherals_->pressed("switch"),"A switch remains operable in locked layout mode");
+        const auto locked = app->peripheralLive_.layout(app->peripherals_->config());
+        drag({box("switch")->Pos.x+50,box("switch")->Pos.y+12},{30,25},false);
+        check(app->peripheralLive_.layout(app->peripherals_->config()) == locked,"Headers cannot move device boxes outside edit mode");
+        click({window->DC.CursorStartPos.x+6,window->DC.CursorStartPos.y+6});
+        check(app->peripheralLive_.editing(),"Edit layout is enabled by the visible checkbox");
+        click({switchControls->DC.CursorStartPos.x+5,switchControls->DC.CursorStartPos.y+5});
+        check(app->peripherals_->pressed("switch"),"Layout edit mode disables device controls instead of toggling hardware");
+        app->cpu_.PC = 0x1234;
+        const auto active = app->peripherals_->config();
+        drag({box("switch")->Pos.x+50,box("switch")->Pos.y+12},{35,25},true);
+        const auto moved = app->peripheralLive_.layout(active);
+        const auto geometry = [](const auto& boxes) {
+            return *std::find_if(boxes.begin(),boxes.end(),[](const auto& b) { return b.id == "switch"; });
+        };
+        check(geometry(moved).x > geometry(locked).x+30 && geometry(moved).y > geometry(locked).y+20,"Dragging a header updates the Live device position");
+        auto* switchBox = box("switch");
+        drag({switchBox->Pos.x+switchBox->Size.x-9,switchBox->Pos.y+switchBox->Size.y-9},{45,35},true);
+        const auto resized = app->peripheralLive_.layout(active);
+        check(geometry(resized).width > geometry(moved).width+40 && geometry(resized).height > geometry(moved).height+30,
+            "The corner handle resizes a device box");
+        check(app->cpu_.PC == 0x1234 && app->peripherals_->config() == active && app->peripheralDraft_ == active,
+            "Live layout edits do not reset CPU or change the circuit draft");
+        const auto projectPath = root/"live-layout.emu51";
+        check(app->saveProjectToPath(projectPath),"Save Project stores the Live layout");
+        auto restored = create();
+        check(restored->openProjectFromPath(projectPath) && restored->peripheralLive_.layout(active) == resized &&
+            !restored->peripheralLive_.editing(),"Live positions and sizes round-trip through project JSON; edit mode starts locked");
+        std::string error;
+        auto project = emu51LoadProject(projectPath,error);
+        check(project && project->peripheralLiveLayout == resized,"Kason restores all Live boxes independently of Graph layout");
+        if (project) {
+            const auto bytes = read(projectPath);
+            for (int invalid = 0; invalid < 5; ++invalid) {
+                project->peripheralLiveLayout = resized;
+                if (invalid == 0) project->peripheralLiveLayout.push_back(resized.front());
+                if (invalid == 1) project->peripheralLiveLayout.front().id = "missing";
+                if (invalid == 2) project->peripheralLiveLayout.front().x = -1;
+                if (invalid == 3) project->peripheralLiveLayout.front().width = 0;
+                if (invalid == 4) project->peripheralLiveLayout.front().height = 4097;
+                check(!emu51SaveProject(projectPath,*project,error) && read(projectPath) == bytes,
+                    "Invalid Live layout IDs, duplicates, positions and sizes cannot overwrite a project");
+            }
+            auto invalidJson = bytes;
+            const auto begin = invalidJson.find("\"peripheral_live_layout\"");
+            const auto width = invalidJson.find("\"width\":",begin)+8;
+            const auto end = invalidJson.find(',',width);
+            invalidJson.replace(width,end-width,"0");
+            const auto invalidPath = root/"invalid-live-layout.emu51";
+            write(invalidPath,invalidJson);
+            restored->cpu_.PC = 0xbeef; auto* originalSession = restored->peripherals_.get();
+            check(!restored->openProjectFromPath(invalidPath) && restored->cpu_.PC == 0xbeef &&
+                restored->peripherals_.get() == originalSession && restored->peripheralLive_.layout(active) == resized,
+                "An invalid Live layout from JSON cannot partially replace the running project");
+        }
+        click({window->DC.CursorStartPos.x+6,window->DC.CursorStartPos.y+6});
+        check(!app->peripheralLive_.editing(),"Leaving edit mode locks the layout again");
+        const auto* buttonControls = controls("button");
+        if (buttonControls) {
+            const auto at = buttonControls->DC.CursorStartPos;
+            io.AddMousePosEvent(at.x+120,at.y+10); frame(); io.AddMouseButtonEvent(0,true); frame();
+            check(app->peripherals_->pressed("button"),"Momentary buttons work inside their own box");
+            app->peripheralLive_.editing_ = true; frame();
+            check(!app->peripherals_->pressed("button"),"Entering layout mode releases held momentary buttons");
+            io.AddMouseButtonEvent(0,false); frame();
+        }
+        app->peripheralLive_.restore({{"audio",12,12,360,400},{"cpu",650,12,350,300}});
+        frame(); frame();
+        auto* audioControls = controls("audio");
+        check(audioControls != nullptr,"All audio options are hosted in the audio device's own box");
+        if (audioControls) {
+            auto* tabs = GImGui->TabBars.GetByKey(audioControls->GetID("audio-options"));
+            check(tabs && tabs->Tabs.Size == 2,"The audio box contains Signals and Devices tabs");
+            if (tabs) for (const auto* tab : {"Devices","Signals"}) {
+                tabs->NextSelectedTabId = ImHashStr(tab,0,tabs->ID); frame(); frame();
+                check(audioControls->DC.CursorMaxPos.x <= audioControls->InnerRect.Max.x+1,
+                    "Audio controls, gain, scopes and statistics fit horizontally inside the minimum-width box");
+            }
+        }
+        check(!app->peripherals_->audioOpen(),"Rendering and rearranging Live boxes never opens physical audio devices");
+        // Compact also upgrades the older, monitor-sized saved layouts.
+        click({window->DC.CursorStartPos.x+6,window->DC.CursorStartPos.y+6});
+        ImGui::FocusWindow(window); ImGui::ActivateItemByID(window->GetID("Compact")); frame(); frame();
+        const auto compact = app->peripheralLive_.layout(app->peripherals_->config());
+        check(compact.size() == 5 && std::none_of(compact.begin(),compact.end(),[](const auto& b) { return b.id == "cpu"; }),
+            "Default and saved Live layouts contain only front-panel devices, audio and adjustable sources");
+        for (const auto& b : compact) {
+            if (b.id == "switch" || b.id == "button") check(b.width <= 160 && b.height <= 90,"Physical controls have compact default boxes");
+            if (b.id == "display") check(b.height <= 150,"Segment displays do not reserve space for internal signals");
+            if (b.id == "audio") check(b.width <= 420 && b.height <= 400,"Audio uses a compact default box");
+        }
+        const auto compactPath = root/"compact-front-panel.emu51";
+        auto compactRestored = create();
+        check(app->saveProjectToPath(compactPath) && compactRestored->openProjectFromPath(compactPath) &&
+            compactRestored->peripheralLive_.layout(app->peripherals_->config()) == compact,
+            "Compact boxes smaller than the old monitor limits survive project save/reload");
+        io.AddMousePosEvent(-100,-100);
+    }
+    static void test_live_content_scaling_and_key_modes(const fs::path& root)
+    {
+        Emu51PeripheralConfig config;
+        config.devices = {{"lcd",Emu51PeripheralKind::Lcd},{"segments",Emu51PeripheralKind::Display7},
+            {"bar",Emu51PeripheralKind::Bargraph},{"led",Emu51PeripheralKind::Led},{"switch",Emu51PeripheralKind::Switch},
+            {"button",Emu51PeripheralKind::Button},{"source",Emu51PeripheralKind::Voltage},{"digital",Emu51PeripheralKind::Digital},
+            {"audio",Emu51PeripheralKind::Audio},{"keypad",Emu51PeripheralKind::Keypad}};
+        config.devices[8].audioDirections = E51P_AUDIO_CAPTURE | E51P_AUDIO_PLAYBACK;
+        auto app = create(); app->peripheralsOpen_ = true;
+        check(app->applyPeripheralConfig(config,12),"Configure every visible device type for scaling and keypad regression");
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,900}; io.DeltaTime = 1.0f/60;
+        io.AddMousePosEvent(-100,-100);
+        const auto frame = [&](bool show = true) {
+            ImGui::NewFrame(); ImGui::SetNextWindowPos({10,10}); ImGui::SetNextWindowSize({1240,860});
+            ImGui::Begin("Live content regression",nullptr,ImGuiWindowFlags_NoSavedSettings);
+            if (show) app->drawPeripheralLive(app->peripherals_->config());
+            else { app->peripheralsOpen_ = false; app->drawPeripherals(); }
+            ImGui::End(); ImGui::Render();
+        };
+        const auto place = [&](const char* id,float width,float height) {
+            std::vector<Emu51PeripheralLiveBox> boxes;
+            for (const auto& d : config.devices) boxes.push_back({d.id,d.id == id ? 12.0 : 2000.0,d.id == id ? 12.0 : 2000.0,width,height});
+            app->peripheralLive_.restore(boxes); frame(); frame();
+        };
+        const auto controls = [&](const char* id) -> ImGuiWindow* {
+            auto* window = ImGui::FindWindowByName("Live content regression");
+            for (auto* canvas : GImGui->Windows) if (canvas->ParentWindow == window && std::strstr(canvas->Name,"live-canvas")) {
+                const auto childId = ImHashStr("box",0,ImHashStr(id,0,canvas->ID));
+                for (auto* box : GImGui->Windows) if (box->ParentWindow == canvas && box->ChildId == childId)
+                    for (auto* child : GImGui->Windows) if (child->ParentWindow == box && std::strstr(child->Name,"controls")) return child;
+            }
+            return nullptr;
+        };
+        const auto coloredBounds = [&](const char* id,ImU32 color) {
+            ImRect bounds({FLT_MAX,FLT_MAX},{-FLT_MAX,-FLT_MAX});
+            auto* child = controls(id);
+            if (child) for (const auto& vertex : child->DrawList->VtxBuffer) if (vertex.col == color) bounds.Add(vertex.pos);
+            check(!bounds.IsInverted(),"A component renders its visible content inside its own box");
+            return bounds;
+        };
+        const float header = ImGui::GetTextLineHeight()+8;
+        struct Example { const char* id; float width,height; ImU32 color; };
+        const Example examples[] = {
+            {"lcd",248,94,IM_COL32(24,55,28,255)}, {"segments",264,150,IM_COL32(12,14,18,255)},
+            {"bar",204,100,IM_COL32(12,14,18,255)}, {"led",96,64,IM_COL32(55,55,55,255)},
+            {"switch",140,64,ImGui::GetColorU32(ImGuiCol_FrameBg)}, {"button",140,72,ImGui::GetColorU32(ImGuiCol_Button)},
+            {"source",180,64,ImGui::GetColorU32(ImGuiCol_FrameBg)}, {"digital",140,64,ImGui::GetColorU32(ImGuiCol_FrameBg)},
+            {"audio",420,320,ImGui::GetColorU32(ImGuiCol_FrameBg)}, {"keypad",196,226,ImGui::GetColorU32(ImGuiCol_Button)}
+        };
+        for (const auto& example : examples) {
+            place(example.id,example.width,example.height);
+            const auto small = coloredBounds(example.id,example.color);
+            // Double the usable content area; title bars intentionally keep their size.
+            place(example.id,(example.width-12)*2+12,(example.height-header-12)*2+header+12);
+            const auto large = coloredBounds(example.id,example.color);
+            if (!small.IsInverted() && !large.IsInverted()) {
+                if (!(large.GetWidth() > small.GetWidth()*1.7f && large.GetHeight() > small.GetHeight()*1.7f))
+                    std::fprintf(stderr,"Scaling %s: %.1fx%.1f -> %.1fx%.1f\n",example.id,small.GetWidth(),small.GetHeight(),large.GetWidth(),large.GetHeight());
+                check(large.GetWidth() > small.GetWidth()*1.7f && large.GetHeight() > small.GetHeight()*1.7f,
+                    "Resizing grows actual display geometry, controls and hit targets in both dimensions");
+                const auto* child = controls(example.id);
+                if (large.Max.x > child->InnerRect.Max.x+1 || large.Max.y > child->InnerRect.Max.y+1)
+                    std::fprintf(stderr,"Overflow %s: %.1f,%.1f beyond %.1f,%.1f\n",example.id,large.Max.x,large.Max.y,child->InnerRect.Max.x,child->InnerRect.Max.y);
+                check(large.Max.x <= child->InnerRect.Max.x+1 && large.Max.y <= child->InnerRect.Max.y+1,
+                    "Scaled component content fits inside its enlarged box");
+            }
+        }
+        place("keypad",380,420);
+        auto* keypad = controls("keypad");
+        check(keypad != nullptr,"A large keypad has visible controls");
+        if (!keypad) return;
+        const auto click = [&](ImVec2 at) {
+            io.AddMousePosEvent(at.x,at.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+            io.AddMouseButtonEvent(0,false); frame(); frame();
+        };
+        // The bottom-right key must fill its enlarged grid cell, beyond the old fixed grid.
+        click({keypad->InnerRect.Max.x-10,keypad->InnerRect.Max.y-70});
+        check(app->peripherals_->keys("keypad") == (1u<<15),"Enlarged keypad hit regions match the rendered bottom-right key");
+        click({keypad->InnerRect.Max.x-10,keypad->InnerRect.Max.y-70});
+        check(app->peripherals_->keys("keypad") == 0,"Toggle mode releases a key on a second click");
+        const auto chooseMode = [&](bool momentary) {
+            click({keypad->DC.CursorStartPos.x+20,keypad->DC.CursorStartPos.y+10});
+            check(!GImGui->OpenPopupStack.empty(),"Keypad mode is selectable from its visible combo");
+            if (!GImGui->OpenPopupStack.empty()) {
+                auto* popup = GImGui->OpenPopupStack.back().Window;
+                click({popup->DC.CursorStartPos.x+10,
+                    (momentary ? popup->DC.CursorPosPrevLine.y : popup->DC.CursorStartPos.y)+5});
+            }
+            check(app->peripheralLive_.momentaryKeys("keypad") == momentary,"Keypad mode selection takes effect");
+        };
+        chooseMode(true);
+        const auto firstKey = [&] {
+            const float row = keypad->DC.PrevLineSize.y;
+            return ImVec2(keypad->DC.CursorStartPos.x+10,keypad->DC.CursorStartPos.y+row+15);
+        };
+        const auto press = [&] {
+            const auto at = firstKey(); io.AddMousePosEvent(at.x,at.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+            check(app->peripherals_->keys("keypad") == 1,"Momentary mode presses a key immediately on mouse down");
+            frame(); check(app->peripherals_->keys("keypad") == 1,"Rendering a held key keeps the same contact pressed");
+        };
+        press();
+        io.AddMouseButtonEvent(0,false); frame();
+        check(app->peripherals_->keys("keypad") == 0,"Momentary mode releases on mouse up without a second click");
+        press();
+        const auto projectPath = root/"keypad-mode.emu51";
+        auto restored = create();
+        check(app->saveProjectToPath(projectPath) && restored->openProjectFromPath(projectPath) &&
+            restored->peripheralLive_.momentaryKeys("keypad") && restored->peripherals_->keys("keypad") == 0,
+            "Projects retain keypad mode and scaled box geometry without restoring held contacts");
+        auto legacyJson = read(projectPath);
+        const std::string modeField = ",\"momentary_keys\":true";
+        const auto modeAt = legacyJson.find(modeField);
+        check(modeAt != std::string::npos,"Saved keypad mode is present in project JSON");
+        if (modeAt != std::string::npos) {
+            legacyJson.erase(modeAt,modeField.size());
+            const auto legacyPath = root/"legacy-keypad-mode.emu51";
+            write(legacyPath,legacyJson);
+            auto legacy = create();
+            check(legacy->openProjectFromPath(legacyPath) && !legacy->peripheralLive_.momentaryKeys("keypad"),
+                "Older project layouts without a keypad mode keep the existing toggle behavior");
+        }
+        app->peripheralLive_.editing_ = true; frame();
+        check(app->peripherals_->keys("keypad") == 0,"Entering layout edit mode releases momentary keys");
+        io.AddMouseButtonEvent(0,false); app->peripheralLive_.editing_ = false; frame();
+        press(); frame(false);
+        check(app->peripherals_->keys("keypad") == 0,"Hiding Live releases momentary keys");
+        io.AddMouseButtonEvent(0,false); frame();
+        press(); io.AddFocusEvent(false); frame();
+        check(app->peripherals_->keys("keypad") == 0,"Losing application focus releases momentary keys");
+        io.AddFocusEvent(true); io.AddMouseButtonEvent(0,false); frame();
+        chooseMode(false);
+        click(firstKey());
+        check(app->peripherals_->keys("keypad") == 1,"Toggle mode latches a key after a complete click");
+        frame(false);
+        check(app->peripherals_->keys("keypad") == 1,"Intentional toggle-mode holds survive hiding Live");
+        io.AddMousePosEvent(-100,-100);
+    }
+    static void test_segment_colon_alignment()
+    {
+        using Vertex = std::tuple<float,float,ImU32>;
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,840}; io.DeltaTime = 1.0f/60;
+        // Inspect actual draw geometry, so the test does not duplicate the layout formula.
+        const auto render = [&](const e51p_segment_snapshot& state,int style,bool instantaneous,bool colon,float width) {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos({10,10}); ImGui::SetNextWindowSize({width,400});
+            ImGui::Begin("segment-geometry",nullptr,ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            auto* draw = ImGui::GetWindowDrawList(); const int start = draw->VtxBuffer.Size;
+            emu51DrawSegmentDisplay(state,style,0,instantaneous,colon);
+            std::vector<Vertex> vertices;
+            for (int i = start; i < draw->VtxBuffer.Size; ++i) {
+                const auto& vertex = draw->VtxBuffer[i];
+                vertices.emplace_back(vertex.pos.x,vertex.pos.y,vertex.col);
+            }
+            ImGui::End(); ImGui::Render();
+            std::sort(vertices.begin(),vertices.end()); return vertices;
+        };
+        const auto difference = [](const auto& a,const auto& b) {
+            std::vector<Vertex> result;
+            std::set_difference(a.begin(),a.end(),b.begin(),b.end(),std::back_inserter(result));
+            return result;
+        };
+        const auto bounds = [](const auto& vertices) {
+            ImRect result({FLT_MAX,FLT_MAX},{-FLT_MAX,-FLT_MAX});
+            for (const auto& vertex : vertices) result.Add({std::get<0>(vertex),std::get<1>(vertex)});
+            return result;
+        };
+        for (int style : {7,14,16}) for (unsigned digits : {4u,8u})
+            for (bool instantaneous : {false,true}) for (float width : {320.0f,640.0f}) {
+                e51p_segment_snapshot state{}; state.digits = digits; state.segments = style+1;
+                const auto baseline = render(state,style,instantaneous,false,width);
+                auto second = state, third = state;
+                const unsigned right = style == 16 ? 2 : 1, left = style == 16 ? 7 : 5;
+                second.instantaneous[1] = 1u<<right; second.brightness[1][right] = 1.0f/digits;
+                third.instantaneous[2] = 1u<<left; third.brightness[2][left] = 1.0f/digits;
+                const auto rightVertices = difference(render(second,style,instantaneous,false,width),baseline);
+                const auto leftVertices = difference(render(third,style,instantaneous,false,width),baseline);
+                state.colon = 3; state.colon_brightness[0] = state.colon_brightness[1] = 1.0f/digits;
+                const auto colonVertices = difference(render(state,style,instantaneous,true,width),baseline);
+                check(!rightVertices.empty() && !leftVertices.empty() && !colonVertices.empty(),
+                    "Rendered digit edges and both colon dots are present");
+                if (rightVertices.empty() || leftVertices.empty() || colonVertices.empty()) continue;
+                const auto secondEdge = bounds(rightVertices).Max.x, thirdEdge = bounds(leftVertices).Min.x;
+                const auto colonBounds = bounds(colonVertices);
+                const float middleY = colonBounds.GetCenter().y;
+                for (bool upper : {false,true}) {
+                    std::vector<Vertex> dot;
+                    for (const auto& vertex : colonVertices)
+                        if ((std::get<1>(vertex) < middleY) == upper) dot.push_back(vertex);
+                    check(!dot.empty(),"Each colon dot renders separately");
+                    if (!dot.empty()) check(std::abs(bounds(dot).GetCenter().x-(secondEdge+thirdEdge)/2) < .05f,
+                        "Each colon dot is centered between the rendered second and third digit edges");
+                }
+                check(colonBounds.Min.x > secondEdge && colonBounds.Max.x < thirdEdge,
+                    "Colon dots have clearance from both adjacent digits");
+            }
+    }
+    static void test_peripheral_workflows(const fs::path& root)
+    {
+        auto app = create();
+        auto dac = emu51PeripheralPreset(1);
+        check(app->applyPeripheralConfig(dac, 12), "Desktop accepts GPIO DAC graph");
+        app->cpu_.writeDirect(0x90, 128);
+        double voltage = -1;
+        check(app->peripherals_->sampleAnalog("dac.out", voltage) && voltage == 2.5,
+            "Desktop CPU latch drives the DAC without executing an instruction");
+        auto* original = app->peripherals_.get();
+        app->cpu_.PC = 0x1234;
+        auto invalid = dac; invalid.digital[0].width = 9;
+        check(!app->applyPeripheralConfig(invalid, 12) && app->peripherals_.get() == original && app->cpu_.PC == 0x1234,
+            "Invalid bit slices preserve the active graph and CPU");
+        invalid = dac; invalid.digital[0].a = "missing.pin";
+        check(!app->applyPeripheralConfig(invalid, 12) && app->peripherals_.get() == original,
+            "Unknown pins cannot replace the active graph");
+        configureAdcBoardFixture(*app);
+        check(app->hasCompiledAssemblyEditorOutput() && app->projectPrograms_.size() == 1 && !app->running_,
+            "ADC fixture configures the board and compiles/loads real firmware while paused");
+        for (unsigned i = 0; i != 300; ++i) app->executeInstruction();
+        check(app->cpu_.IRAM[0x31] == 160 && app->peripherals_->sampleAnalog("dac.out", voltage) && voltage == 3.125,
+            "Desktop firmware reads ADC through MOVX/8255 and updates DAC");
+        check(app->unifiedMemory_[0x8000] == 0 && app->unifiedMemory_[0x8001] == 0,
+            "Mapped XDATA bypasses backing program/data memory");
+        const auto time = app->peripherals_->ticks();
+        (void)app->cpu_.readData(0x8000);
+        (void)app->cpu_.readData(0x8002);
+        (void)app->cpu_.readData(0x8003); // unsupported control-register peek must remain passive
+        check(app->peripherals_->ticks() == time && app->peripherals_->status() == E51P_OK,
+            "Debugger peeks never advance time or poison the running graph");
+        check(app->peripherals_->setSource("input", 1.25), "Live voltage source accepts a new input");
+        for (unsigned i = 0; i != 300; ++i) app->executeInstruction();
+        check(app->cpu_.IRAM[0x31] == 64 && app->peripherals_->sampleAnalog("dac.out", voltage) && voltage == 1.25,
+            "Live input changes reach the next conversion without resetting CPU");
+        const auto projectPath = root / "peripherals.emu51";
+        check(app->saveProjectToPath(projectPath), "Peripheral project saves wiring, source value and embedded firmware");
+        auto restored = create();
+        check(restored->openProjectFromPath(projectPath) && restored->peripherals_ && !restored->running_,
+            "Project restores a paused peripheral graph");
+        for (unsigned i = 0; i != 300; ++i) restored->executeInstruction();
+        check(restored->cpu_.IRAM[0x31] == 64, "Restored embedded firmware uses the saved voltage source");
+        restored->resetCpuState(true);
+        check(restored->peripherals_->ticks() == 0 && restored->peripherals_->sampleAnalog("dac.out", voltage) && voltage == 0,
+            "CPU reset resets peripheral time and the DAC");
+        restored->peripherals_->writeData(0x8003, 0xa0); // unimplemented 8255 mode
+        restored->running_ = true;
+        restored->executeInstruction();
+        check(!restored->running_ && restored->statusMessage_.find("peripheral error") != std::string::npos,
+            "Fatal device errors stop desktop execution");
+        restored->resetCpuState(true);
+        check(restored->peripherals_->status() == E51P_OK, "Reset clears sticky peripheral bus errors");
+        std::string error;
+        auto project = emu51LoadProject(projectPath, error);
+        project->peripherals.digital[0].a = "unknown.pin";
+        const auto brokenPath = root / "broken-peripherals.emu51";
+        check(emu51SaveProject(brokenPath, *project, error), "Write project with structurally valid but unavailable pin");
+        original = restored->peripherals_.get(); restored->cpu_.PC = 0x4321;
+        check(!restored->openProjectFromPath(brokenPath) && restored->peripherals_.get() == original && restored->cpu_.PC == 0x4321,
+            "Invalid project wiring is rejected before resetting the live session");
+        restored->unsavedChangesPrompt_ = [] { return Choice::Discard; };
+        const auto emptyPath = root / "no-peripherals.emu51";
+        check(emu51SaveProject(emptyPath, Emu51Project{}, error) && restored->openProjectFromPath(emptyPath) && !restored->peripherals_,
+            "Opening a project without peripherals detaches the previous graph");
+#ifdef EMU51_GUI_HOST_AUDIO
+        auto audio = emu51PeripheralPreset(1);
+        audio.devices.push_back({"sound", Emu51PeripheralKind::Audio});
+        audio.analog.push_back({"dac.out", "sound.playback"});
+        check(restored->applyPeripheralConfig(audio, 12) && !restored->peripherals_->audioOpen(),
+            "Applying an audio graph never opens host devices");
+        std::vector<std::string> capture, playback;
+        check(restored->peripherals_->enumerateAudio(capture, playback, error, true) &&
+            restored->peripherals_->openAudio(-1, -1, 0, -1, error), "Explicit NULL audio host opens without physical devices");
+        check(restored->peripherals_->syncAudio(true, error), "Start NULL host for full-scale Covox check");
+        for (const auto code : {0u, 64u, 128u, 192u, 255u}) {
+            restored->cpu_.writeDirect(0x90, static_cast<std::uint8_t>(code));
+            restored->peripherals_->gpio()->advance(32); // crosses a 48 kHz boundary at 12 MHz
+            e51p_audio_scope_frame frame{}; uint32_t count = 0, rate = 0;
+            check(restored->peripherals_->audioScope(&frame, 1, count, rate) && count == 1 && rate == 48000 &&
+                frame.output == (static_cast<int>(code) - 128) / 128.0f,
+                "Desktop Covox uses full-scale offset-binary playback without hidden attenuation");
+        }
+        check(restored->peripherals_->syncAudio(false, error), "Stop full-scale NULL playback fixture");
+        const auto gainTime = restored->peripherals_->ticks();
+        restored->cpu_.PC = 0x2345;
+        check(restored->peripherals_->setInputGainDb(24) && !restored->peripherals_->setInputGainDb(61) &&
+            !restored->peripherals_->setInputGainDb(-21) && restored->peripherals_->ticks() == gainTime &&
+            restored->cpu_.PC == 0x2345 && restored->peripherals_->audioOpen(),
+            "Live input gain changes preserve CPU, graph time and the open host");
+        restored->toggleRun(); restored->syncPeripheralAudio();
+        for (unsigned i = 0; i != 100; ++i) restored->executeInstruction();
+        restored->toggleRun();
+        restored->resetCpuState(true);
+        check(restored->peripherals_->audioOpen() && restored->peripherals_->ticks() == 0,
+            "Pause/reset retain an explicitly opened audio host safely");
+        check(restored->saveProjectToPath(root / "audio.emu51"), "Audio project saves");
+        auto reopened = create();
+        check(reopened->openProjectFromPath(root / "audio.emu51") && !reopened->peripherals_->audioOpen(),
+            "Loading an audio project never reopens physical devices");
+        check(reopened->peripherals_->config().devices.back().inputGainDb == 24,
+            "Live microphone gain survives project save/load and CPU reset");
+        check(restored->applyPeripheralConfig({}, 12) && !restored->peripherals_,
+            "Replacing an open audio graph closes the host and detaches CPU safely");
+#endif
+    }
+    static void test_background_execution(const fs::path& root)
+    {
+        using Clock = Emu51CycleTiming::Clock;
+        auto app = create();
+        openAudioExample(*app,4);
+        auto config = emu51PeripheralPreset(4); config.devices.back().audioBufferMs = 32;
+        // Keep CPU load low so this tests scheduling/ownership even under TSAN,
+        // rather than the host's ability to emulate a 24.576 MHz CPU in real time.
+        check(app->applyPeripheralConfig(config, 0.12), "Worker fixture configures a 32 ms audio buffer");
+        check(app->startBackgroundExecution(), "Background execution worker starts");
+        {
+            auto guard = app->access();
+#ifdef EMU51_GUI_HOST_AUDIO
+            check(startNullAudio(*app), "Worker fixture starts NULL playback");
+#else
+            app->toggleRun();
+#endif
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::uint64_t firstCycles = 0;
+        e51p_audio_stats before{};
+        {
+            auto guard = app->access(false);
+            firstCycles = app->cycleCount_;
+            check(app->running_ && firstCycles > 0, "Worker executes without frontend tick or rendering");
+            app->peripherals_->audioStats(before);
+        }
+        // Simulate a blocked event loop or GPU submission: no UI service at all.
+        std::this_thread::sleep_for(std::chrono::milliseconds(350));
+        {
+            auto guard = app->access(false);
+            e51p_audio_stats after{}; app->peripherals_->audioStats(after);
+            check(app->cycleCount_ > firstCycles + 2000, "CPU/peripherals advance throughout a blocked UI loop");
+#ifdef EMU51_GUI_HOST_AUDIO
+            check(after.playback_used > before.playback_used + 10000 && after.playback_misses == before.playback_misses,
+                "32 ms buffer remains fed during a 350 ms UI stall");
+#endif
+        }
+        // Rendering the editor is a real UI hot path. Its decorator simulates
+        // slow highlighting/layout inside Render(), not merely a sleep between frames.
+        bool delayed = false; std::uint64_t renderProgress = 0;
+        {
+            auto guard = app->access();
+            app->peripheralsOpen_ = true;
+            app->assemblyEditor_->SetLineDecorator(-2.0f, [&](TextEditor::Decorator&) {
+                if (delayed) return;
+                delayed = true;
+                std::uint64_t start = 0;
+                { auto read = app->access(false); start = app->cycleCount_; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                { auto read = app->access(false); renderProgress = app->cycleCount_ - start; }
+            });
+        }
+        auto& io = ImGui::GetIO(); io.DisplaySize = ImVec2(1280, 800); io.DeltaTime = 1.0f / 60;
+        unsigned char* pixels; int width, height; io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+        ImGui::NewFrame(); app->access()->draw(); ImGui::Render();
+        check(delayed && renderProgress > 1000, "Slow editor rendering releases the model and cannot stall audio generation");
+        {
+            auto guard = app->access();
+            app->configureEditorDebugger();
+            app->toggleRun();
+            check(!app->running_, "Pause synchronizes with worker at a batch boundary");
+            firstCycles = app->cycleCount_;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        {
+            auto guard = app->access();
+            check(app->cycleCount_ == firstCycles, "Paused worker consumes no CPU instructions");
+            app->resetCpuState(true); app->stepIn();
+            check(!app->running_ && app->instructionCount_ == 1, "Reset and single-step remain synchronized while worker exists");
+            app->resetCpuState(true);
+            // Breakpoint stop must run on the worker without touching editor/ImGui.
+            app->unifiedMemory_[0] = 0; app->unifiedMemory_[1] = 0; app->breakpoints_.insert(1);
+            app->toggleRun();
+        }
+        const auto waitStopped = [&] {
+            const auto end = Clock::now() + std::chrono::seconds(2);
+            while (Clock::now() < end) {
+                { auto read = app->access(false); if (!app->running_) return true; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            return false;
+        };
+        check(waitStopped(), "Worker breakpoint wakes/stops execution");
+        {
+            auto guard = app->access(false);
+            check(app->executionRedrawPending_.load() && app->shouldAnimate(), "Worker debugger stop retains a final UI redraw");
+        }
+        ImGui::NewFrame(); app->access()->draw(); ImGui::Render();
+        {
+            auto guard = app->access();
+            check(!app->executionRedrawPending_.load(), "Final stopped frame consumes the worker redraw request");
+            check(app->cpu_.PC == 1 && app->statusMessage_.find("breakpoint") != std::string::npos,
+                "Breakpoint reports the correct synchronized program counter");
+            app->breakpoints_.clear(); app->resetCpuState(true);
+            app->unifiedMemory_[0] = 0x75; app->unifiedMemory_[1] = 0x90; app->unifiedMemory_[2] = 0x55;
+            app->watchpoints_.push_back({Emu51ImguiApp::WatchSpace::Internal, 0x90, false, true, true});
+            app->toggleRun();
+        }
+        check(waitStopped(), "Worker watchpoint interrupts execution");
+        {
+            auto guard = app->access();
+            check(app->cpu_.readLatch(0x90) == 0x55 && app->statusMessage_.find("watchpoint") != std::string::npos,
+                "Worker preserves watchpoint semantics and diagnostic state");
+            app->watchpoints_.clear();
+            app->resetCpuState(true);
+            // Restore the actual music project under a running worker.
+            app->unsavedChangesPrompt_ = [] { return Choice::Discard; };
+            check(app->openProjectFromPath(fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/covox_duet.emu51"),
+                "Project reload safely replaces the worker's machine and peripheral graph");
+            config = emu51PeripheralPreset(4); config.devices.back().audioBufferMs = 32;
+            check(app->applyPeripheralConfig(config, 0.12), "Worker fixture restores low CPU workload");
+#ifdef EMU51_GUI_HOST_AUDIO
+            check(startNullAudio(*app), "Reloaded worker opens playback explicitly");
+#else
+            app->toggleRun();
+#endif
+            const auto cycles = app->cycleCount_, ticks = app->peripherals_->ticks();
+            const auto pc = app->cpu_.PC;
+            check(app->applyPeripheralAudioBuffer(64) && app->cycleCount_ == cycles && app->peripherals_->ticks() == ticks && app->cpu_.PC == pc,
+                "Buffer reconfiguration hands simulation ownership to UI without resetting the player");
+            check(app->saveProjectToPath(root / "worker.emu51"), "Project save snapshots worker-owned configuration safely");
+            // A modal path picker releases even nested access guards. The
+            // cancel path leaves the worker producing frames throughout.
+            app->projectPathPicker_ = [&](bool) {
+                std::uint64_t start = 0;
+                { auto read = app->access(false); start = app->cycleCount_; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+                { auto read = app->access(false); check(app->cycleCount_ > start + 8000, "Worker continues during a native/modal file dialog longer than the old timing-rebase threshold"); }
+                return fs::path{};
+            };
+            { auto nested = app->access(); app->requestOpenProject(); }
+            // stop() must not join while retaining this outer UI guard.
+            app->stopBackgroundExecution();
+            check(!app->running_ && !app->executionWorker_.started(), "Worker stops and joins safely under nested UI access");
+        }
+        check(app->startBackgroundExecution(), "Worker can restart after a joined shutdown");
+        { auto guard = app->access(); app->toggleRun(); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        app->stopBackgroundExecution();
+        { auto guard = app->access(false); check(!app->running_, "Restarted worker shuts down before application destruction"); }
+    }
+    static void test_audio_buffer_setting(const fs::path& root)
+    {
+        auto app = create(); openAudioExample(*app,4);
+        check(app->applyPeripheralConfig(emu51PeripheralPreset(4), 0.12), "Buffer fixture uses a low CPU workload");
+        for (unsigned i = 0; i < 1000; ++i) app->executeInstruction();
+        check(app->peripherals_->setInputGainDb(12), "Buffer fixture sets a retained gain");
+#ifdef EMU51_GUI_HOST_AUDIO
+        check(startNullAudio(*app), "Live buffer fixture opens NULL playback");
+#else
+        app->toggleRun();
+#endif
+        const auto ticks = app->peripherals_->ticks(), cycles = app->cycleCount_;
+        const auto pc = app->cpu_.PC;
+        std::array<std::uint8_t, 128> iram{};
+        std::copy_n(app->cpu_.IRAM, iram.size(), iram.begin());
+        check(!app->applyPeripheralAudioBuffer(9) && !app->applyPeripheralAudioBuffer(2001) && app->running_,
+            "Out-of-range buffer values do not disturb a running player");
+        for (const int size : {10, 512, 2000, 0, 512}) {
+            check(app->applyPeripheralAudioBuffer(size) && app->running_ && app->cpu_.PC == pc &&
+                app->cycleCount_ == cycles && app->peripherals_->ticks() == ticks &&
+                std::equal(iram.begin(), iram.end(), app->cpu_.IRAM), "Live buffer changes preserve CPU and player position");
+            check(app->peripherals_->audioLatencyMs() == (size ? size : 128) &&
+                app->peripherals_->config().devices.back().audioBufferMs == size &&
+                app->peripheralDraft_.devices.back().audioBufferMs == size &&
+                app->peripherals_->config().devices.back().inputGainDb == 12,
+                "Applied buffer controls real latency, saved graph and draft while retaining gain");
+#ifdef EMU51_GUI_HOST_AUDIO
+            check(app->peripherals_->audioOpen() && app->peripherals_->audioRunning(), "Buffer resize reopens and resumes the same NULL host selection");
+#endif
+        }
+#ifdef EMU51_GUI_HOST_AUDIO
+        e51p_audio_stats before{}; app->peripherals_->audioStats(before);
+        const auto end = Emu51CycleTiming::Clock::now() + std::chrono::milliseconds(650);
+        while (Emu51CycleTiming::Clock::now() < end) { app->tick(); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+        e51p_audio_stats after{}; app->peripherals_->audioStats(after);
+        check(after.playback_used > before.playback_used && !after.captured_frames,
+            "Resized 512 ms queue delivers actual playback callback data");
+#endif
+        app->stopForDebugger("buffer test paused");
+        check(app->saveProjectToPath(root / "audio-buffer.emu51"), "Project saves audio buffer size");
+        auto restored = create();
+        check(restored->openProjectFromPath(root / "audio-buffer.emu51") &&
+            restored->peripherals_->config().devices.back().audioBufferMs == 512 && restored->audioBufferMs_ == 512 &&
+            restored->peripherals_->audioLatencyMs() == 512 && !restored->peripherals_->audioOpen(),
+            "Project reload restores buffer setting and allocates matching queues without opening hardware");
+        auto invalid = restored->peripherals_->config(); invalid.devices.back().audioBufferMs = -1;
+        auto* original = restored->peripherals_.get();
+        check(!restored->applyPeripheralConfig(invalid, 0.12) && restored->peripherals_.get() == original,
+            "Graph validation rejects invalid stored audio buffering transactionally");
+    }
+    static void test_audio_host_pause_recovery()
+    {
+#ifdef EMU51_GUI_HOST_AUDIO
+        using Clock = Emu51CycleTiming::Clock;
+        auto app = create(); openAudioExample(*app,4);
+        // This tests host audio scheduling, not synthesizer pitch. Keep CPU work
+        // low so the real callback checks remain valid under ASan/slow CI too.
+        check(app->applyPeripheralConfig(emu51PeripheralPreset(4), 0.12), "Slow-clock audio recovery fixture configures");
+        check(startNullAudio(*app), "Playback recovery fixture starts a NULL host");
+        const auto service = [&](std::chrono::milliseconds duration) {
+            const auto end = Clock::now() + duration;
+            while (Clock::now() < end) {
+                app->tick();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        };
+        service(std::chrono::milliseconds(300));
+        e51p_audio_stats before{}; app->peripherals_->audioStats(before);
+        check(app->peripherals_->audioLatencyMs() == 128 && before.playback_used > 0 && !before.captured_frames,
+            "Playback-only GUI reserves 128 ms without opening capture");
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        service(std::chrono::milliseconds(150));
+        e51p_audio_stats afterShort{}; app->peripherals_->audioStats(afterShort);
+        check(afterShort.playback_misses == before.playback_misses && afterShort.playback_used > before.playback_used,
+            "Playback reserve absorbs an 80 ms UI service gap without underrun");
+        const auto cycles = app->cycleCount_, ticks = app->peripherals_->ticks();
+        const auto pc = app->cpu_.PC;
+        std::array<std::uint8_t, 36> player{};
+        std::copy_n(app->cpu_.IRAM + 0x30, player.size(), player.begin());
+        // The native callback continues for >1 s while the UI cannot execute.
+        // Pacing intentionally discards this interval; audio must discard it too.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        e51p_audio_stats duringGap{}; app->peripherals_->audioStats(duringGap);
+        check(duringGap.playback_misses > afterShort.playback_misses, "Long UI gap exhausts queued playback");
+        app->tick();
+        e51p_audio_scope_frame frame{}; uint32_t count = 0, rate = 0;
+        check(app->running_ && app->peripherals_->audioOpen() && app->peripherals_->audioRunning() &&
+            app->cycleCount_ == cycles && app->peripherals_->ticks() == ticks && app->cpu_.PC == pc &&
+            std::equal(player.begin(), player.end(), app->cpu_.IRAM + 0x30) &&
+            app->peripherals_->audioScope(&frame, 1, count, rate) && count == 0,
+            "Host pause starts a new audio epoch while preserving CPU, player state and open devices");
+        service(std::chrono::milliseconds(300));
+        e51p_audio_stats recovered{}; app->peripherals_->audioStats(recovered);
+        check(recovered.playback_used > duringGap.playback_used && recovered.playback_misses >= duringGap.playback_misses,
+            "Playback resumes after host-clock rebase, retaining cumulative diagnostics");
+        service(std::chrono::milliseconds(150));
+        e51p_audio_stats stable{}; app->peripherals_->audioStats(stable);
+        check(stable.playback_used > recovered.playback_used && stable.playback_misses == recovered.playback_misses,
+            "Recovered playback remains synchronized instead of missing every future sample");
+        app->stopForDebugger("audio recovery test complete");
+#endif
+    }
+    static void test_covox_duet(const fs::path& root)
+    {
+        auto app = create();
+        openAudioExample(*app,4);
+        check(app->hasCompiledAssemblyEditorOutput() && app->crystalMHz_ == 24.576 && app->cycleExact_ && !app->running_ &&
+            app->peripherals_ && app->peripherals_->config() == emu51PeripheralPreset(4) && !app->peripherals_->audioOpen(),
+            "Covox duet loads playback-only wiring and timer firmware at 24.576 MHz, paused with no microphone");
+        for (unsigned i = 0; i < 30000; ++i) app->executeInstruction();
+        check(app->cpu_.IRAM[0x30] == 1 && app->cpu_.IRAM[0x33] == 1 &&
+            app->cpu_.IRAM[0x3c] == 60 && app->cpu_.IRAM[0x44] == 52 && app->cpu_.IRAM[0x3d] == 1 && app->cpu_.IRAM[0x45] == 1 &&
+            (app->cpu_.IRAM[0x35] || app->cpu_.IRAM[0x36]),
+            "Desktop executes real audio/music interrupts and exposes first-chord player state in IRAM");
+        const auto file = root / "covox_duet.emu51";
+        check(app->saveProjectToPath(file), "Duet project saves embedded firmware and playback-only graph");
+        auto restored = create();
+        check(restored->openProjectFromPath(file) && restored->peripherals_ && !restored->running_ &&
+            !restored->peripherals_->audioOpen() && restored->crystalMHz_ == 24.576 &&
+            restored->peripherals_->config() == emu51PeripheralPreset(4) && restored->hasAssemblyEditorSource(),
+            "Duet project restores wiring, clock and source without opening audio");
+        auto packaged = create();
+        check(packaged->openProjectFromPath(fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/covox_duet.emu51") &&
+            packaged->peripherals_->config() == emu51PeripheralPreset(4), "Portable Covox duet example opens");
+        for (unsigned i = 0; i < 30000; ++i) packaged->executeInstruction();
+        check(packaged->cpu_.IRAM[0x33] == 1 && packaged->cpu_.IRAM[0x3c] == 60,
+            "Packaged duet's embedded source drives the real timer sequencer");
+#ifdef EMU51_GUI_HOST_AUDIO
+        check(startNullAudio(*restored) && restored->running_ && restored->peripherals_->audioOpen(),
+            "Explicit host opening and Run start playback-only NULL audio");
+        restored->toggleRun();
+        check(!restored->running_ && !restored->peripherals_->audioRunning(), "Duet audio follows Pause");
+#endif
+    }
+    static void test_microphone_covox(const fs::path& root)
+    {
+        const auto initializeEcho = [&](Emu51ImguiApp& target) {
+            unsigned steps = 0;
+            while (!target.cpu_.IRAM[0x32] && steps++ < 1000000) target.executeInstruction();
+            check(target.cpu_.IRAM[0x32] == 1, "Echo delay line initializes before sampling");
+        };
+        auto app = create();
+        openAudioExample(*app,3);
+        check(app->hasCompiledAssemblyEditorOutput() && app->crystalMHz_ == 3 && app->cycleExact_ && !app->running_ &&
+            app->peripherals_ && app->peripherals_->config() == emu51PeripheralPreset(3) && !app->peripherals_->audioOpen(),
+            "Microphone demo loads direct ADC/P0 and P1/Covox firmware at 3 MHz without opening devices");
+        initializeEcho(*app);
+        for (unsigned i = 0; i < 500; ++i) app->executeInstruction();
+        double volts = -1;
+        check(app->cpu_.IRAM[0x31] == 128 && app->cpu_.readLatch(0x80) == 255 &&
+            app->peripherals_->sampleAnalog("covox.out", volts) && volts == 2.5,
+            "Paused capture supplies centered silence through ADC, P0, real firmware, P1 and Covox");
+        auto analogTest = emu51PeripheralPreset(3);
+        analogTest.devices.push_back({"input", Emu51PeripheralKind::Voltage});
+        analogTest.analog[0].from = "input.out";
+        check(app->applyPeripheralConfig(analogTest, 3), "Apply a deterministic analog source to the microphone board for GPIO tests");
+        initializeEcho(*app);
+        for (const auto code : {0u, 64u, 128u, 160u, 255u}) {
+            const auto voltage = 5.0 * code / 256.0;
+            check(app->peripherals_->setSource("input", voltage), "Set ADC test voltage");
+            for (unsigned i = 0; i < 500; ++i) app->executeInstruction();
+            const auto mixed = (code >> 1) + 64; // These first slots still contain initialized silence.
+            check(app->cpu_.IRAM[0x30] == code && app->cpu_.IRAM[0x31] == mixed && app->cpu_.readLatch(0x90) == mixed &&
+                app->cpu_.readLatch(0x80) == 255 && app->peripherals_->sampleAnalog("covox.out", volts) && volts == 5.0 * mixed / 256.0,
+                "Real ADC/P0 samples are half-mixed with delay bytes before reaching P1/Covox");
+        }
+        app->unsavedChangesPrompt_ = [] { return Choice::Discard; };
+        openAudioExample(*app,3);
+        const auto file = root / "microphone_covox.emu51";
+        check(app->saveProjectToPath(file), "Microphone example saves a portable project");
+        auto restored = create();
+        check(restored->openProjectFromPath(file) && restored->peripherals_->config() == emu51PeripheralPreset(3) &&
+            restored->crystalMHz_ == 3 && restored->hasAssemblyEditorSource() && !restored->peripherals_->audioOpen(),
+            "Microphone project restores embedded source and wiring with physical devices closed");
+        const auto sample = fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/microphone_covox.emu51";
+        auto packaged = create();
+        check(packaged->openProjectFromPath(sample), "Redistributable microphone example project loads");
+        initializeEcho(*packaged);
+        for (unsigned i = 0; i < 500; ++i) packaged->executeInstruction();
+        check(packaged->cpu_.IRAM[0x31] == 128, "Packaged project's embedded firmware runs through direct ports");
+#ifdef EMU51_GUI_HOST_AUDIO
+        check(startNullAudio(*restored) && restored->running_ && restored->peripherals_->audioOpen(),
+            "Explicit host opening and Run start cycle-paced NULL audio execution");
+        restored->toggleRun();
+        check(!restored->running_ && restored->peripherals_->audioOpen(), "Pausing keeps the open microphone host silent");
+        restored->resetCpuState(true);
+        check(restored->peripherals_->ticks() == 0, "Microphone host safely follows CPU/context reset");
+        // Device initialization may block between Run and the first CPU tick.
+        // That wall time must not become emulation backlog in the new audio epoch.
+        restored->toggleRun();
+        restored->cycleTiming_.reset(Emu51CycleTiming::Clock::now() - std::chrono::milliseconds(750));
+        const auto beforeRestart = restored->cycleCount_;
+        restored->tickAt(Emu51CycleTiming::Clock::now());
+        check(!restored->cycleTiming_.cyclesDue() && restored->cycleCount_ == beforeRestart,
+            "Audio resume begins with a fresh CPU pacing interval, without initialization backlog");
+        restored->toggleRun();
+#endif
     }
     static void test_unedited_sources_close_without_prompt(const fs::path& root)
     {
@@ -92,6 +1355,152 @@ struct Emu51ImguiAppTestAccess {
             "Repository MTask2 sample closes without prompting when unedited");
         check(read(sample) == original, "Opening and closing MTask2 does not rewrite the sample");
     }
+    static void test_unedited_projects_close_without_prompt(const fs::path& root)
+    {
+        const auto sourcePath = root/"project-source.asm", projectPath = root/"saved-editor.emu51";
+        const std::string source = "\xef\xbb\xbf\tnop\r\n\tend\r\n";
+        write(sourcePath,source);
+        for (int kind = 0; kind < 3; ++kind) {
+            Emu51Project project;
+            project.editor.present = project.editor.open = true;
+            project.editor.path = kind == 2 ? "" : sourcePath.string();
+            project.editor.draft = kind != 0;
+            project.editor.text = kind ? "\tmov a,#42h\r\n\tend\r\n" : "";
+            std::string error;
+            check(emu51SaveProject(projectPath,project,error),"Write a project with referenced or embedded assembly");
+            auto app = create(); int prompts = 0;
+            app->unsavedChangesPrompt_ = [&] { ++prompts; return Choice::Cancel; };
+            check(app->openProjectFromPath(projectPath),"Open a saved project editor buffer");
+            const auto original = app->assemblyEditor_->GetText();
+            for (int frame = 0; frame < 2; ++frame) {
+                ImGui::NewFrame(); app->drawAssemblyEditor(); ImGui::Render();
+            }
+            check(!app->recoverySavePending_,"Loading saved project text does not schedule unsaved recovery");
+            check(app->confirmAssemblyEditorChanges() && prompts == 0,
+                "Unedited referenced, named embedded and untitled embedded project source needs no save prompt");
+            check(app->openProjectFromPath(projectPath) && prompts == 0,
+                "Reopening a saved project does not prompt for unchanged assembly");
+            app->assemblyEditor_->ReplaceSectionText(0,0,0,0,"; actual edit\n");
+            check(!app->confirmAssemblyEditorChanges() && prompts == 1 && app->assemblyEditorState_.dirty,
+                "An actual edit after project open still requires save/discard/cancel");
+            app->assemblyEditor_->Undo();
+            check(app->assemblyEditor_->GetText() == original && app->confirmAssemblyEditorChanges() && prompts == 1,
+                "Undo back to the saved project buffer removes the unnecessary save prompt");
+            app->assemblyEditor_->Redo();
+            check(app->saveProjectToPath(projectPath) && app->confirmAssemblyEditorChanges() && prompts == 1,
+                "Save Project protects the current embedded source without requiring a separate ASM save");
+            check(read(sourcePath) == source,"Saving a project does not overwrite its referenced ASM file");
+            auto reopened = create();
+            reopened->unsavedChangesPrompt_ = [&] { ++prompts; return Choice::Cancel; };
+            check(reopened->openProjectFromPath(projectPath) &&
+                reopened->assemblyEditor_->GetText() == app->assemblyEditor_->GetText() && reopened->prepareToQuit() && prompts == 1,
+                "Project-saved edits survive reopening and close without another save prompt");
+            app->requestQuit();
+            check(app->consumeQuitRequested() && prompts == 1,"Closing an unmodified saved project succeeds without prompting");
+            // Opening another source must retire the saved project's buffer baseline.
+            check(app->loadAssemblyFileIntoEditor(sourcePath),"Open a standalone source after the saved project");
+            app->assemblyEditor_->SetText(original); app->trackAssemblyEditorChanges();
+            app->assemblyEditor_->ReplaceSectionText(0,0,0,0,"; actual edit\n");
+            check(!app->confirmAssemblyEditorChanges() && prompts == 2,
+                "An old project snapshot cannot suppress prompts for a different source buffer");
+        }
+    }
+    static void test_project_saved_buffer_failures(const fs::path& root)
+    {
+        const auto source = root/"guard-source.asm", projectPath = root/"guard-project.emu51";
+        write(source,"nop\nend\n");
+        Emu51Project project; project.editor.present = project.editor.open = project.editor.draft = true;
+        project.editor.path = source.string(); project.editor.text = "mov a,#42h\nend\n";
+        std::string error;
+        check(emu51SaveProject(projectPath,project,error),"Create a saved embedded editor fixture");
+        const auto savedProject = read(projectPath);
+        auto app = create(); int prompts = 0;
+        app->unsavedChangesPrompt_ = [&] { ++prompts; return Choice::Cancel; };
+        check(app->openProjectFromPath(projectPath),"Open embedded editor for failed-save regression");
+        app->assemblyEditor_->ReplaceSectionText(0,0,0,0,"; new edit\n");
+        const auto edited = app->assemblyEditor_->GetText();
+        check(!app->saveProjectToPath(root/"absent-directory"/"failed.emu51") &&
+            !app->confirmAssemblyEditorChanges() && prompts == 1 && read(projectPath) == savedProject &&
+            app->assemblyEditor_->GetText() == edited,
+            "Failed Save Project does not mark edits saved, damage the previous project, or bypass the save prompt");
+        check(!app->openProjectFromPath(root/"absent-project.emu51") &&
+            !app->confirmAssemblyEditorChanges() && prompts == 2 && app->assemblyEditor_->GetText() == edited,
+            "Failed Open Project preserves unsaved assembly and its save guard");
+        check(app->saveProjectToPath(projectPath) && app->confirmAssemblyEditorChanges() && prompts == 2,
+            "A successful project save after a failed one protects the editor buffer");
+        check(app->saveAssemblyEditorFileToPath(source),"Save the embedded buffer to its ASM file");
+        app->assemblyEditor_->Undo();
+        check(!app->confirmAssemblyEditorChanges() && prompts == 3,
+            "Undo after an ASM save prompts even if an older version was embedded in a project");
+        app->assemblyEditor_->Redo();
+        check(!app->confirmAssemblyEditorChanges() && prompts == 4,
+            "Redo does not reuse the retired project baseline after an ASM save");
+    }
+#ifdef __APPLE__
+    static void test_native_project_picker(const fs::path& root)
+    {
+        // Replace only the dialog subprocess. Exercise the real PFD backend and
+        // compile its AppleScript, supplying selections without opening any UI.
+        const auto bin = root/"picker-bin", directory = root/"project folder with spaces";
+        fs::create_directories(bin); fs::create_directories(directory);
+        const auto projectPath = directory/"picker project.emu51", script = root/"picker.applescript";
+        Emu51Project project; project.editor.present = project.editor.open = project.editor.draft = true;
+        project.editor.text = "nop\nend\n"; project.peripherals = emu51PeripheralPreset(1);
+        std::string error;
+        check(emu51SaveProject(projectPath,project,error),"Write the native picker project fixture");
+        write(bin/"osascript",R"SH(#!/bin/sh
+printf '%s\n' "$2" > "$EMU51_TEST_PICKER_SCRIPT"
+/usr/bin/osacompile -o "$EMU51_TEST_PICKER_SCRIPT.scpt" -e "$2" >/dev/null 2>&1 || exit 1
+if [ "$EMU51_TEST_PICKER_CANCEL" != 1 ]; then
+    printf '%s\n' "$EMU51_TEST_PICKER_SELECTION"
+fi
+)SH");
+        fs::permissions(bin/"osascript",fs::perms::owner_all);
+        struct Environment {
+            std::vector<std::pair<std::string,std::optional<std::string>>> saved;
+            void set(const char* name,const std::string& value) {
+                const auto* old = std::getenv(name);
+                saved.emplace_back(name,old ? std::optional<std::string>(old) : std::nullopt);
+                check(setenv(name,value.c_str(),1) == 0,"Set isolated native picker test environment");
+            }
+            ~Environment() {
+                for (auto i = saved.rbegin(); i != saved.rend(); ++i) {
+                    if (i->second) setenv(i->first.c_str(),i->second->c_str(),1);
+                    else unsetenv(i->first.c_str());
+                }
+            }
+        } environment;
+        const auto* previousPath = std::getenv("PATH");
+        environment.set("PATH",bin.string()+":"+(previousPath ? previousPath : "/usr/bin:/bin"));
+        environment.set("EMU51_TEST_PICKER_SCRIPT",script.string());
+        environment.set("EMU51_TEST_PICKER_SELECTION",projectPath.string());
+        environment.set("EMU51_TEST_PICKER_CANCEL","0");
+        auto app = create(); int prompts = 0;
+        app->unsavedChangesPrompt_ = [&] { ++prompts; return Choice::Cancel; };
+        app->requestOpenProject();
+        check(app->projectPath_ == fs::weakly_canonical(projectPath).string() && app->peripherals_,
+            "First Open Project compiles its native dialog script and loads the selection");
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            app->cpu_.PC = 0x1234;
+            app->requestOpenProject();
+            check(app->cpu_.PC == 0 && app->projectPath_ == fs::weakly_canonical(projectPath).string() && prompts == 0,
+                "Repeated Open Project compiles valid AppleScript and reloads an unchanged embedded buffer without prompting");
+            const auto generated = read(script);
+            check(generated.find("default location") != std::string::npos &&
+                generated.find("default name") == std::string::npos && generated.find(directory.string()) != std::string::npos,
+                "Native Open Project starts in the project folder, including paths with spaces");
+        }
+        environment.set("EMU51_TEST_PICKER_CANCEL","1");
+        const auto currentPath = app->projectPath_; auto* session = app->peripherals_.get();
+        app->cpu_.PC = 0x5678; app->requestOpenProject();
+        check(app->projectPath_ == currentPath && app->peripherals_.get() == session && app->cpu_.PC == 0x5678 && prompts == 0,
+            "Canceling the native picker leaves the project, circuit and CPU untouched");
+        app->projectPath_ = (root/"missing folder"/"gone.emu51").string();
+        check(app->chooseProjectPath(false).empty() && read(script).find("default name") == std::string::npos &&
+            read(script).find("default location") == std::string::npos,
+            "A missing previous project folder falls back to a valid dialog instead of an invalid filename default");
+    }
+#endif
     static void test_unsaved_changes(const fs::path& root)
     {
         const fs::path original = root / "original.asm";
@@ -241,7 +1650,253 @@ struct Emu51ImguiAppTestAccess {
             app->assemblyEditor_->GetText() == "inc a\n", "Redo immediately after Save cannot bypass the quit guard");
     }
 
-    static void test_disassembly_follow_pc_persistence()
+    static void test_segment_examples(const fs::path& root)
+    {
+        const auto source=fs::path(EMU51_REPO_ROOT)/"progs/asm/demo";
+        const auto directory=root/"segment-examples";fs::create_directories(directory);
+        for (const auto* name : {"seven_segment_clock","segment_decoders","max7219_counter","segment_gallery","ht16k33_alpha","tm1637_counter"})
+            for (const auto* ext : {".asm",".emu51"}) fs::copy_file(source/(std::string(name)+ext),directory/(std::string(name)+ext));
+        auto app=create();
+        const auto open=[&](const char* name) {
+            const bool opened=app->openProjectFromPath(directory/(std::string(name)+".emu51"));
+            if (!opened) std::fprintf(stderr,"Segment demo %s: %s\n",name,app->statusMessage_.c_str());
+            check(opened,"Segment example loads through normal project validation and firmware assembly");return opened;
+        };
+        const auto run=[&](uint64_t ticks) {
+            const auto target=app->peripherals_->ticks()+ticks;
+            while (app->peripherals_->ticks()<target) app->executeInstruction();
+            check(app->peripherals_->status()==E51P_OK,"Display firmware runs without contention or protocol faults");
+        };
+        const auto view=[&](const char* id) {e51p_segment_snapshot state{};check(app->peripherals_->displayState(id,state),"Display exposes a passive live snapshot");return state;};
+        if (!open("seven_segment_clock")) return;run(13200000);
+        auto clock=view("clock");
+        check(app->cpu_.IRAM[0x33]==1&&clock.digits==4&&clock.colon_brightness[0]>.15f,
+            "Timer-autoreload firmware counts real simulated seconds and blinks its colon");
+        for (unsigned digit=0;digit<4;++digit) check(clock.brightness[digit][1]>.2f&&clock.brightness[digit][1]<.3f,
+            "Each clock digit accumulates its quarter-duty refresh independent of GUI frames");
+        if (!open("segment_decoders")) return;run(240000);
+        check(view("cd4511").programmed[0]==0x3f&&view("ls47").programmed[0]==0x3f&&
+            view("cathode").brightness[0][0]>.5f&&view("anode").brightness[0][0]>.5f,
+            "BCD firmware drives both common-cathode and common-anode displays through real decoder pins");
+        if (!open("max7219_counter")) return;run(300000);
+        auto first=view("max7219"),second=view("max7221"),wired=view("wired_digits");
+        check(first.programmed[1]==0x5b&&second.programmed[1]==0x07&&first.brightness[1][0]>second.brightness[1][0],
+            "Firmware addresses two chained MAX chips, uses Code-B, and programs separate brightness levels");
+        check(wired.brightness[1][0]>.05f,"MAX physical segment/common outputs also illuminate a separately wired display");
+        if (!open("ht16k33_alpha")) return;run(300000);
+        auto alpha=view("ht16k33");
+        check(alpha.programmed[0]==0xf9&&alpha.programmed[1]==0x536&&view("alpha").brightness[1][8]>.04f,
+            "I2C firmware fills the HT16K33 character RAM and illuminates 14-segment diagonals");
+        check(app->peripherals_->setDisplayKeys("ht16k33",uint64_t(1)<<38),"Live HT key matrix accepts key 39");run(500000);
+        check(app->cpu_.IRAM[0x26]>0&&app->cpu_.IRAM[0x25]==0x10,"8051 polls HT INT and reads all six key RAM bytes");
+        if (!open("tm1637_counter")) return;run(300000);
+        auto tm=view("tm1637");
+        check(tm.programmed[0]==6&&tm.programmed[1]==0x5b&&tm.colon_brightness[0]>0,
+            "TM firmware uses address-less LSB-first commands and the colon's DP mapping");
+        check(app->peripherals_->setDisplayKeys("tm1637",uint64_t(1)<<10),"TM key input accepts K2/SG3");run(1200000);
+        check(app->cpu_.IRAM[0x21]==0xed,"TM key code reaches firmware through DIO");
+        if (!open("segment_gallery")) return;run(60000);
+        check(view("seven").segments==8&&view("fourteen").segments==15&&view("sixteen").segments==17&&view("bar").segments==10,
+            "Gallery loads every raw display geometry, decimal point and bar width");
+        Emu51PeripheralEditor editor;editor.rebuild(app->peripherals_->config(),Emu51Model::i8051);
+        const auto* wide=editor.pin("sixteen.segments");
+        check(wide&&wide->bits.size()==17&&wide->bits.back().y>wide->bits.front().y,"Graph wraps all seventeen segment connectors into visible rows");
+        for (const auto& block : editor.blocks_) for (const auto& pin : block.pins) for (const auto& bit : pin.bits)
+            check(bit.x>block.position.x&&bit.x<block.position.x+block.size.x&&bit.y>block.position.y&&bit.y<block.position.y+block.size.y,
+                "Every wide-port bit remains inside its block");
+        const auto config=app->peripherals_->config();
+        check(app->saveProjectToPath(directory/"roundtrip.emu51"),"Segment configuration saves with the project");
+        auto restored=create();check(restored->openProjectFromPath(directory/"roundtrip.emu51")&&restored->peripherals_->config()==config,
+            "All new digit, geometry, polarity, color and persistence settings round-trip through Kason");
+        auto& io=ImGui::GetIO();io.DisplaySize={1280,900};io.DeltaTime=1.0f/60;
+        for (unsigned i=0;i<3;++i) {ImGui::NewFrame();restored->drawPeripherals();ImGui::Render();}
+        auto* window=ImGui::FindWindowByName("Peripherals");auto* tabs=GImGui->TabBars.GetByKey(window->GetID("peripheral-tabs"));
+        tabs->NextSelectedTabId=ImHashStr("Live",0,tabs->ID);
+        for (unsigned i=0;i<10000;++i) restored->executeInstruction();
+        e51p_segment_snapshot before{},after{};
+        check(restored->peripherals_->displayState("sixteen",before),"Paused renderer fixture has a display snapshot");
+        for (unsigned i=0;i<3;++i) {ImGui::NewFrame();restored->drawPeripherals();ImGui::Render();}
+        check(restored->peripherals_->displayState("sixteen",after),"Rendered display snapshot remains readable");
+        check(!std::memcmp(&before,&after,sizeof(before)),"Rendering display snapshots while paused does not decay or advance the simulation");
+    }
+
+    static void test_component_examples(const fs::path& root)
+    {
+        const auto source=fs::path(EMU51_REPO_ROOT)/"progs/asm/demo";
+        const auto directory=root/"component-examples"; fs::create_directories(directory);
+        for (const auto* name : {"front_panel","shift_registers","eeprom_counter","ay_chords"})
+            for (const auto* extension : {".asm",".emu51"})
+                fs::copy_file(source/(std::string(name)+extension),directory/(std::string(name)+extension));
+        auto app=create();
+        const auto run=[&](uint64_t ticks) {
+            const auto target=app->peripherals_->ticks()+ticks;
+            while (app->peripherals_->ticks()<target) app->executeInstruction();
+            check(app->peripherals_->status()==E51P_OK,"Example executes without floating bus errors, contention or oscillation");
+        };
+        const bool frontOpened=app->openProjectFromPath(directory/"front_panel.emu51");
+        if (!frontOpened) std::fprintf(stderr,"Front panel: %s\n",app->statusMessage_.c_str());
+        check(frontOpened,"Front-panel example opens through the normal project loader");
+        if (!app->peripherals_) return;
+        run(600000);
+        e51p_lcd_snapshot lcd{};
+        check(app->peripherals_->lcdState("lcd",lcd) && lcd.display_on &&
+            std::string(reinterpret_cast<char*>(lcd.cells),15)=="emu51 I/O panel",
+            "Real 8051 firmware initializes and prints to the LCD");
+        check(app->peripherals_->setKeys("keypad",1u<<9),"Live keypad accepts a pressed key");
+        run(200000);
+        check(app->cpu_.IRAM[0x20]=='8' && app->peripherals_->lcdState("lcd",lcd) && lcd.cells[16+5]=='8',
+            "Firmware scans matrix rows and shows the selected key on the LCD");
+        check(app->peripherals_->setPressed("button",true),"Live pushbutton closes its contact"); run(200000);
+        bool defined=false;
+        check(app->peripherals_->ledState("led",defined) && defined &&
+            app->peripherals_->lcdState("lcd",lcd) && lcd.cells[16+13]=='1',
+            "Bouncing pushbutton reaches the CPU and updates both the LED and LCD");
+        check(app->openProjectFromPath(directory/"shift_registers.emu51"),"Shift-register example opens"); run(100000);
+        e51p_digital_state state{};
+        check(app->cpu_.IRAM[0x20]==0x96 && app->peripherals_->sampleDigital("shift_out.Q",state) && state.value==0x96 &&
+            app->peripherals_->sampleDigital("chained_out.Q",state) && state.value==0xa5,
+            "8051 shifts parallel switches through a 165 and two chained 595s");
+        check(app->peripherals_->setPressed("switch_0",false),"Live switch changes a shift-register input"); run(100000);
+        check(app->cpu_.IRAM[0x20]==0x97,"Firmware sees live switch changes without restarting");
+        check(app->openProjectFromPath(directory/"eeprom_counter.emu51"),"EEPROM counter example opens"); run(1200000);
+        check(app->cpu_.IRAM[0x20]==255 && app->cpu_.IRAM[0x21]==0 && app->cpu_.IRAM[0x22]==0 && !app->cpu_.IRAM[0x23],
+            "Bit-banged firmware reads, programs, ACK-polls and verifies EEPROM");
+        check(app->flushPeripheralStorage() && read(directory/"eeprom_counter.bin").size()==256 &&
+            read(directory/"eeprom_counter.bin")[0x2a]==0,"Committed EEPROM data saves to its project-relative image");
+        app->resetCpuState(true); run(1200000);
+        check(app->cpu_.IRAM[0x20]==0 && app->cpu_.IRAM[0x22]==1,"CPU reset retains nonvolatile EEPROM contents");
+        check(app->openProjectFromPath(directory/"eeprom_counter.emu51"),"EEPROM project can be reopened before a separate flush"); run(1200000);
+        check(app->cpu_.IRAM[0x20]==1 && app->cpu_.IRAM[0x22]==2,"Session replacement carries the latest committed EEPROM bytes");
+        auto config=app->peripherals_->config();
+        std::string error;
+        auto project=emu51LoadProject(directory/"eeprom_counter.emu51",error);
+        check(bool(project),"EEPROM fixture decodes");
+        if (project) {
+            project->peripherals.devices[0].storagePath=(directory/"canceled.bin").string();
+            check(emu51SaveProject(directory/"canceled.emu51",*project,error),"Alternate EEPROM fixture saves");
+            edit(*app,{},"unsaved\n"); app->unsavedChangesPrompt_=[] { return Choice::Cancel; };
+            check(!app->openProjectFromPath(directory/"canceled.emu51") && !fs::exists(directory/"canceled.bin"),
+                "A canceled project open never creates the candidate EEPROM image");
+            app->unsavedChangesPrompt_=[] { return Choice::Discard; };
+        }
+        check(app->openProjectFromPath(directory/"ay_chords.emu51"),"AY chord example opens without audio hardware"); run(3000000);
+        double voltage=0;
+        check(app->cpu_.IRAM[0x32]>=2 && app->peripherals_->sampleAnalog("ay.out",voltage) && voltage>=0.1 && voltage<=4.9 &&
+            !app->peripherals_->audioOpen(),"Timer ISR sequences three AY voices through XDATA while host audio remains explicitly controlled");
+#ifdef EMU51_GUI_HOST_AUDIO
+        check(startNullAudio(*app),"AY demo opens the host's NULL playback backend");
+        const auto until=Emu51CycleTiming::Clock::now()+std::chrono::milliseconds(250);
+        while (Emu51CycleTiming::Clock::now()<until) { app->tick(); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+        e51p_audio_stats audio{};
+        std::array<e51p_audio_scope_frame,512> waveform{}; uint32_t count=0, rate=0;
+        check(app->peripherals_->audioStats(audio) && audio.playback_used>0 &&
+            app->peripherals_->audioScope(waveform.data(),512,count,rate) && rate==48000 && count>0 &&
+            std::any_of(waveform.begin(),waveform.begin()+count,[](const auto& frame) { return std::abs(frame.output)>0.05f; }),
+            "AY voltage reaches non-silent 48 kHz host playback and the output scope");
+        app->stopForDebugger("AY audio verified");
+#endif
+        config=app->peripherals_->config();
+        config.devices[0].clockHz=1789772; config.devices[0].activeLow=false;
+        check(app->applyPeripheralConfig(config,12),"Alternate AY clock is accepted");
+        check(app->saveProjectToPath(directory/"roundtrip.emu51"),"Expanded peripheral settings save in project JSON");
+        auto restored=create(); check(restored->openProjectFromPath(directory/"roundtrip.emu51") &&
+            restored->peripherals_->config()==config,"New device kinds, clocks, polarity and wiring round-trip through Kason");
+        config.devices.push_back({"overlap",Emu51PeripheralKind::I8255,0x9000});
+        check(!app->applyPeripheralConfig(config,12),"AY and 8255 XDATA windows cannot overlap");
+        // Render Live with a complete LCD/keypad/button circuit as well as Graph.
+        check(restored->openProjectFromPath(directory/"front_panel.emu51"),"Front panel reloads for GUI rendering");
+        auto& io=ImGui::GetIO(); io.DisplaySize={1280,840}; io.DeltaTime=1.0f/60;
+        for (unsigned i=0;i<3;++i) { ImGui::NewFrame(); restored->drawPeripherals(); ImGui::Render(); }
+        auto* window=ImGui::FindWindowByName("Peripherals");
+        auto* tabs=GImGui->TabBars.GetByKey(window->GetID("peripheral-tabs"));
+        tabs->NextSelectedTabId=ImHashStr("Live",0,tabs->ID);
+        for (unsigned i=0;i<3;++i) { ImGui::NewFrame(); restored->drawPeripherals(); ImGui::Render(); }
+        check(tabs->SelectedTabId==ImHashStr("Live",0,tabs->ID),"New front-panel controls render in the title-bar Live tab");
+    }
+
+    static void test_ui_state(const fs::path& root)
+    {
+        const auto directory = root/"state-migration";
+        fs::create_directories(directory);
+        const auto layout = directory/"imgui_layout_state.txt";
+        const auto programs = directory/"recent_programs.txt";
+        const auto projects = directory/"recent_projects.txt";
+        const auto path = directory/"state.json";
+        const auto program = (fs::canonical(root)/"program with spaces.hex").string();
+        const auto project = (fs::canonical(root)/"project with spaces.emu51").string();
+        write(layout,"prefs 0.3 0.25 0.2 0.4\nregisters_visible 0\nperipheral_inspector 0\n"
+            "pane registers 0 left 1 240 400\npane disassembly 7 right 0.5 300 500 0\n"
+            "pane disassembly 8 none 1 250 350\n");
+        write(programs,program+"\r\n"+program+"\n");
+        write(projects,project+"\r\n"+project+"\n");
+        const auto oldLayout = read(layout), oldPrograms = read(programs), oldProjects = read(projects);
+        auto app = create(); app->persistState_ = true;
+        app->loadState(path);
+        check(fs::exists(path) && app->disassemblyViews_.size() == 2 && app->disassemblyViews_[0].id == 7 &&
+            !app->disassemblyViews_[0].followPc && app->disassemblyViews_[1].followPc &&
+            !app->registersVisible() && !app->peripheralEditor_.inspectorVisible() &&
+            app->recentProgramPaths_ == std::vector<std::string>{program} &&
+            app->recentProjectPaths_ == std::vector<std::string>{project},
+            "First launch imports all three legacy files into state.json, preserving flags, order and CRLF paths");
+        const Emu51ImguiApp::PaneKey pane{Emu51ImguiApp::PaneKey::Kind::Disassembly,7};
+        check(app->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Right &&
+            app->findFloatingPaneState(pane)->size.y == 500 && app->snapLayoutPreferences_.leftWidthFraction == 0.3f,
+            "Legacy migration preserves docking preferences, pane sizes and IDs");
+        app->disassemblyViews_[0].followPc = true;
+        app->registersOpen_ = true;
+        const auto escaped = (fs::canonical(root)/fs::path("quote\"-backslash\\-żółw.hex")).string();
+        app->rememberRecentProgramPath(escaped);
+        Emu51UiState stored;
+        check(emu51LoadUiState(path,stored) == Emu51UiStateLoad::Loaded && stored.registersVisible &&
+            stored.recentPrograms.front() == escaped && stored.recentProjects == std::vector<std::string>{project},
+            "Saving program history writes a complete snapshot and escapes Unicode, quotes and backslashes");
+        app->clearRecentProjectFiles();
+        check(emu51LoadUiState(path,stored) == Emu51UiStateLoad::Loaded && stored.recentProjects.empty() &&
+            stored.recentPrograms.front() == escaped &&
+            std::any_of(stored.panes.begin(),stored.panes.end(),[](const auto& saved) {
+                return saved.kind == "disassembly" && saved.id == 7 && saved.followPc;
+            }),
+            "Clearing project history preserves program history and current layout in the same file");
+        auto restored = create(); restored->loadState(path);
+        check(restored->registersVisible() && restored->recentProjectPaths_.empty() &&
+            restored->recentProgramPaths_ == app->recentProgramPaths_ && restored->disassemblyViews_[0].followPc,
+            "Existing state.json takes precedence over stale legacy files across executions");
+        check(read(layout) == oldLayout && read(programs) == oldPrograms && read(projects) == oldProjects,
+            "Migration and subsequent saves leave legacy files unchanged");
+        for (auto& view : app->disassemblyViews_) view.open = false;
+        check(app->saveState(),"A layout with every disassembly window closed is saved");
+        restored->loadState(path);
+        check(restored->disassemblyViews_.empty(),"Closed disassembly windows remain closed after restart");
+        app->snapLayoutPreferences_.leftWidthFraction = 0.12f;
+        app->snapLayoutPreferences_.rightWidthFraction = 0.70f;
+        check(app->saveState(),"Layout boundary fractions survive float-to-JSON conversion");
+        const auto valid = read(path);
+        for (const std::string& invalid : {std::string("{"),
+            std::string("{\"version\":2,\"layout\":{\"panes\":[]}}"),
+            std::string("{\"version\":1,\"version\":1,\"layout\":{\"panes\":[]}}"),
+            std::string("{\"version\":1,\"layout\":{\"left_width\":-1,\"panes\":[]}}"),
+            std::string("{\"version\":1,\"layout\":{\"panes\":[{\"kind\":\"disassembly\",\"id\":2147483647}]}}")}) {
+            stored.recentPrograms = {"sentinel"};
+            check(!emu51DecodeUiState(invalid,stored) && stored.recentPrograms == std::vector<std::string>{"sentinel"},
+                "Malformed, duplicate, unsupported or invalid state is rejected transactionally");
+        }
+        write(path,"{broken");
+        auto blocked = create(); blocked->persistState_ = true; blocked->loadState(path);
+        blocked->rememberRecentProgramPath(root/"another.hex");
+        check(blocked->statePersistenceBlocked_ && !blocked->saveState() && read(path) == "{broken" &&
+            blocked->recentProjectPaths_.empty(),
+            "Invalid existing JSON is preserved and never replaced by defaults or stale legacy history");
+        blocked.reset();
+        write(path,valid);
+        check(emu51LoadUiState(path,stored) == Emu51UiStateLoad::Loaded,"Original valid state remains readable");
+        const auto snapshot = stateJson(*app);
+        app->statePath_ = directory/"missing-parent"/"state.json";
+        check(!app->saveState() && read(path) == valid && stateJson(*app) == snapshot,
+            "Failed atomic saves retain existing state and the in-memory snapshot");
+        app->persistState_ = false;
+    }
+
+    static void test_disassembly_follow_pc_persistence(const fs::path& root)
     {
         auto app = create();
         app->disassemblyViews_.front().open = false;
@@ -254,12 +1909,10 @@ struct Emu51ImguiAppTestAccess {
         auto& floating = app->ensureFloatingPaneState(pane);
         floating.size = ImVec2(300, 400);
         floating.hasSize = true;
-        std::ostringstream saved;
-        app->saveLayoutState(saved);
+        const auto saved = stateJson(*app);
 
         auto restored = create();
-        std::istringstream input(saved.str());
-        restored->loadLayoutState(input);
+        restoreState(*restored,saved);
         check(restored->disassemblyViews_.size() == 2 &&
             restored->disassemblyViews_[0].id == followingId && restored->disassemblyViews_[0].followPc &&
             restored->disassemblyViews_[1].id == fixedId && !restored->disassemblyViews_[1].followPc,
@@ -273,21 +1926,91 @@ struct Emu51ImguiAppTestAccess {
             "New disassembly windows do not reuse restored IDs");
         restored->disassemblyViews_[0].followPc = false;
         restored->disassemblyViews_[1].followPc = true;
-        std::ostringstream changed;
-        restored->saveLayoutState(changed);
+        const auto changed = stateJson(*restored);
         auto reopened = create();
-        std::istringstream changedInput(changed.str());
-        reopened->loadLayoutState(changedInput);
+        restoreState(*reopened,changed);
         check(!reopened->disassemblyViews_[0].followPc && reopened->disassemblyViews_[1].followPc,
             "Both enabling and disabling Follow PC survive another save and reload");
 
         for (const std::string flag : {"", " invalid", " 2"}) {
             auto legacy = create();
-            std::istringstream legacyInput("pane disassembly 1 none 1 230 400" + flag + "\n");
-            legacy->loadLayoutState(legacyInput);
+            const auto directory = root/"legacy-follow"; fs::create_directories(directory);
+            write(directory/"imgui_layout_state.txt","pane disassembly 1 none 1 230 400" + flag + "\n");
+            Emu51UiState imported;
+            check(emu51ImportLegacyUiState(directory,imported),"Legacy layout imports");
+            legacy->applyUiState(imported);
             check(legacy->disassemblyViews_.size() == 1 && legacy->disassemblyViews_[0].followPc,
                 "Older layouts and invalid flags retain the default Follow PC behavior");
         }
+    }
+
+    static void test_disassembly_title_control()
+    {
+        auto app = create();
+        app->disassemblyViews_.clear(); app->addDisassemblyView(0,true); app->addDisassemblyView(0,false);
+        auto& first = app->disassemblyViews_[0]; auto& second = app->disassemblyViews_[1];
+        const Emu51ImguiApp::PaneKey pane{Emu51ImguiApp::PaneKey::Kind::Disassembly,first.id};
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,840}; io.DeltaTime = 1.0f/60;
+        const auto frame = [&] {
+            ImGui::NewFrame(); app->updateDragSnapState(); app->updateSnappedPaneLayout();
+            for (std::size_t i = 0; i < app->disassemblyViews_.size(); ++i) {
+                auto& view = app->disassemblyViews_[i]; if (!view.open) continue;
+                ImGui::SetNextWindowPos({20+static_cast<float>(i)*380,20},ImGuiCond_Once);
+                app->drawDisassemblyView(view);
+            }
+            ImGui::Render();
+        };
+        frame(); frame();
+        const auto name = [](int id) { return "###disassembly_"+std::to_string(id); };
+        auto* firstWindow = ImGui::FindWindowByName(name(first.id).c_str());
+        auto* secondWindow = ImGui::FindWindowByName(name(second.id).c_str());
+        check(firstWindow && secondWindow,"Each disassembly window retains a stable identity");
+        if (!firstWindow || !secondWindow) return;
+        check(firstWindow->MenuBarHeight == 0 && !(firstWindow->Flags & ImGuiWindowFlags_MenuBar),
+            "Disassembly no longer spends a content row on the Follow PC menu bar");
+        ImGuiWindow* content = nullptr;
+        for (auto* child : GImGui->Windows)
+            if (child->ParentWindow == firstWindow && std::strstr(child->Name,"disassembly_view")) content = child;
+        check(content && std::abs(content->Pos.y-firstWindow->DC.CursorStartPos.y) < 1,
+            "Disassembly rows start immediately below the title bar");
+        const auto click = [&](ImVec2 at) {
+            io.AddMousePosEvent(at.x,at.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+            io.AddMouseButtonEvent(0,false); frame(); frame();
+        };
+        const auto checkbox = [](ImGuiWindow* window, bool label) {
+            const auto& style = ImGui::GetStyle();
+            const auto title = window->TitleBarRect();
+            const float right = title.Max.x-window->WindowBorderSize-style.FramePadding.x-
+                ImGui::GetFontSize()-2*style.ItemInnerSpacing.x;
+            const float width = ImGui::GetFrameHeight()+(label ? style.ItemInnerSpacing.x+ImGui::CalcTextSize("Follow PC").x : 0);
+            return ImVec2(right-width+ImGui::GetFrameHeight()/2,title.GetCenter().y);
+        };
+        app->layoutStateDirty_ = false;
+        const auto originalPosition = firstWindow->Pos;
+        click(checkbox(firstWindow,true));
+        check(!first.followPc && !second.followPc && app->layoutStateDirty_ && !firstWindow->Collapsed &&
+            firstWindow->Pos.x == originalPosition.x && firstWindow->Pos.y == originalPosition.y,
+            "Title checkbox toggles only its own view without moving or collapsing the window");
+        app->running_ = true; app->cpu_.PC = 0x1234;
+        click(checkbox(secondWindow,true));
+        check(!first.followPc && second.followPc && app->running_ && app->cpu_.PC == 0x1234,
+            "Follow PC can be enabled from the title without changing CPU execution");
+        app->running_ = false;
+        ImGui::SetWindowSize(firstWindow,{170,350}); frame();
+        click(checkbox(firstWindow,false));
+        check(first.followPc && first.open,"Compact title checkbox stays usable in narrow windows without hitting Close");
+        ImGui::SetWindowCollapsed(firstWindow,true); frame();
+        click(checkbox(firstWindow,false));
+        check(!first.followPc && firstWindow->Collapsed,"Follow PC remains usable in a collapsed title bar");
+        ImGui::SetWindowCollapsed(firstWindow,false); frame();
+        const auto title = ImVec2(firstWindow->Pos.x+40,firstWindow->TitleBarRect().GetCenter().y);
+        io.AddMousePosEvent(title.x,title.y); frame(); io.AddMouseButtonEvent(0,true); frame();
+        io.AddMousePosEvent(80,420); frame(); io.AddMouseButtonEvent(0,false); frame(); frame();
+        check(app->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Left,"Dragging the disassembly caption still docks the window");
+        click({firstWindow->TitleBarRect().Max.x-ImGui::GetStyle().FramePadding.x-ImGui::GetFontSize()/2,
+            firstWindow->TitleBarRect().GetCenter().y});
+        check(!first.open && second.open,"Close remains independent from each view's title checkbox");
+        io.AddMousePosEvent(-100,-100);
     }
 
     static void test_in_memory_compilation()
@@ -620,6 +2343,7 @@ struct Emu51ImguiAppTestAccess {
         check(restored->loadedProgramPath_ == fs::weakly_canonical(moved / "main.asm").string(),
             "Projects preserve the original reload target separately from overlays");
 
+        restored->assemblyEditor_->ReplaceSectionText(0,0,0,0,"; unsaved after project open\n");
         restored->unsavedChangesPrompt_ = [] { return Choice::Cancel; };
         restored->cpu_.PC = 0x2345; restored->running_ = true; restored->cycleCount_ = 99;
         const auto memory = restored->romMemory_;
@@ -725,16 +2449,16 @@ struct Emu51ImguiAppTestAccess {
             "Opening a recent project selects it and moves its existing entry to the front");
         check(app->saveProjectToPath(selected) && app->recentProjectFilePath(0) == selected && app->recentProjectFileCount() == 10,
             "Saving the same project deduplicates its recent entry");
-        std::ostringstream stored;
-        app->saveRecentProjectPaths(stored);
+        const auto stored = stateJson(*app);
         auto other = create();
-        std::istringstream input(stored.str());
-        other->loadRecentProjectPaths(input);
+        restoreState(*other,stored);
         check(other->recentProjectPaths_ == app->recentProjectPaths_, "Recent projects survive persistence round-trips");
-        std::istringstream duplicates("\n" + selected + "\r\n" + selected + "\n" + stored.str());
-        other->loadRecentProjectPaths(duplicates);
+        auto duplicateState = app->captureUiState();
+        duplicateState.recentProjects = {"",selected,selected};
+        duplicateState.recentProjects.insert(duplicateState.recentProjects.end(),app->recentProjectPaths_.begin(),app->recentProjectPaths_.end());
+        other->applyUiState(duplicateState);
         check(other->recentProjectPaths_ == app->recentProjectPaths_,
-            "Loading recent projects ignores blank and duplicate entries and accepts CRLF");
+            "Loading recent projects ignores blank and duplicate entries");
         const auto before = app->recentProjectPaths_;
         app->cpu_.PC = 0x1234;
         app->openRecentProjectFile(-1); app->openRecentProjectFile(10);
@@ -756,9 +2480,9 @@ struct Emu51ImguiAppTestAccess {
         app->rememberRecentProgramPath(root / "program.hex");
         const auto programs = app->recentProgramPaths_;
         app->clearRecentProjectFiles();
-        std::ostringstream cleared;
-        app->saveRecentProjectPaths(cleared);
-        check(app->recentProjectFileCount() == 0 && cleared.str().empty() && app->recentProgramPaths_ == programs &&
+        Emu51UiState cleared;
+        check(emu51DecodeUiState(stateJson(*app),cleared),"Cleared history decodes");
+        check(app->recentProjectFileCount() == 0 && cleared.recentProjects.empty() && app->recentProgramPaths_ == programs &&
             app->projectPath_ == selected && app->assemblyEditorState_.dirty,
             "Clear recent projects persists an empty list without touching program recents, the current project or editor");
     }
@@ -1238,18 +2962,46 @@ struct Emu51ImguiAppTestAccess {
     }
 };
 
-int main()
+int main(int argc, char** argv)
 {
+    const bool workerOnly = argc == 2 && std::string(argv[1]) == "--worker-only";
+#ifdef __APPLE__
+    const bool pickerOnly = argc == 2 && std::string(argv[1]) == "--project-picker-only";
+#endif
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
     const fs::path root = fs::temp_directory_path() /
         ("emu51-ui-tests-" + std::to_string(Emu51CycleTiming::Clock::now().time_since_epoch().count()));
     fs::create_directories(root);
+    if (workerOnly) {
+        Emu51ImguiAppTestAccess::test_background_execution(root);
+#ifdef __APPLE__
+    } else if (pickerOnly) {
+        Emu51ImguiAppTestAccess::test_native_project_picker(root);
+#endif
+    } else {
+    Emu51ImguiAppTestAccess::test_peripheral_editor(root);
+    Emu51ImguiAppTestAccess::test_peripheral_window();
+    Emu51ImguiAppTestAccess::test_peripheral_title_apply(root);
+    Emu51ImguiAppTestAccess::test_live_device_layout(root);
+    Emu51ImguiAppTestAccess::test_live_content_scaling_and_key_modes(root);
+    Emu51ImguiAppTestAccess::test_segment_colon_alignment();
+    Emu51ImguiAppTestAccess::test_peripheral_workflows(root);
+    Emu51ImguiAppTestAccess::test_microphone_covox(root);
+    Emu51ImguiAppTestAccess::test_covox_duet(root);
+    Emu51ImguiAppTestAccess::test_audio_host_pause_recovery();
+    Emu51ImguiAppTestAccess::test_audio_buffer_setting(root);
     Emu51ImguiAppTestAccess::test_unedited_sources_close_without_prompt(root);
+    Emu51ImguiAppTestAccess::test_unedited_projects_close_without_prompt(root);
+    Emu51ImguiAppTestAccess::test_project_saved_buffer_failures(root);
     Emu51ImguiAppTestAccess::test_unsaved_changes(root);
     Emu51ImguiAppTestAccess::test_transactional_loading(root);
     Emu51ImguiAppTestAccess::test_undo_redo_after_save(root);
-    Emu51ImguiAppTestAccess::test_disassembly_follow_pc_persistence();
+    Emu51ImguiAppTestAccess::test_component_examples(root);
+    Emu51ImguiAppTestAccess::test_segment_examples(root);
+    Emu51ImguiAppTestAccess::test_ui_state(root);
+    Emu51ImguiAppTestAccess::test_disassembly_follow_pc_persistence(root);
+    Emu51ImguiAppTestAccess::test_disassembly_title_control();
     Emu51ImguiAppTestAccess::test_in_memory_compilation();
     Emu51ImguiAppTestAccess::test_debugger(root);
     Emu51ImguiAppTestAccess::test_symbolic_debugging(root);
@@ -1264,6 +3016,7 @@ int main()
     Emu51ImguiAppTestAccess::test_serial_file_pacing(root);
     Emu51ImguiAppTestAccess::test_execution_servicing();
     Emu51ImguiAppTestAccess::test_recovery_integration(root);
+    }
     fs::remove_all(root);
     ImGui::DestroyContext();
     if (failures)

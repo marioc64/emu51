@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_imgui_app.h"
 #include "emu51_imgui_app_internal.h"
-#include "emu51_imgui_paths.h"
+#include "emu51_editor_files.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 
@@ -212,6 +212,7 @@ void Emu51ImguiApp::updateSnappedPaneLayout()
 
 	std::array<std::vector<PaneKey>, 5> panesByTarget;
 	appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::Registers, 0});
+	appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::Peripherals, 0});
 	if (assemblyEditorState_.open)
 		appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::AssemblyEditor, 0});
 	for (const DisassemblyView& view : disassemblyViews_)
@@ -500,7 +501,9 @@ bool Emu51ImguiApp::paneExists(const PaneKey& pane) const
 {
 	switch (pane.kind) {
 	case PaneKey::Kind::Registers:
-		return true;
+		return registersOpen_;
+	case PaneKey::Kind::Peripherals:
+		return peripheralsOpen_;
 	case PaneKey::Kind::AssemblyEditor:
 		return assemblyEditorState_.open;
 	case PaneKey::Kind::Disassembly:
@@ -592,177 +595,109 @@ void Emu51ImguiApp::markLayoutStateDirty()
 	layoutStateDirty_ = true;
 }
 
-void Emu51ImguiApp::loadLayoutState()
+void Emu51ImguiApp::loadState(const fs::path& path)
 {
-	const std::string layoutPath = emu51GetImguiLayoutPath();
-	if (layoutPath.empty())
-		return;
-
-	std::ifstream in(layoutPath);
-	if (!in.is_open())
-		return;
-	loadLayoutState(in);
+    statePath_ = path;
+    statePersistenceBlocked_ = false;
+    if (path.empty()) return;
+    Emu51UiState state;
+    const auto result = emu51LoadUiState(path,state);
+    if (result == Emu51UiStateLoad::Loaded) {
+        applyUiState(state);
+    } else if (result == Emu51UiStateLoad::Missing) {
+        if (emu51ImportLegacyUiState(path.parent_path(),state)) {
+            applyUiState(state);
+            saveState();
+        }
+    } else {
+        // Preserve unreadable/corrupt or newer state instead of overwriting it.
+        statePersistenceBlocked_ = true;
+        statusMessage_ = "Cannot read state.json; layout and history changes will not be saved this session";
+    }
 }
 
-void Emu51ImguiApp::loadLayoutState(std::istream& in)
+bool Emu51ImguiApp::saveState() const
 {
-	paneSnapAssignments_.clear();
-	floatingPaneStates_.clear();
-	std::vector<DisassemblyView> savedDisassemblyViews;
-
-	std::string line;
-	while (std::getline(in, line)) {
-		std::istringstream iss(line);
-		std::string recordType;
-		if (!(iss >> recordType))
-			continue;
-		if (recordType == "prefs") {
-			iss >> snapLayoutPreferences_.leftWidthFraction
-				>> snapLayoutPreferences_.rightWidthFraction
-				>> snapLayoutPreferences_.topHeightFraction
-				>> snapLayoutPreferences_.bottomHeightFraction;
-			snapLayoutPreferences_.leftWidthFraction = clampSlotFraction(snapLayoutPreferences_.leftWidthFraction);
-			snapLayoutPreferences_.rightWidthFraction = clampSlotFraction(snapLayoutPreferences_.rightWidthFraction);
-			snapLayoutPreferences_.topHeightFraction = clampSlotFraction(snapLayoutPreferences_.topHeightFraction);
-			snapLayoutPreferences_.bottomHeightFraction = clampSlotFraction(snapLayoutPreferences_.bottomHeightFraction);
-			continue;
-		}
-		if (recordType != "pane")
-			continue;
-
-		std::string kindText;
-		int id = 0;
-		std::string targetText;
-		float share = 1.0f;
-		float floatW = 0.0f;
-		float floatH = 0.0f;
-		if (!(iss >> kindText >> id >> targetText >> share >> floatW >> floatH))
-			continue;
-
-		PaneKey::Kind kind;
-		Emu51ImguiSnapTarget target;
-		if (!parsePaneKind(kindText, &kind) || !parseSnapTarget(targetText, &target))
-			continue;
-		if (kind == PaneKey::Kind::Disassembly) {
-			if (id <= 0 || id == std::numeric_limits<int>::max())
-				continue;
-			if (std::any_of(savedDisassemblyViews.begin(), savedDisassemblyViews.end(),
-				[id](const DisassemblyView& view) { return view.id == id; }))
-				continue;
-			DisassemblyView view;
-			view.id = id;
-			// Older layout records have no flag; retain their Follow PC default.
-			std::string followPc;
-			if (iss >> followPc)
-				view.followPc = followPc != "0";
-			savedDisassemblyViews.push_back(view);
-		}
-
-		const PaneKey pane{kind, id};
-		if (target != Emu51ImguiSnapTarget::None)
-			paneSnapAssignments_.push_back(PaneSnapAssignment{pane, target, std::max(0.05f, share)});
-
-		FloatingPaneState state;
-		state.pane = pane;
-		state.size = ImVec2(floatW, floatH);
-		state.hasSize = floatW > 0.0f && floatH > 0.0f;
-		floatingPaneStates_.push_back(state);
-	}
-
-	if (!savedDisassemblyViews.empty()) {
-		disassemblyViews_ = std::move(savedDisassemblyViews);
-		nextDisassemblyViewId_ = 1;
-		for (const auto& view : disassemblyViews_)
-			nextDisassemblyViewId_ = std::max(nextDisassemblyViewId_, view.id + 1);
-	}
-	layoutStateDirty_ = false;
+    if (!persistState_ || statePath_.empty() || statePersistenceBlocked_) return false;
+    std::string json;
+    if (!emu51EncodeUiState(captureUiState(),json)) return false;
+    const bool saved = withoutExecutionLock([&] { return emu51WriteTextFileAtomically(statePath_,json); });
+    const_cast<Emu51ImguiApp*>(this)->layoutStateDirty_ = !saved;
+    return saved;
 }
 
-void Emu51ImguiApp::saveLayoutState() const
+Emu51UiState Emu51ImguiApp::captureUiState() const
 {
-	const std::string layoutPath = emu51GetImguiLayoutPath();
-	if (layoutPath.empty())
-		return;
-
-	std::ofstream out(layoutPath, std::ios::trunc);
-	if (!out.is_open())
-		return;
-	saveLayoutState(out);
+    Emu51UiState state;
+    state.leftWidth = snapLayoutPreferences_.leftWidthFraction;
+    state.rightWidth = snapLayoutPreferences_.rightWidthFraction;
+    state.topHeight = snapLayoutPreferences_.topHeightFraction;
+    state.bottomHeight = snapLayoutPreferences_.bottomHeightFraction;
+    state.registersVisible = registersOpen_;
+    state.peripheralInspector = peripheralEditor_.inspectorVisible();
+    state.recentPrograms = recentProgramPaths_;
+    state.recentProjects = recentProjectPaths_;
+    state.panes.clear();
+    auto writePane = [this,&state](const PaneKey& pane, bool followPc = true) {
+        const auto* assignment = findPaneSnapAssignment(pane);
+        const auto* floating = findFloatingPaneState(pane);
+        state.panes.push_back({paneKindLabel(pane.kind),pane.id,
+            snapTargetPersistedLabel(assignment ? assignment->target : Emu51ImguiSnapTarget::None),
+            assignment ? assignment->share : 1.0,
+            floating && floating->hasSize ? floating->size.x : 0.0,
+            floating && floating->hasSize ? floating->size.y : 0.0,followPc});
+    };
+    writePane({PaneKey::Kind::Registers,0});
+    writePane({PaneKey::Kind::Peripherals,0});
+    writePane({PaneKey::Kind::AssemblyEditor,0});
+    writePane({PaneKey::Kind::InternalRamMonitor,0});
+    for (const auto& view : disassemblyViews_)
+        if (view.open) writePane({PaneKey::Kind::Disassembly,view.id},view.followPc);
+    for (const auto& view : monitorViews_) writePane({PaneKey::Kind::Monitor,view.id});
+    return state;
 }
 
-void Emu51ImguiApp::saveLayoutState(std::ostream& out) const
+void Emu51ImguiApp::applyUiState(const Emu51UiState& state)
 {
-	out << "prefs "
-		<< snapLayoutPreferences_.leftWidthFraction << ' '
-		<< snapLayoutPreferences_.rightWidthFraction << ' '
-		<< snapLayoutPreferences_.topHeightFraction << ' '
-		<< snapLayoutPreferences_.bottomHeightFraction << '\n';
-
-	auto writePane = [this, &out](const PaneKey& pane, bool followPc = true) {
-		const PaneSnapAssignment* assignment = findPaneSnapAssignment(pane);
-		const FloatingPaneState* floatingState = findFloatingPaneState(pane);
-		out << "pane "
-			<< paneKindLabel(pane.kind) << ' '
-			<< pane.id << ' '
-			<< snapTargetPersistedLabel(assignment != nullptr ? assignment->target : Emu51ImguiSnapTarget::None) << ' '
-			<< (assignment != nullptr ? assignment->share : 1.0f) << ' '
-			<< (floatingState != nullptr && floatingState->hasSize ? floatingState->size.x : 0.0f) << ' '
-			<< (floatingState != nullptr && floatingState->hasSize ? floatingState->size.y : 0.0f);
-		if (pane.kind == PaneKey::Kind::Disassembly)
-			out << ' ' << (followPc ? 1 : 0);
-		out << '\n';
-	};
-
-	writePane(PaneKey{PaneKey::Kind::Registers, 0});
-	writePane(PaneKey{PaneKey::Kind::AssemblyEditor, 0});
-	writePane(PaneKey{PaneKey::Kind::InternalRamMonitor, 0});
-	for (const DisassemblyView& view : disassemblyViews_) {
-		if (view.open)
-			writePane(PaneKey{PaneKey::Kind::Disassembly, view.id}, view.followPc);
-	}
-	for (const MonitorView& view : monitorViews_)
-		writePane(PaneKey{PaneKey::Kind::Monitor, view.id});
-
-	const_cast<Emu51ImguiApp*>(this)->layoutStateDirty_ = false;
-}
-
-void Emu51ImguiApp::loadRecentProgramPaths()
-{
-	const std::string recentPath = emu51GetRecentProgramsPath();
-	if (recentPath.empty())
-		return;
-
-	std::ifstream in(recentPath);
-	if (!in.is_open())
-		return;
-
-	recentProgramPaths_.clear();
-	std::string line;
-	while (std::getline(in, line) && recentProgramPaths_.size() < kMaxRecentProgramFiles) {
-		const std::string normalized = normalizedProgramPath(fs::path(line));
-		if (normalized.empty())
-			continue;
-		if (isTemporaryAssemblyEditorOutputPath(fs::path(normalized)))
-			continue;
-		if (std::find(recentProgramPaths_.begin(), recentProgramPaths_.end(), normalized) == recentProgramPaths_.end())
-			recentProgramPaths_.push_back(normalized);
-	}
-}
-
-void Emu51ImguiApp::saveRecentProgramPaths() const
-{
-	if (!persistState_)
-		return;
-	const std::string recentPath = emu51GetRecentProgramsPath();
-	if (recentPath.empty())
-		return;
-
-	std::ofstream out(recentPath, std::ios::trunc);
-	if (!out.is_open())
-		return;
-
-	for (const std::string& path : recentProgramPaths_)
-		out << path << '\n';
+    snapLayoutPreferences_ = {static_cast<float>(state.leftWidth),static_cast<float>(state.rightWidth),
+        static_cast<float>(state.topHeight),static_cast<float>(state.bottomHeight)};
+    registersOpen_ = state.registersVisible;
+    peripheralEditor_.setInspectorVisible(state.peripheralInspector);
+    paneSnapAssignments_.clear();
+    floatingPaneStates_.clear();
+    disassemblyViews_.clear();
+    nextDisassemblyViewId_ = 1;
+    for (const auto& saved : state.panes) {
+        PaneKey::Kind kind;
+        Emu51ImguiSnapTarget target;
+        if (!parsePaneKind(saved.kind,&kind) || !parseSnapTarget(saved.target,&target)) continue;
+        const PaneKey pane{kind,saved.id};
+        if (target != Emu51ImguiSnapTarget::None)
+            paneSnapAssignments_.push_back({pane,target,static_cast<float>(saved.share)});
+        FloatingPaneState floating;
+        floating.pane = pane;
+        floating.size = ImVec2(static_cast<float>(saved.width),static_cast<float>(saved.height));
+        floating.hasSize = saved.width > 0 && saved.height > 0;
+        floatingPaneStates_.push_back(floating);
+        if (kind == PaneKey::Kind::Disassembly) {
+            DisassemblyView view;
+            view.id = saved.id; view.followPc = saved.followPc;
+            disassemblyViews_.push_back(view);
+            nextDisassemblyViewId_ = std::max(nextDisassemblyViewId_,saved.id+1);
+        }
+    }
+    auto restorePaths = [](const auto& source, auto& target, bool programs) {
+        target.clear();
+        for (const auto& saved : source) {
+            const auto path = normalizedProgramPath(fs::path(saved));
+            if (path.empty() || (programs && isTemporaryAssemblyEditorOutputPath(fs::path(path)))) continue;
+            if (std::find(target.begin(),target.end(),path) == target.end()) target.push_back(path);
+            if (target.size() == kMaxRecentProgramFiles) break;
+        }
+    };
+    restorePaths(state.recentPrograms,recentProgramPaths_,true);
+    restorePaths(state.recentProjects,recentProjectPaths_,false);
+    layoutStateDirty_ = false;
 }
 
 void Emu51ImguiApp::rememberRecentProgramPath(const fs::path& path)
@@ -779,7 +714,7 @@ void Emu51ImguiApp::rememberRecentProgramPath(const fs::path& path)
 	recentProgramPaths_.insert(recentProgramPaths_.begin(), normalized);
 	if (recentProgramPaths_.size() > kMaxRecentProgramFiles)
 		recentProgramPaths_.resize(kMaxRecentProgramFiles);
-	saveRecentProgramPaths();
+	saveState();
 }
 
 void Emu51ImguiApp::snapPane(const PaneKey& pane, Emu51ImguiSnapTarget target)

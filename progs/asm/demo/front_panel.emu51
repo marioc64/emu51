@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "lcd",
+      "kind": 9
+    },
+    {
+      "id": "keypad",
+      "kind": 10
+    },
+    {
+      "id": "button",
+      "kind": 8,
+      "bounce_ms": 5
+    },
+    {
+      "id": "switch",
+      "kind": 7
+    },
+    {
+      "id": "led",
+      "kind": 6
+    },
+    {
+      "id": "ground",
+      "kind": 4,
+      "digital_value": 0
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "lcd.data",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.P3",
+      "b": "lcd.RS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "lcd.E",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "ground.out",
+      "b": "lcd.RW",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P2",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "keypad.columns",
+      "b": "cpu.P2",
+      "a_bit": 0,
+      "b_bit": 4,
+      "width": 4
+    },
+    {
+      "a": "button.out",
+      "b": "cpu.P3",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "switch.out",
+      "b": "cpu.P3",
+      "a_bit": 0,
+      "b_bit": 3,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "led.in",
+      "a_bit": 7,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "front_panel.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "front_panel.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "front_panel.asm",
+    "name": "front_panel.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "lcd",
+      "x": 420,
+      "y": 0,
+      "name": "lcd"
+    },
+    {
+      "id": "keypad",
+      "x": 850,
+      "y": 0,
+      "name": "keypad"
+    },
+    {
+      "id": "button",
+      "x": 1280,
+      "y": 0,
+      "name": "button"
+    },
+    {
+      "id": "switch",
+      "x": 420,
+      "y": 400,
+      "name": "switch"
+    },
+    {
+      "id": "led",
+      "x": 850,
+      "y": 400,
+      "name": "led"
+    },
+    {
+      "id": "ground",
+      "x": 1280,
+      "y": 400,
+      "name": "ground"
+    }
+  ]
+}
