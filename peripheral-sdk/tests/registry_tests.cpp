@@ -90,7 +90,7 @@ void validation_and_ownership() {
     check(e51p_registry_instantiate(g.registry, saved->type_id, g.api, g.context, "duplicate", duplicate, 2, nullptr, 0) == E51P_INVALID_ARGUMENT && probe.calls == before,
         "Duplicate parameter keys are rejected before creation");
     uint32_t count = 0; ok(e51p_registry_count(g.registry, &count));
-    check(count == 23, "Built-ins append to a user registry");
+    check(count == 26, "Built-ins append to a user registry");
     uint32_t cleared = 42;
     check(e51p_registry_count(nullptr, &cleared) == E51P_INVALID_ARGUMENT && cleared == 0,
         "Invalid count queries clear their output");

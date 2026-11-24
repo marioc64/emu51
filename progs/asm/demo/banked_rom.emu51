@@ -1,0 +1,244 @@
+{
+  "version": 2,
+  "unified_memory": false,
+  "debugger_open": true,
+  "trace_enabled": false,
+  "cpu_model": "8051",
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "circuit_bus": true,
+  "peripheral_devices": [
+    {
+      "id": "program_rom",
+      "kind": 26,
+      "memory_capacity": 524288,
+      "memory_fill": 255
+    },
+    {
+      "id": "work_ram",
+      "kind": 25,
+      "memory_capacity": 32768
+    },
+    {
+      "id": "select",
+      "kind": 28,
+      "decoder_bits": 1
+    },
+    {
+      "id": "clock",
+      "kind": 27,
+      "clock_hz": 12000000
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.ADDR",
+      "b": "select.IN",
+      "a_bit": 15,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "select.CS_ROM",
+      "b": "program_rom.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "select.CS_RAM",
+      "b": "work_ram.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "program_rom.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 15
+    },
+    {
+      "a": "cpu.P1",
+      "b": "program_rom.ADDR",
+      "a_bit": 0,
+      "b_bit": 15,
+      "width": 4
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "program_rom.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "program_rom.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "work_ram.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 15
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "work_ram.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.RD",
+      "b": "work_ram.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "work_ram.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "clock.OUT",
+      "b": "cpu.CLK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "programs": [],
+  "reload_program": "",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": false,
+    "open": false,
+    "draft": false,
+    "path": "",
+    "name": "untitled.asm",
+    "base_directory": "",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "assembly_units": [
+    {
+      "id": "boot",
+      "path": "banked_boot.asm",
+      "editor": {
+        "present": true,
+        "open": true,
+        "draft": false,
+        "path": "banked_boot.asm",
+        "name": "banked_boot.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    },
+    {
+      "id": "application",
+      "path": "banked_application.asm",
+      "editor": {
+        "present": true,
+        "open": true,
+        "draft": false,
+        "path": "banked_application.asm",
+        "name": "banked_application.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    },
+    {
+      "id": "tables",
+      "path": "banked_tables.asm",
+      "editor": {
+        "present": true,
+        "open": true,
+        "draft": false,
+        "path": "banked_tables.asm",
+        "name": "banked_tables.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    }
+  ],
+  "load_mappings": [
+    {
+      "id": "boot_image",
+      "unit": "boot",
+      "device": "program_rom",
+      "source_start": 0,
+      "source_end": 32768,
+      "destination": 491520,
+      "order": 0,
+      "overlay": false
+    },
+    {
+      "id": "application_image",
+      "unit": "application",
+      "device": "program_rom",
+      "source_start": 0,
+      "source_end": 32768,
+      "destination": 458752,
+      "order": 1,
+      "overlay": false
+    },
+    {
+      "id": "tables_image",
+      "unit": "tables",
+      "device": "work_ram",
+      "source_start": 16384,
+      "source_end": 16388,
+      "destination": 8192,
+      "order": 2,
+      "overlay": false
+    }
+  ],
+  "active_unit": "boot",
+  "decoder_outputs": [
+    {
+      "device": "select",
+      "id": "CS_ROM",
+      "name": "/CS_ROM",
+      "active_low": true
+    },
+    {
+      "device": "select",
+      "id": "CS_RAM",
+      "name": "/CS_RAM",
+      "active_low": true
+    }
+  ],
+  "decoder_values": [
+    {
+      "device": "select",
+      "output": "CS_ROM",
+      "value": 0
+    },
+    {
+      "device": "select",
+      "output": "CS_RAM",
+      "value": 1
+    }
+  ]
+}

@@ -23,7 +23,7 @@ add_library(emu51_kason STATIC
 set_target_properties(emu51_kason PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED TRUE C_EXTENSIONS FALSE)
 target_include_directories(emu51_kason SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/third_party/kason")
 
-add_library(emu51_settings_lib "imgui/emu51_execution_settings.cpp" "imgui/emu51_ui_state.cpp" "io/emu51_project.cpp")
+add_library(emu51_settings_lib "imgui/emu51_execution_settings.cpp" "imgui/emu51_ui_state.cpp" "io/emu51_project.cpp" "io/emu51_project_build.cpp" "io/emu51_project_migration.cpp")
 target_include_directories(emu51_settings_lib PUBLIC "${EMU51_IMGUI_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/io")
 target_link_libraries(emu51_settings_lib PRIVATE emu51_kason emu51_editor_files_lib emu51_warnings)
 
@@ -54,6 +54,7 @@ target_compile_definitions(emu51_asm_lib PRIVATE
 	EMU51_INSTALLED_ASM_FROM_BINDIR="${EMU51_INSTALLED_ASM_FROM_BINDIR}"
 )
 target_link_libraries(emu51_asm_lib PUBLIC emu51_core_lib PRIVATE emu51_warnings)
+target_link_libraries(emu51_settings_lib PUBLIC emu51_asm_lib)
 
 add_executable(emu51_asm "asm/main.cpp")
 target_link_libraries(emu51_asm PRIVATE emu51_asm_lib emu51_warnings)
@@ -76,7 +77,7 @@ add_executable(emu51cli    "main.cpp")
 add_executable(emu51_tests "tests.cpp" "serial_tests.cpp" "model_tests.cpp" "validation_tests.cpp")
 add_executable(emu51_bench "bench.cpp")
 
-target_link_libraries(emu51cli    PRIVATE emu51_asm_lib emu51_warnings)
+target_link_libraries(emu51cli    PRIVATE emu51_settings_lib emu51_warnings)
 target_link_libraries(emu51_tests PRIVATE emu51_asm_lib emu51_settings_lib emu51_editor_files_lib emu51_warnings)
 target_link_libraries(emu51_bench PRIVATE emu51_asm_lib emu51_warnings)
 target_include_directories(emu51cli    PRIVATE "${EMU51_CORE_DIR}")
@@ -86,6 +87,9 @@ target_compile_definitions(emu51_tests PRIVATE
 )
 target_include_directories(emu51_bench PRIVATE "${EMU51_CORE_DIR}")
 add_test(NAME emu51_tests COMMAND emu51_tests)
+add_executable(emu51_memory_project_tests "memory_project_tests.cpp")
+target_link_libraries(emu51_memory_project_tests PRIVATE emu51_settings_lib emu51_warnings)
+add_test(NAME emu51_memory_project_tests COMMAND emu51_memory_project_tests)
 
 # GPL host integration stays outside the independently LGPL-licensed SDK.
 set(microphone_source "${PROJECT_SOURCE_DIR}/progs/asm/demo/microphone_covox.asm")
@@ -98,6 +102,7 @@ configure_file("peripherals/emu51_peripheral_firmware.h.in"
     "generated/emu51_peripheral_firmware.h" @ONLY)
 find_package(Threads REQUIRED)
 add_library(emu51_peripheral_host_lib "peripherals/emu51_peripheral_bus.cpp"
+    "peripherals/emu51_memory.cpp"
     "peripherals/emu51_peripheral_gpio.cpp"
     "peripherals/emu51_peripheral_config.cpp" "peripherals/emu51_peripheral_session.cpp")
 target_include_directories(emu51_peripheral_host_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/peripherals"
@@ -167,6 +172,9 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	# don't fire inside our translation units.
 	add_library(emu51_imgui_common OBJECT
 		"imgui/emu51_execution_worker.cpp"
+		"imgui/emu51_project_editor.cpp"
+		"imgui/emu51_physical_sources.cpp"
+		"imgui/emu51_physical_memory.cpp"
 		"imgui/emu51_peripheral_editor.cpp"
         "imgui/emu51_peripheral_live.cpp"
         "imgui/emu51_segment_display.cpp"
@@ -220,7 +228,23 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
 	target_link_libraries(emu51_ui_tests PRIVATE
 		emu51_asm_lib emu51_settings_lib emu51_editor_files_lib emu51_warnings)
 	add_test(NAME emu51_ui_tests COMMAND emu51_ui_tests)
+    add_executable(emu51_memory_ui_tests "memory_ui_tests.cpp"
+        $<TARGET_OBJECTS:emu51_imgui_common> $<TARGET_OBJECTS:emu51_thirdparty_imgui>)
+    target_include_directories(emu51_memory_ui_tests PRIVATE "${EMU51_CORE_DIR}" "${EMU51_IMGUI_DIR}")
+    target_include_directories(emu51_memory_ui_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/imgui" "${CMAKE_SOURCE_DIR}/third_party/ImGuiColorTextEdit")
+    target_compile_definitions(emu51_memory_ui_tests PRIVATE EMU51_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_link_libraries(emu51_memory_ui_tests PRIVATE emu51_settings_lib emu51_warnings)
+    add_test(NAME emu51_memory_ui_tests COMMAND emu51_memory_ui_tests)
+    add_executable(emu51_trainer_tests "trainer_project_tests.cpp"
+        $<TARGET_OBJECTS:emu51_imgui_common> $<TARGET_OBJECTS:emu51_thirdparty_imgui>)
+    target_include_directories(emu51_trainer_tests PRIVATE "${EMU51_CORE_DIR}" "${EMU51_IMGUI_DIR}")
+    target_include_directories(emu51_trainer_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/imgui" "${CMAKE_SOURCE_DIR}/third_party/ImGuiColorTextEdit")
+    target_compile_definitions(emu51_trainer_tests PRIVATE EMU51_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_link_libraries(emu51_trainer_tests PRIVATE emu51_settings_lib emu51_warnings)
+    add_test(NAME emu51_trainer_tests COMMAND emu51_trainer_tests)
     add_test(NAME emu51_execution_worker_tests COMMAND emu51_ui_tests --worker-only)
+    # This check measures real-time audio delivery during simulated UI stalls.
+    set_tests_properties(emu51_execution_worker_tests PROPERTIES RUN_SERIAL TRUE)
     if (APPLE)
         add_test(NAME emu51_project_picker_tests COMMAND emu51_ui_tests --project-picker-only)
         set_tests_properties(emu51_project_picker_tests PROPERTIES TIMEOUT 30)

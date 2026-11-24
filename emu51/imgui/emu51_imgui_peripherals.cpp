@@ -10,9 +10,10 @@
 #include <exception>
 #include <stdexcept>
 #include <tuple>
+#include "portable-file-dialogs.h"
 
 namespace {
-int peripheralTitleTabs(bool pending, bool& apply)
+int peripheralTitleTabs(bool pending, bool& apply, bool valid = true)
 {
     auto* window = ImGui::GetCurrentWindow();
     auto& dc = window->DC;
@@ -44,7 +45,7 @@ int peripheralTitleTabs(bool pending, bool& apply)
     auto buttonClip = buttonBounds; buttonClip.ClipWith(window->OuterRectClipped);
     ImGui::PushClipRect(buttonClip.Min,buttonClip.Max,false);
     dc.CursorPos = buttonBounds.Min;
-    ImGui::BeginDisabled(!pending);
+    ImGui::BeginDisabled(!pending || !valid);
     apply = ImGui::Button("Apply##peripherals",buttonBounds.GetSize());
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -154,12 +155,22 @@ void Emu51ImguiApp::installPeripheralSession(std::unique_ptr<Emu51PeripheralSess
 bool Emu51ImguiApp::applyPeripheralConfig(const Emu51PeripheralConfig& config, double crystalMHz)
 {
     // config may refer to the active session, which will be replaced below.
-    const auto next = config;
+    auto next = config;
+    const auto base = projectPath_.empty() ? std::filesystem::current_path() : std::filesystem::path(projectPath_).parent_path();
+    for (auto& device : next.devices) for (auto& image : device.memoryImages)
+        if (!std::filesystem::path(image.path).is_absolute() && !image.path.empty()) image.path = (base/image.path).lexically_normal().string();
     std::unique_ptr<Emu51PeripheralSession> candidate;
     try {
         if (!Emu51CycleTiming::validCrystalMHz(crystalMHz)) throw std::runtime_error("Invalid crystal frequency");
+        if (peripherals_ && peripherals_->circuitBus() && !emu51CircuitBus(next) && !next.devices.empty()) {
+            Emu51Project compatible; compatible.peripherals = next; compatible.unified = unifiedMode_;
+            compatible.execution = {cycleExact_,crystalMHz,stepsPerFrame_};
+            std::string error;
+            if (!emu51MigrateProject(compatible,error)) throw std::runtime_error(error);
+            next = std::move(compatible.peripherals);
+        }
         emu51ValidatePeripheralConfig(next);
-        if (!next.devices.empty()) candidate = Emu51PeripheralSession::create(next, crystalMHz);
+        if (!next.devices.empty()) candidate = withoutExecutionLock([&] { return Emu51PeripheralSession::create(next, crystalMHz,peripherals_.get()); });
     } catch (const std::exception& e) {
         peripheralMessage_ = statusMessage_ = e.what(); return false;
     }
@@ -167,7 +178,7 @@ bool Emu51ImguiApp::applyPeripheralConfig(const Emu51PeripheralConfig& config, d
     installPeripheralSession(std::move(candidate));
     if (peripherals_ && hardware_) hardware_->setEnabled(false);
     peripheralDraft_ = next;
-    crystalMHz_ = crystalMHz;
+    crystalMHz_ = peripherals_ ? peripherals_->crystalMHz() : crystalMHz;
     resetCpuState(true);
     peripheralMessage_ = statusMessage_ = peripherals_ ? "Peripheral graph applied; CPU reset and paused" : "Peripherals disconnected; CPU reset and paused";
     return true;
@@ -259,8 +270,12 @@ void Emu51ImguiApp::drawPeripherals()
         ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
     bool graphVisible = false;
     bool apply = false;
+    std::string draftError = peripheralEditor_.validationError();
+    try { emu51ValidatePeripheralConfig(peripheralDraft_); }
+    catch (const std::exception& e) { draftError = e.what(); }
     const int selectedTab = peripheralTitleTabs(
-        peripheralDraft_ != (peripherals_ ? peripherals_->config() : Emu51PeripheralConfig{}),apply);
+        peripheralDraft_ != (peripherals_ ? peripherals_->config() : Emu51PeripheralConfig{}),apply,draftError.empty());
+    if (!draftError.empty()) ImGui::TextWrapped("%s",draftError.c_str());
     if (apply) {
         if (!applyPeripheralConfig(peripheralDraft_,crystalMHz_)) ImGui::OpenPopup("Cannot apply peripherals");
         executionRedrawPending_.store(true,std::memory_order_release);
@@ -282,7 +297,37 @@ void Emu51ImguiApp::drawPeripherals()
             const bool inspectorVisible = peripheralEditor_.inspectorVisible();
             const auto previousMessage = peripheralMessage_;
             std::string message = previousMessage;
+            std::vector<std::string> activeMemory;
+            if (peripherals_) for (const auto& m : peripherals_->memories())
+                if (std::any_of(peripheralDraft_.devices.begin(),peripheralDraft_.devices.end(),[&](const auto& d) {
+                    return d.id == m.id && d.memoryCapacity == e51p_memory_capacity(m.storage.get()) &&
+                        ((d.kind == Emu51PeripheralKind::Rom) == (e51p_memory_kind(m.storage.get()) == E51P_ROM));
+                })) activeMemory.push_back(m.id);
+            peripheralEditor_.setActiveMemory(activeMemory);
             withoutExecutionLock([&] { peripheralEditor_.draw(peripheralDraft_, model, message); });
+            if (const auto request = peripheralEditor_.takeMemoryRequest()) {
+                try {
+                    const auto id = request->id;
+                    const auto selected = withoutExecutionLock([&]() -> std::string {
+                        const std::vector<std::string> filters{"Binary images","*.bin","All files","*"};
+                        if (request->save) return pfd::save_file("Save physical memory",id+".bin",filters).result();
+                        const auto paths = pfd::open_file("Load physical memory",{},filters).result();
+                        return paths.empty() ? std::string{} : paths.front();
+                    });
+                    if (!selected.empty() && peripherals_ && peripherals_->memory(id)) {
+                        if (request->save) {
+                            const auto bytes = peripherals_->snapshotMemory(id,request->offset,request->length);
+                            const std::string_view data(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+                            if (!withoutExecutionLock([&] { return emu51WriteTextFileAtomically(selected,data); })) throw std::runtime_error("Cannot save binary; original file preserved");
+                        } else {
+                            const auto bytes = withoutExecutionLock([&] { return Emu51PeripheralSession::readBinary(selected,request->length); });
+                            if (!peripherals_->programMemory(id,request->offset,bytes)) throw std::runtime_error("Physical memory range is no longer valid");
+                            invalidateInstructionCache();
+                        }
+                        peripheralMessage_ = statusMessage_ = request->save ? "Physical memory saved; selectors unchanged" : "Physical memory programmed; selectors unchanged";
+                    }
+                } catch (const std::exception& e) { peripheralMessage_ = statusMessage_ = e.what(); }
+            }
             if (message != previousMessage) peripheralMessage_ = std::move(message);
             if (inspectorVisible != peripheralEditor_.inspectorVisible()) markLayoutStateDirty();
         }
@@ -341,7 +386,7 @@ void Emu51ImguiApp::releaseLiveKeypads()
 }
 void Emu51ImguiApp::drawPeripheralKeys(const Emu51PeripheralDevice& d,unsigned count,unsigned columns)
 {
-    const bool controller = d.kind != Emu51PeripheralKind::Keypad;
+    const bool controller = d.kind != Emu51PeripheralKind::Keypad && d.kind != Emu51PeripheralKind::KeyMatrix;
     uint64_t mask = controller ? peripherals_->displayKeys(d.id) : peripherals_->keys(d.id);
     bool momentary = peripheralLive_.momentaryKeys(d.id);
     int mode = momentary ? 1 : 0;
@@ -353,23 +398,41 @@ void Emu51ImguiApp::drawPeripheralKeys(const Emu51PeripheralDevice& d,unsigned c
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle: click to hold, click again to release. While pressed: release with the mouse button.");
     const auto previous = mask;
     if (momentary) mask = 0;
-    const unsigned rows = (count+columns-1)/columns;
+    const bool custom = !controller && !d.keyLayout.empty();
+    if (custom) columns = static_cast<unsigned>(d.keyLayoutColumns);
+    const unsigned slots = custom ? static_cast<unsigned>(d.keyLayout.size()) : count;
+    const unsigned rows = (slots+columns-1)/columns;
     const auto available = ImGui::GetContentRegionAvail(), spacing = ImGui::GetStyle().ItemSpacing;
     const ImVec2 keySize{std::max(4.0f,(available.x-(columns-1)*spacing.x)/columns),
         std::max(4.0f,(available.y-ImGui::GetFrameHeightWithSpacing()-(rows-1)*spacing.y)/rows)};
-    const char* labels[]{"1","2","3","A","4","5","6","B","7","8","9","C","*","0","#","D"};
-    for (unsigned key = 0; key < count; ++key) {
-        ImGui::PushID(static_cast<int>(key));
+    for (unsigned slot = 0; slot < slots; ++slot) {
+        const int assigned = custom ? d.keyLayout[slot] : static_cast<int>(slot);
+        if (assigned < 0) {
+            ImGui::Dummy(keySize);
+            if ((slot+1)%columns && slot+1<slots) ImGui::SameLine();
+            continue;
+        }
+        const auto key = static_cast<unsigned>(assigned);
+        ImGui::PushID(static_cast<int>(slot));
         const bool held = (previous&(uint64_t(1)<<key)) != 0;
         if (held) ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(.15f,.5f,.25f,1));
-        const auto numeric = std::to_string(key+1);
-        const bool clicked = ImGui::Button(controller ? numeric.c_str() : labels[key],keySize);
+        auto label = emu51KeyLabel(d,key);
+        if (key < d.keyLegends.size() && !d.keyLegends[key].empty()) label += "\n"+d.keyLegends[key];
+        const bool clicked = ImGui::Button("##contact",keySize);
+        const bool active = ImGui::IsItemActive();
+        const auto min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+        const auto textSize = ImGui::CalcTextSize(label.c_str(),nullptr,false);
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(min,max,true);
+        draw->AddText({min.x+(max.x-min.x-textSize.x)/2,min.y+(max.y-min.y-textSize.y)/2},ImGui::GetColorU32(ImGuiCol_Text),label.c_str());
+        draw->PopClipRect();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nContact %u",label.c_str(),key);
         if (momentary) {
-            if (ImGui::IsItemActive()) mask |= uint64_t(1)<<key;
+            if (active) mask |= uint64_t(1)<<key;
         } else if (clicked) mask ^= uint64_t(1)<<key;
         if (held) ImGui::PopStyleColor();
         ImGui::PopID();
-        if ((key+1)%columns && key+1<count) ImGui::SameLine();
+        if ((slot+1)%columns && slot+1<slots) ImGui::SameLine();
     }
     if (ImGui::Button("Release all",{ImGui::GetContentRegionAvail().x,ImGui::GetFrameHeight()})) mask = 0;
     if (controller) (void)peripherals_->setDisplayKeys(d.id,mask);
@@ -413,8 +476,9 @@ void Emu51ImguiApp::drawPeripheralLiveDevice(const Emu51PeripheralDevice& d,floa
     } else if (d.kind == Emu51PeripheralKind::Lcd) {
         e51p_lcd_snapshot lcd{};
         if (peripherals_->lcdState(d.id,lcd)) drawLcd(lcd,scale);
-    } else if (d.kind == Emu51PeripheralKind::Keypad) {
-        drawPeripheralKeys(d,16,4);
+    } else if (d.kind == Emu51PeripheralKind::Keypad || d.kind == Emu51PeripheralKind::KeyMatrix) {
+        drawPeripheralKeys(d,static_cast<unsigned>(emu51KeyCount(d)),
+            d.kind == Emu51PeripheralKind::Keypad ? 4 : static_cast<unsigned>(d.columns));
     }
     ImGui::PopID();
     if (d.kind == Emu51PeripheralKind::Voltage || d.kind == Emu51PeripheralKind::Digital) {
@@ -563,7 +627,14 @@ void Emu51ImguiApp::drawPeripheralLive(const Emu51PeripheralConfig& active)
         else if (d.kind == Emu51PeripheralKind::Lcd) {
             size = {std::max(120.0f,static_cast<float>(d.columns*14+24)),static_cast<float>(d.rows*23+48)};
             minimum = {100,60};
-        } else if (d.kind == Emu51PeripheralKind::Keypad) { size = {196,226}; minimum = {120,140}; }
+        } else if (d.kind == Emu51PeripheralKind::Keypad || d.kind == Emu51PeripheralKind::KeyMatrix) {
+            const auto columns = d.keyLayoutColumns ? d.keyLayoutColumns : d.kind == Emu51PeripheralKind::Keypad ? 4 : d.columns;
+            const auto rows = d.keyLayoutRows ? d.keyLayoutRows : (emu51KeyCount(d)+columns-1)/columns;
+            const bool legends = std::any_of(d.keyLegends.begin(),d.keyLegends.end(),[](const auto& s) { return !s.empty(); });
+            size = d.kind == Emu51PeripheralKind::Keypad && d.keyLayout.empty() && !legends ? ImVec2{196,226} :
+                ImVec2{std::max(196.0f,columns*64.0f+20),rows*(legends ? 58.0f : 38.0f)+86};
+            minimum = {120,140};
+        }
         else if (emu51PeripheralDisplayKind(d.kind) >= 0) {
             size = {std::max(160.0f,d.displayDigits*58.0f+32),150}; minimum = {100,80};
             if (d.kind == Emu51PeripheralKind::Ht16k33 || d.kind == Emu51PeripheralKind::Tm1637) size.y = 180;

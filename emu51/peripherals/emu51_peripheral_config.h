@@ -1,11 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 #include <string>
+#include <cstdint>
 #include <vector>
 
 enum class Emu51PeripheralKind { I8255, Adc0804, Dac, Voltage, Digital, Audio,
     Led, Switch, Button, Lcd, Keypad, Shift595, Shift165, Eeprom, Ay38910,
-    Display7, Display14, Display16, Bargraph, Cd4511, Ls47, Max7219, Max7221, Ht16k33, Tm1637 };
+    Display7, Display14, Display16, Bargraph, Cd4511, Ls47, Max7219, Max7221, Ht16k33, Tm1637,
+    Ram, Rom, Clock, AddressDecoder, BusLatch, BusBuffer, KeyMatrix };
+struct Emu51MemoryImage {
+    std::string path;
+    std::uint64_t offset = 0, length = 0;
+    bool operator==(const Emu51MemoryImage&) const = default;
+};
+struct Emu51DecoderOutput {
+    std::string id;
+    std::string name = {};
+    bool activeLow = true;
+    std::vector<std::uint32_t> values = {};
+    bool operator==(const Emu51DecoderOutput&) const = default;
+};
 struct Emu51PeripheralDevice {
     std::string id;
     Emu51PeripheralKind kind = Emu51PeripheralKind::I8255;
@@ -27,6 +41,19 @@ struct Emu51PeripheralDevice {
     bool commonAnode = false, displayColon = false;
     double persistenceMs = 20;
     int displayColor = 0, displayStyle = 7, displayAddress = 0x70;
+    std::uint64_t memoryCapacity = 65536;
+    int memoryFill = 0;
+    bool csLow = true, oeLow = true, weLow = true;
+    std::vector<Emu51MemoryImage> memoryImages = {};
+    int decoderBits = 4;
+    std::vector<Emu51DecoderOutput> decoderOutputs = {};
+    bool wiredBus = false;
+    std::vector<std::string> keyLabels = {};
+    double pulseMs = 0;
+    int directKeys = 0;
+    int keyLayoutColumns = 0, keyLayoutRows = 0;
+    std::vector<int> keyLayout = {}; // visual row-major slots; -1 = empty, otherwise electrical key index
+    std::vector<std::string> keyLegends = {};
     bool operator==(const Emu51PeripheralDevice&) const = default;
 };
 struct Emu51PeripheralWire {
@@ -42,6 +69,7 @@ struct Emu51PeripheralConfig {
     std::vector<Emu51PeripheralDevice> devices;
     std::vector<Emu51PeripheralWire> digital;
     std::vector<Emu51PeripheralAnalogWire> analog;
+    bool circuitBus = false;
     bool operator==(const Emu51PeripheralConfig&) const = default;
 };
 // Project presentation only: moving a block never changes the active circuit.
@@ -65,13 +93,22 @@ const char* emu51PeripheralKindName(Emu51PeripheralKind kind);
 inline constexpr bool emu51ValidAudioBufferMs(int ms) { return ms == 0 || (ms >= 10 && ms <= 2000); }
 // Structural validation. Session construction also validates endpoints and nets.
 void emu51ValidatePeripheralConfig(const Emu51PeripheralConfig& config);
+bool emu51CircuitBus(const Emu51PeripheralConfig& config);
+double emu51PeripheralClockMHz(const Emu51PeripheralConfig& config, double fallbackMHz);
+std::string emu51DecoderError(const Emu51PeripheralDevice&);
+bool emu51ParseDecoderValues(const std::string&, std::vector<std::uint32_t>&, std::string& error);
+int emu51KeyCount(const Emu51PeripheralDevice&);
+std::string emu51KeyLabel(const Emu51PeripheralDevice&, unsigned key);
 
 inline constexpr int emu51PeripheralComponentKind(Emu51PeripheralKind kind) {
+    if (kind >= Emu51PeripheralKind::BusLatch && kind <= Emu51PeripheralKind::KeyMatrix)
+        return 9+static_cast<int>(kind)-static_cast<int>(Emu51PeripheralKind::BusLatch);
     return kind >= Emu51PeripheralKind::Led && kind <= Emu51PeripheralKind::Ay38910 ?
         static_cast<int>(kind)-static_cast<int>(Emu51PeripheralKind::Led) : -1;
 }
 inline constexpr int emu51PeripheralBusSize(Emu51PeripheralKind kind) {
-    return kind == Emu51PeripheralKind::I8255 ? 4 : kind == Emu51PeripheralKind::Ay38910 ? 2 : 0;
+    return kind == Emu51PeripheralKind::I8255 ? 4 : kind == Emu51PeripheralKind::Ay38910 ? 2 :
+        (kind == Emu51PeripheralKind::BusLatch || kind == Emu51PeripheralKind::BusBuffer) ? 1 : 0;
 }
 
 inline constexpr int emu51PeripheralDisplayKind(Emu51PeripheralKind kind) {

@@ -51,6 +51,8 @@ e51p_parameter_desc integer(const char* name, const char* label, int64_t value, 
 e51p_status component(void* user, const e51p_api* api, e51p_context* c, const char* id,
     const e51p_parameter_value* values, uint32_t count, e51p_endpoint* out) {
     auto cfg = e51p_component_config_init(*static_cast<const uint32_t*>(user));
+    uint64_t pulseTicks = 0;
+    uint32_t directKeys = 0;
     for (uint32_t i = 0; i < count; ++i) {
         const auto& v = values[i];
         if (!std::strcmp(v.name,"active_low")) cfg.active_low = static_cast<int>(v.integer);
@@ -60,10 +62,16 @@ e51p_status component(void* user, const e51p_api* api, e51p_context* c, const ch
         else if (!std::strcmp(v.name,"rows")) cfg.rows = static_cast<uint32_t>(v.integer);
         else if (!std::strcmp(v.name,"i2c_address")) cfg.i2c_address = static_cast<uint32_t>(v.integer);
         else if (!std::strcmp(v.name,"clock_hz")) cfg.clock_hz = v.real;
+        else if (!std::strcmp(v.name,"pulse_ticks")) pulseTicks = static_cast<uint64_t>(v.integer);
+        else if (!std::strcmp(v.name,"direct_keys")) directKeys = static_cast<uint32_t>(v.integer);
     }
     e51p_component* handle = nullptr;
     uint32_t pinCount = 0; (void)e51p_component_pins(cfg.kind,&pinCount);
-    return e51p_add_component(api,c,id,&cfg,&handle,out,pinCount);
+    const auto status = e51p_add_component(api,c,id,&cfg,&handle,out,pinCount);
+    if (status != E51P_OK) return status;
+    if (cfg.kind == E51P_COMPONENT_BUS_LATCH) return e51p_component_set_latch_pulse_ticks(handle,pulseTicks);
+    if (cfg.kind == E51P_COMPONENT_MATRIX) return e51p_component_set_matrix_direct_keys(handle,directKeys);
+    return status;
 }
 
 }
@@ -96,7 +104,7 @@ const e51p_factory_desc* const* e51p_builtin_factories(std::size_t& count) {
         adcParameters, 2, adcPins, 7, nullptr, adc};
     static const e51p_factory_desc dacFactory{sizeof(e51p_factory_desc), "emu51.parallel-dac", "Parallel DAC / Covox",
         dacParameters, 1, dacPins, 2, nullptr, dac};
-    static uint32_t kinds[]{0,1,2,3,4,5,6,7,8};
+    static uint32_t kinds[]{0,1,2,3,4,5,6,7,8,9,10,11};
     static const e51p_parameter_desc ledParameters[]{integer("active_low","Active low",1,0,1)};
     static const e51p_parameter_desc switchParameters[]{integer("active_low","Active low",1,0,1),
         integer("initially_pressed","Initially closed",0,0,1)};
@@ -105,13 +113,17 @@ const e51p_factory_desc* const* e51p_builtin_factories(std::size_t& count) {
     static const e51p_parameter_desc lcdParameters[]{integer("columns","Columns",16,1,20),integer("rows","Rows (1, 2 or 4)",2,1,4)};
     static const e51p_parameter_desc eepromParameters[]{integer("i2c_address","I2C address",0x50,0x50,0x57)};
     static const e51p_parameter_desc ayParameters[]{[] { auto p = real("clock_hz","Chip clock (Hz)",2000000); p.real_min=1000; p.real_max=4000000; return p; }()};
+    static const e51p_parameter_desc matrixParameters[]{integer("columns","Columns",2,1,4),integer("rows","Rows",8,1,8),integer("direct_keys","Independent keys",0,0,8)};
+    static const e51p_parameter_desc pulseParameters[]{integer("pulse_ticks","Retriggerable pulse duration (ticks)",0,0,INT64_MAX)};
     static const auto components = [] {
         std::array<e51p_factory_desc,E51P_COMPONENT_COUNT> result{};
         const char* ids[]{"emu51.led","emu51.switch","emu51.button","emu51.hd44780","emu51.keypad4x4",
-            "emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910"};
-        const char* labels[]{"LED","Switch","Pushbutton","HD44780 LCD","4x4 matrix keypad","74HC595","74HC165","24C02 EEPROM","AY-3-8910"};
-        const e51p_parameter_desc* parameters[]{ledParameters,switchParameters,buttonParameters,lcdParameters,nullptr,nullptr,nullptr,eepromParameters,ayParameters};
-        const uint32_t counts[]{1,2,2,2,0,0,0,1,1};
+            "emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910",
+            "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix"};
+        const char* labels[]{"LED","Switch","Pushbutton","HD44780 LCD","4x4 matrix keypad","74HC595","74HC165","24C02 EEPROM","AY-3-8910",
+            "8-bit bus output latch","8-bit bus input buffer","Configurable key matrix"};
+        const e51p_parameter_desc* parameters[]{ledParameters,switchParameters,buttonParameters,lcdParameters,nullptr,nullptr,nullptr,eepromParameters,ayParameters,pulseParameters,nullptr,matrixParameters};
+        const uint32_t counts[]{1,2,2,2,0,0,0,1,1,1,0,3};
         for (uint32_t i=0; i<E51P_COMPONENT_COUNT; ++i) {
             uint32_t pinCount=0; const auto* pins=e51p_component_pins(i,&pinCount);
             result[i]={sizeof(e51p_factory_desc),ids[i],labels[i],parameters[i],counts[i],pins,pinCount,&kinds[i],component};

@@ -5,6 +5,9 @@
 #include "imgui.h"
 #include <string>
 #include <vector>
+#include <map>
+#include <optional>
+#include <utility>
 
 // UI-thread-owned circuit canvas. It edits a draft, never a live SDK context.
 class Emu51PeripheralEditor {
@@ -15,6 +18,10 @@ public:
     bool interacting() const { return interacting_; }
     bool inspectorVisible() const { return inspectorVisible_; }
     void setInspectorVisible(bool visible) { inspectorVisible_ = visible; }
+    struct MemoryRequest { std::string id; bool save; std::uint64_t offset, length; };
+    std::optional<MemoryRequest> takeMemoryRequest() { return std::exchange(memoryRequest_,std::nullopt); }
+    void setActiveMemory(const std::vector<std::string>& ids) { activeMemories_ = ids; }
+    std::string validationError() const;
     void suspend() {
         interacting_ = false; draggingBlock_.clear(); draggingPin_ = {}; wire_ = {};
         rightGesture_ = rightPanned_ = false;
@@ -46,9 +53,17 @@ private:
     bool inspectorVisible_ = true;
     bool rightGesture_ = false, rightPanned_ = false;
     std::string fitBlock_;
+    std::map<std::string,std::vector<char>> decoderText_;
+    std::map<std::string,std::string> decoderErrors_;
+    std::map<std::string,std::uint32_t> decoderNewValues_;
+    struct MemoryRange { bool whole = true; std::uint64_t offset = 0, length = 0; };
+    std::map<std::string,MemoryRange> memoryRanges_;
+    std::vector<std::string> activeMemories_;
+    std::optional<MemoryRequest> memoryRequest_;
     void rebuild(const Emu51PeripheralConfig&, Emu51Model);
     void canvas(Emu51PeripheralConfig&, std::string&);
     void inspector(Emu51PeripheralConfig&);
+    void keypadInspector(Emu51PeripheralDevice&);
     void contextMenu(Emu51PeripheralConfig&, const std::string& message);
     void fitView();
     const Pin* pin(const std::string&) const;

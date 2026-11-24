@@ -30,6 +30,7 @@ file(WRITE "${WORK_DIR}/consumer/main.c" [=[
 #include <emu51/displays.h>
 #include <emu51/registry.h>
 #include <emu51/audio.h>
+#include <emu51/wired_bus.h>
 #ifdef HAVE_AUDIO_HOST
 #include <emu51/audio_host.h>
 #endif
@@ -55,6 +56,42 @@ int main(void) {
     e51p_component_config component = e51p_component_config_init(E51P_COMPONENT_BUTTON);
     if (e51p_get_api(E51P_ABI_VERSION, &api) != E51P_OK) return 1;
     if (api->create(12000000, &context) != E51P_OK) return 2;
+    {
+        e51p_component* latch = 0;
+        e51p_endpoint pins[5];
+        e51p_component_config config = e51p_component_config_init(E51P_COMPONENT_BUS_LATCH);
+        if (e51p_add_component(api, context, "bus-latch", &config, &latch, pins, 5) != E51P_OK ||
+            e51p_component_set_latch_pulse_ticks(latch, 300000) != E51P_OK) return 33;
+        config = e51p_component_config_init(E51P_COMPONENT_MATRIX);
+        if (e51p_add_component(api, context, "key-matrix", &config, &latch, pins, 5) != E51P_OK ||
+            e51p_component_set_matrix_direct_keys(latch, 2) != E51P_OK) return 34;
+    }
+    {
+        e51p_memory* memory = 0;
+        const e51p_memory_config config = {sizeof(config), E51P_ROM, 131072, 255};
+        const uint8_t bytes[] = {0x74, 0x42};
+        uint8_t out[2] = {0};
+        e51p_decoder* decoder = 0;
+        const uint32_t values[] = {0, 3};
+        const e51p_decoder_output output = {sizeof(output), "SELECT", 1, values, 2};
+        uint32_t selected = E51P_INVALID_ID;
+        e51p_wired_bus* bus = 0;
+        e51p_initiator_pins pins = {0};
+        e51p_bus_pins target_pins = {0};
+        uint32_t target = 0;
+        if (e51p_memory_create(&config, &memory) != E51P_OK ||
+            e51p_memory_program(memory, 65536, bytes, 2) != E51P_OK ||
+            e51p_memory_copy(memory, 65536, out, 2) != E51P_OK || out[1] != 0x42 ||
+            e51p_memory_write(memory, 65536, 0) != E51P_UNSUPPORTED ||
+            e51p_memory_page_revision(memory, 65536) == 0) return 30;
+        if (e51p_decoder_create(2, &output, 1, &decoder) != E51P_OK ||
+            e51p_decoder_select(decoder, (e51p_digital_state){3,0,0}, &selected) != E51P_OK || selected != 0) return 31;
+        if (e51p_wired_bus_create(api, context, "memory-bus", 16, &bus, &pins) != E51P_OK ||
+            e51p_wired_bus_add_memory(bus, "rom", memory, 1, 1, 1, &target_pins, &target) != E51P_OK) return 32;
+        e51p_wired_bus_destroy(bus);
+        e51p_decoder_destroy(decoder);
+        e51p_memory_release(memory);
+    }
     if (e51p_registry_create(E51P_REGISTRY_ABI_VERSION, &registry) != E51P_OK) return 11;
     if (e51p_registry_add_builtins(registry) != E51P_OK) return 12;
     if (e51p_registry_find(registry, "emu51.parallel-dac", &factory) != E51P_OK || factory->pin_count != 2) return 13;

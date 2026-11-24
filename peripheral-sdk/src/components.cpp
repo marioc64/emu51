@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 #include "emu51/components.h"
+#include "emu51/snapshot.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,6 +16,12 @@ const e51p_endpoint_desc switchPins[] = {PIN("out",E51P_OUTPUT,1,1,0)};
 const e51p_endpoint_desc lcdPins[] = {PIN("data",io,8,0,0),PIN("RS",E51P_INPUT,1,0,0),
     PIN("RW",E51P_INPUT,1,0,0),PIN("E",E51P_INPUT,1,0,0)};
 const e51p_endpoint_desc keypadPins[] = {PIN("rows",E51P_INPUT,4,15,0),PIN("columns",E51P_OUTPUT,4,15,0)};
+const e51p_endpoint_desc matrixPins[] = {PIN("rows",E51P_INPUT,8,255,0),PIN("columns",E51P_OUTPUT,4,15,0),PIN("direct",E51P_OUTPUT,8,255,0)};
+const e51p_endpoint_desc latchPins[] = {{sizeof(e51p_endpoint_desc),"bus",E51P_BUS_TARGET,0,8,1,0,0},
+    PIN("Q",E51P_OUTPUT,8,0,0),PIN("Q_n",E51P_OUTPUT,8,0,0),
+    PIN("PULSE",E51P_OUTPUT,1,0,0),PIN("PULSE_n",E51P_OUTPUT,1,0,0)};
+const e51p_endpoint_desc bufferPins[] = {{sizeof(e51p_endpoint_desc),"bus",E51P_BUS_TARGET,0,8,1,0,0},
+    PIN("IN",E51P_INPUT,8,255,0)};
 const e51p_endpoint_desc shift595Pins[] = {PIN("SER",E51P_INPUT,1,0,0),PIN("SRCLK",E51P_INPUT,1,0,0),
     PIN("RCLK",E51P_INPUT,1,0,0),PIN("SRCLR",E51P_INPUT,1,1,0),PIN("OE",E51P_INPUT,1,0,0),
     PIN("Q",E51P_OUTPUT,8,0,0),PIN("QH",E51P_OUTPUT,1,0,0)};
@@ -42,7 +49,10 @@ struct e51p_component {
     bool pressed = false, contact = false;
     uint64_t bounceStart = 0, bounceEnd = 0;
     uint32_t keys = 0, shift = 0, latch = 0;
+    uint32_t directKeys = 0;
     uint32_t lastClock = 0, lastLatch = 0;
+    uint64_t pulseTicks = 0, pulseStart = 0;
+    bool pulseActive = false;
     // HD44780 state; DDRAM implements the two 40-character controller lines.
     std::array<uint8_t,128> ddram{};
     std::array<uint8_t,64> cgram{};
@@ -80,11 +90,22 @@ struct e51p_component {
     void drive(unsigned i, uint32_t value, uint32_t mask, uint32_t drain = 0) { (void)api->drive(context,pins[i],value,mask,drain); }
     void contactOutput() { drive(0,config.active_low ? !contact : contact,config.active_low ? (contact ? 1u : 0u) : 1u,config.active_low ? 1u : 0u); }
     void keypadOutput() {
-        uint32_t rows = 15, columns = 15;
-        if (sample(0,rows,15)) for (unsigned r = 0; r < 4; ++r)
-            if (!(rows&(1u<<r))) columns &= ~((keys>>(4*r))&15u);
+        const bool matrix = config.kind == E51P_COMPONENT_MATRIX;
+        const unsigned rowCount = matrix ? config.rows : 4, columnCount = matrix ? config.columns : 4;
+        const unsigned rowMask = (1u<<rowCount)-1, columnMask = (1u<<columnCount)-1;
+        uint32_t rows = rowMask, columns = 15;
+        if (sample(0,rows,rowMask)) for (unsigned r = 0; r < rowCount; ++r)
+            if (!(rows&(1u<<r))) columns &= ~((keys>>(columnCount*r))&columnMask);
         drive(1,columns,15,15);
+        if (matrix) {
+            uint32_t direct = 255;
+            for (unsigned key = 0; key < directKeys; ++key)
+                if (keys & (UINT32_C(1)<<(rowCount*columnCount+key))) direct &= ~(1u<<key);
+            drive(2,direct,255,255);
+        }
     }
+    void latchOutput() { drive(1,latch,255); drive(2,latch^255,255); }
+    void pulseOutput() { drive(3,pulseActive,1); drive(4,!pulseActive,1); }
     void shifts() {
         if (config.kind == E51P_COMPONENT_595) {
             const bool clock = high(1), store = high(2);
@@ -280,7 +301,7 @@ struct e51p_component {
         auto& self = *static_cast<e51p_component*>(user);
         switch (self.config.kind) {
         case E51P_COMPONENT_LCD: self.lcdChanged(); break;
-        case E51P_COMPONENT_KEYPAD: self.keypadOutput(); break;
+        case E51P_COMPONENT_KEYPAD: case E51P_COMPONENT_MATRIX: self.keypadOutput(); break;
         case E51P_COMPONENT_595: case E51P_COMPONENT_165: self.shifts(); break;
         case E51P_COMPONENT_EEPROM: self.eepromChanged(); break;
         case E51P_COMPONENT_AY: self.ayChanged(); break;
@@ -303,7 +324,8 @@ struct e51p_component {
         s.envelopeHold = false; s.clockRemainder = 0;
         switch (s.config.kind) {
         case E51P_COMPONENT_SWITCH: case E51P_COMPONENT_BUTTON: s.contactOutput(); break;
-        case E51P_COMPONENT_KEYPAD: s.drive(1,15,15,15); break;
+        case E51P_COMPONENT_KEYPAD: case E51P_COMPONENT_MATRIX: s.keypadOutput(); break;
+        case E51P_COMPONENT_BUS_LATCH: s.pulseActive = false; s.latchOutput(); s.pulseOutput(); break;
         case E51P_COMPONENT_LCD: s.drive(0,0,0); break;
         case E51P_COMPONENT_595: s.drive(5,0,255); s.drive(6,0,1); break;
         case E51P_COMPONENT_165: s.drive(5,0,1); s.drive(6,1,1); break;
@@ -314,6 +336,9 @@ struct e51p_component {
     }
     static void advance(void* user, e51p_context*, uint64_t from, uint64_t to) {
         auto& s = *static_cast<e51p_component*>(user);
+        if (s.config.kind == E51P_COMPONENT_BUS_LATCH && s.pulseActive && to-s.pulseStart >= s.pulseTicks) {
+            s.pulseActive = false; s.pulseOutput();
+        }
         if (s.bounceEnd) {
             if (to >= s.bounceEnd) { s.contact = s.pressed; s.bounceEnd = 0; }
             else s.contact = s.pressed ^ (((to-s.bounceStart)/std::max<uint64_t>(1,s.hz/1000))&1);
@@ -330,11 +355,25 @@ struct e51p_component {
     static e51p_status busRead(void* user, e51p_context*, e51p_endpoint, uint32_t address, uint32_t, uint32_t* value) {
         auto& s = *static_cast<e51p_component*>(user);
         if (address > 1) return E51P_INVALID_ARGUMENT;
+        if (s.config.kind == E51P_COMPONENT_BUS_LATCH) return E51P_UNSUPPORTED;
+        if (s.config.kind == E51P_COMPONENT_BUS_BUFFER) {
+            e51p_digital_state input{};
+            const auto status = s.api->sample(s.context,s.pins[1],&input);
+            if (status != E51P_OK) return status;
+            if (input.contention) return E51P_CONTENTION;
+            if (input.floating) return E51P_INVALID_STATE;
+            *value = input.value; return E51P_OK;
+        }
         *value = address ? s.ayRead() : s.ayAddress; return E51P_OK;
     }
     static e51p_status busWrite(void* user, e51p_context*, e51p_endpoint, uint32_t address, uint32_t value) {
         auto& s = *static_cast<e51p_component*>(user);
         if (address > 1 || value > 255) return E51P_INVALID_ARGUMENT;
+        if (s.config.kind == E51P_COMPONENT_BUS_BUFFER) return E51P_UNSUPPORTED;
+        if (s.config.kind == E51P_COMPONENT_BUS_LATCH) {
+            s.latch = value; s.latchOutput(); s.pulseStart = s.now(); s.pulseActive = s.pulseTicks != 0; s.pulseOutput();
+            return E51P_OK;
+        }
         if (address) s.ayWrite(static_cast<uint8_t>(value)); else s.ayAddress = value&15;
         return E51P_OK;
     }
@@ -342,6 +381,7 @@ struct e51p_component {
 
 extern "C" {
 e51p_component_config e51p_component_config_init(uint32_t kind) {
+    if (kind == E51P_COMPONENT_MATRIX) return {sizeof(e51p_component_config),kind,1,0,0,2,8,0x50,2000000};
     return {sizeof(e51p_component_config),kind,1,0,0,16,2,0x50,2000000};
 }
 const e51p_endpoint_desc* e51p_component_pins(uint32_t kind, uint32_t* count) {
@@ -351,6 +391,9 @@ const e51p_endpoint_desc* e51p_component_pins(uint32_t kind, uint32_t* count) {
     case E51P_COMPONENT_SWITCH: case E51P_COMPONENT_BUTTON: *count = 1; return switchPins;
     case E51P_COMPONENT_LCD: *count = 4; return lcdPins;
     case E51P_COMPONENT_KEYPAD: *count = 2; return keypadPins;
+    case E51P_COMPONENT_MATRIX: *count = 3; return matrixPins;
+    case E51P_COMPONENT_BUS_LATCH: *count = 5; return latchPins;
+    case E51P_COMPONENT_BUS_BUFFER: *count = 2; return bufferPins;
     case E51P_COMPONENT_595: *count = 7; return shift595Pins;
     case E51P_COMPONENT_165: *count = 7; return shift165Pins;
     case E51P_COMPONENT_EEPROM: *count = 3; return eepromPins;
@@ -365,7 +408,8 @@ e51p_status e51p_add_component(const e51p_api* api, e51p_context* context, const
     if (!api || api->abi_version != E51P_ABI_VERSION || api->struct_size < sizeof(*api) || !context || !config ||
         config->struct_size < sizeof(*config) || !result || !pins || capacity < count || !metadata ||
         (config->active_low != 0 && config->active_low != 1) || (config->initially_pressed != 0 && config->initially_pressed != 1) ||
-        config->columns < 1 || config->columns > 20 || (config->rows != 1 && config->rows != 2 && config->rows != 4) ||
+        (config->kind == E51P_COMPONENT_MATRIX ? (config->columns < 1 || config->columns > 4 || config->rows < 1 || config->rows > 8) :
+        (config->columns < 1 || config->columns > 20 || (config->rows != 1 && config->rows != 2 && config->rows != 4))) ||
         config->columns*config->rows > 80 || config->i2c_address < 0x50 || config->i2c_address > 0x57 ||
         !std::isfinite(config->clock_hz) || config->clock_hz < 1000 || config->clock_hz > 4000000) return E51P_INVALID_ARGUMENT;
     auto state = std::unique_ptr<e51p_component>(new(std::nothrow) e51p_component);
@@ -377,7 +421,9 @@ e51p_status e51p_add_component(const e51p_api* api, e51p_context* context, const
     e51p_device_desc desc{}; desc.struct_size = sizeof(desc); desc.instance_id = id; desc.user = state.get();
     desc.destroy = [](void* user) { delete static_cast<e51p_component*>(user); };
     desc.reset = e51p_component::reset; desc.advance = e51p_component::advance; desc.digital_changed = e51p_component::changed;
-    if (config->kind == E51P_COMPONENT_AY) { desc.bus_read = e51p_component::busRead; desc.bus_write = e51p_component::busWrite; }
+    if (config->kind == E51P_COMPONENT_AY || config->kind == E51P_COMPONENT_BUS_LATCH || config->kind == E51P_COMPONENT_BUS_BUFFER) {
+        desc.bus_read = e51p_component::busRead; desc.bus_write = e51p_component::busWrite;
+    }
     e51p_device device;
     auto status = api->add_device(context,&desc,&device);
     if (status != E51P_OK) return status;
@@ -388,6 +434,14 @@ e51p_status e51p_add_component(const e51p_api* api, e51p_context* context, const
             pin.pull_up = config->active_low ? 1 : 0; pin.pull_down = config->active_low ? 0 : 1;
         }
         status = api->add_endpoint(context,device,&pin,&owned->pins[i]);
+        if (status != E51P_OK) return status;
+    }
+    if (config->kind == E51P_COMPONENT_AY || config->kind == E51P_COMPONENT_BUS_LATCH || config->kind == E51P_COMPONENT_BUS_BUFFER) {
+        status = e51p_target_set_write_validator(context,owned->pins[0],
+            [](void* user, uint32_t address, uint32_t value) -> e51p_status {
+                if (static_cast<e51p_component*>(user)->config.kind == E51P_COMPONENT_BUS_BUFFER) return E51P_UNSUPPORTED;
+                return address < 2 && value < 256 ? E51P_OK : E51P_INVALID_ARGUMENT;
+            },owned);
         if (status != E51P_OK) return status;
     }
     std::copy_n(owned->pins.begin(),count,pins); *result = owned;
@@ -404,8 +458,20 @@ e51p_status e51p_component_set_pressed(e51p_component* s, int pressed) {
     s->contact = s->pressed; s->contactOutput(); return E51P_OK;
 }
 e51p_status e51p_component_set_keys(e51p_component* s, uint32_t mask) {
-    if (!s || s->config.kind != E51P_COMPONENT_KEYPAD || mask > 65535) return E51P_INVALID_ARGUMENT;
+    if (!s || (s->config.kind != E51P_COMPONENT_KEYPAD && s->config.kind != E51P_COMPONENT_MATRIX)) return E51P_INVALID_ARGUMENT;
+    const unsigned count = s->config.kind == E51P_COMPONENT_MATRIX ? s->config.rows*s->config.columns+s->directKeys : 16;
+    if (count < 32 && mask >= (1u<<count)) return E51P_INVALID_ARGUMENT;
     s->keys = mask; s->keypadOutput(); return E51P_OK;
+}
+e51p_status e51p_component_set_latch_pulse_ticks(e51p_component* s, uint64_t ticks) {
+    if (!s || s->config.kind != E51P_COMPONENT_BUS_LATCH) return E51P_INVALID_ARGUMENT;
+    if (s->started) return E51P_INVALID_STATE;
+    s->pulseTicks = ticks; return E51P_OK;
+}
+e51p_status e51p_component_set_matrix_direct_keys(e51p_component* s, uint32_t count) {
+    if (!s || s->config.kind != E51P_COMPONENT_MATRIX || count > 8 || count+s->config.rows*s->config.columns > 32) return E51P_INVALID_ARGUMENT;
+    if (s->started) return E51P_INVALID_STATE;
+    s->directKeys = count; return E51P_OK;
 }
 e51p_status e51p_component_get_led(const e51p_component* s, int* on, int* defined) {
     if (!s || s->config.kind != E51P_COMPONENT_LED || !on || !defined) return E51P_INVALID_ARGUMENT;

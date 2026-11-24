@@ -16,6 +16,8 @@ def git(*arguments):
     return subprocess.check_output(['git', '-C', str(repo), *arguments])
 
 def forbidden(path):
+    if path in {'progs/boards/avt2250/avt2250.emu51', 'progs/boards/avt2250/README.md'}:
+        return False
     parts = pathlib.PurePosixPath(path).parts
     if any(part in {'dist', 'build'} or part.startswith('build-') for part in parts):
         return True
@@ -42,6 +44,8 @@ head = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--verify', 'HEAD'],
 if head.returncode == 0:
     for line in git('rev-list', '--objects', '--all').decode('utf-8').splitlines():
         _object_id, separator, name = line.partition(' ')
+        if separator and name == 'progs/boards/avt2250' and git('cat-file', '-t', _object_id).strip() == b'tree':
+            continue
         if separator and forbidden(name):
             problems.append(f'Forbidden history path: {name}')
 if problems:

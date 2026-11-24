@@ -5,6 +5,16 @@ The desktop application uses the independently LGPL-2.1-only
 [peripheral SDK](peripheral-sdk/README.md). Its configuration, CPU adapters and
 UI remain GPL-2.0-only. The SDK can also be built and used without the emulator.
 
+RAM, ROM, Clock and Address Decoder blocks share the same Graph/inspector Apply
+workflow. Decoder outputs can select memory and register peripherals on a common
+bus. See [memory circuits and assembly projects](MEMORY_BUS.md) for wiring,
+binary Load/Save, multiple source files, load mappings and runnable examples.
+
+The [AVT-2250 circuit](progs/boards/avt2250/README.md) uses generic bus output
+latches, an input buffer, a configurable key matrix and the existing display,
+decoder, RAM/ROM and Clock blocks. It requires a user-supplied monitor image;
+the public project contains no proprietary firmware or board module.
+
 ## Segment display examples
 
 Open a project and select **Peripherals → Live**, then Run:
@@ -314,8 +324,16 @@ section, or entering layout edit mode. Toggle-mode holds intentionally remain
 latched when hidden. Mode changes clear previous holds. Keypad mode is project
 presentation data; reopening a project never restores pressed keys.
 
+For the 4×4 keypad and configurable key matrix, the Graph inspector also offers
+**Custom key layout** and **Key labels and function legends**. Choose visual
+rows/columns, assign a contact or **Empty** to each position, and edit its label
+and optional second-line legend. Selecting an already placed contact swaps the
+positions. Empty positions have no input target. Visual placement preserves
+electrical key indices; scan dimensions and independent keys are separate
+settings. Use the title-bar Apply action and Save Project to retain these edits.
+
 **Save Project** stores Live positions and sizes separately from Graph positions.
-Layout changes take effect immediately without Apply or a CPU reset. Opening a
+Live box layout changes take effect immediately without Apply or a CPU reset. Opening a
 project restores its arrangement with edit mode off. Older projects receive a
 default arrangement the first time Live is shown.
 

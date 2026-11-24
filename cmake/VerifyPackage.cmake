@@ -92,7 +92,7 @@ if(NOT listed STREQUAL files)
     message(FATAL_ERROR "Manifest does not match package contents")
 endif()
 foreach(path IN ITEMS README.md RELEASE.md THIRD_PARTY_NOTICES.md HISTORY.md LICENSE COPYRIGHT
-        CONTRIBUTING.md CYCLE_ACCURATE_EXECUTION.md MODULES.md
+        CONTRIBUTING.md CYCLE_ACCURATE_EXECUTION.md MEMORY_BUS.md MEMORY_BUS_PLAN.md MODULES.md
         licenses/imgui/LICENSE.txt licenses/ImGuiColorTextEdit/LICENSE
         licenses/kason/LICENSE licenses/codicons/LICENSE
         licenses/portable-file-dialogs/portable-file-dialogs.COPYING licenses/glfw/COPYING.txt
@@ -103,9 +103,12 @@ foreach(path IN ITEMS README.md RELEASE.md THIRD_PARTY_NOTICES.md HISTORY.md LIC
 endforeach()
 foreach(path IN ITEMS "${INCLUDEDIR}/emu51/peripheral.h"
         "${INCLUDEDIR}/emu51/devices.h"
+        "${INCLUDEDIR}/emu51/memory.h" "${INCLUDEDIR}/emu51/decoder.h"
+        "${INCLUDEDIR}/emu51/snapshot.h" "${INCLUDEDIR}/emu51/wired_bus.h"
         "${INCLUDEDIR}/emu51/audio.h" "${INCLUDEDIR}/emu51/audio_host.h"
         "${DATADIR}/doc/emu51-peripheral-sdk/LICENSE" "${DATADIR}/doc/emu51-peripheral-sdk/COPYING"
-        "${DATADIR}/doc/emu51-peripheral-sdk/README.md" "${DATADIR}/doc/emu51-peripheral-sdk/AUDIO.md")
+        "${DATADIR}/doc/emu51-peripheral-sdk/README.md" "${DATADIR}/doc/emu51-peripheral-sdk/AUDIO.md"
+        "${DATADIR}/doc/emu51-peripheral-sdk/MEMORY_BUS.md")
     if(NOT EXISTS "${root}/${path}")
         message(FATAL_ERROR "Missing installed peripheral SDK file: ${path}")
     endif()

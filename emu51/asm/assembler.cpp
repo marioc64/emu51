@@ -725,7 +725,7 @@ private:
     std::optional<fs::path> resolve_include(const std::string& include_name, const fs::path& current_dir) const {
         fs::path requested(include_name);
         if (requested.is_absolute()) {
-            if (fs::exists(requested)) {
+            if (fs::exists(requested) || options_.source_overrides.contains(fs::absolute(requested).lexically_normal())) {
                 return requested.lexically_normal();
             }
             return std::nullopt;
@@ -743,7 +743,7 @@ private:
 
         for (const fs::path& dir : search_dirs) {
             const fs::path candidate = (dir / requested).lexically_normal();
-            if (fs::exists(candidate)) {
+            if (fs::exists(candidate) || options_.source_overrides.contains(fs::absolute(candidate).lexically_normal())) {
                 return candidate;
             }
         }
@@ -782,6 +782,13 @@ private:
             return;
         }
 
+        const auto draft = options_.source_overrides.find(fs::absolute(*resolved).lexically_normal());
+        if (draft != options_.source_overrides.end()) {
+            include_stack.push_back(*resolved);
+            process_source(resolved->string(),draft->second,resolved->parent_path(),include_stack);
+            include_stack.pop_back();
+            return;
+        }
         std::ifstream input(*resolved);
         if (!input) {
             add_error(location, "unable to open include '" + resolved->string() + "'");
@@ -1392,6 +1399,8 @@ private:
 Assembler::Assembler(AssembleOptions options) : options_(std::move(options)) {}
 
 AssembleResult Assembler::assemble_file(const fs::path& source_path) const {
+    const auto draft = options_.source_overrides.find(fs::absolute(source_path).lexically_normal());
+    if (draft != options_.source_overrides.end()) return assemble_string(source_path.string(),draft->second,source_path.parent_path());
     std::error_code error;
     if (!fs::is_regular_file(source_path, error)) {
         AssembleResult result;

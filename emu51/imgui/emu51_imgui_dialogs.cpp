@@ -46,10 +46,13 @@ void Emu51ImguiApp::drawExecutionSettingsDialog()
 	if (ImGui::RadioButton("Cycle exact", executionSettingsDialog_.cycleExact))
 		executionSettingsDialog_.cycleExact = true;
 	ImGui::SameLine(inputOffset);
-	ImGui::BeginDisabled(!executionSettingsDialog_.cycleExact);
+	const bool graphClock = peripherals_ && std::any_of(peripherals_->config().devices.begin(),peripherals_->config().devices.end(),[](const auto& d) { return d.kind == Emu51PeripheralKind::Clock; });
+	if (graphClock) executionSettingsDialog_.crystalMHz = crystalMHz_;
+	ImGui::BeginDisabled(!executionSettingsDialog_.cycleExact || graphClock);
 	ImGui::SetNextItemWidth(140.0f);
 	ImGui::InputDouble("MHz", &executionSettingsDialog_.crystalMHz, 0.0, 0.0, "%.9g");
 	ImGui::EndDisabled();
+	if (graphClock) ImGui::TextDisabled("Oscillator frequency is configured in the Clock block inspector.");
 
 	const bool validMHz = Emu51CycleTiming::validCrystalMHz(executionSettingsDialog_.crystalMHz);
 	const bool validSettings = !executionSettingsDialog_.cycleExact || validMHz;

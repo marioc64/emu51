@@ -25,6 +25,7 @@
 #include "emu51_execution_settings.h"
 #include "emu51_ui_state.h"
 #include "emu51_project.h"
+#include "emu51_project_build.h"
 #include "emu51_hardware.h"
 #include "emu51_peripheral_session.h"
 #include "emu51_peripheral_editor.h"
@@ -207,6 +208,41 @@ public:
 		std::string buildStatusTitle;
 		std::string buildStatusDetail;
 	};
+    struct UnitEditor {
+        std::unique_ptr<TextEditor> editor;
+        AssemblyEditorState state;
+        std::vector<emu51_asm::Diagnostic> diagnostics;
+        std::string observed, baseDirectory;
+        std::optional<std::string> savedInProject;
+        std::unique_ptr<Emu51EditorRecovery> recovery;
+    };
+    std::vector<Emu51AssemblyUnit> projectUnits_;
+    std::vector<Emu51ProgramMapping> projectMappings_;
+    std::string activeProjectUnit_;
+    std::map<std::string,UnitEditor> unitEditors_;
+    std::set<std::string> savedProjectUnits_;
+    Emu51ProjectBuild projectBuild_;
+    std::map<std::string,Emu51BuiltUnit> lastUnitBuilds_;
+    bool projectTreeOpen_ = false;
+    bool switchProjectUnit(const std::string&);
+    void syncProjectUnit();
+    bool confirmProjectEditors();
+    void drawProjectTree();
+    bool removeProjectUnit(std::string id);
+    bool buildProjectUnits(bool load, bool powerCycle = false);
+    bool addProjectUnit(const std::filesystem::path&, bool embedded = false);
+    bool initializeCircuitProject();
+    Emu51Project captureBuildProject();
+    void installProjectSources(const Emu51ProjectBuild&);
+    void refreshPhysicalSources();
+    void drawPhysicalMemory();
+    bool fillCircuitMemory(bool code, std::uint16_t start, std::uint16_t end, std::uint8_t value, bool skipUnmapped = false);
+    std::string physicalMemoryDevice_;
+    std::uint64_t physicalMemoryOffset_ = 0, physicalMemoryLength_ = 256;
+    int physicalMemoryFill_ = 0;
+    std::uint64_t physicalSourceRevision_ = 0;
+    bool rebuildingPhysicalSources_ = false;
+    std::vector<std::pair<std::string,std::uint64_t>> physicalSourcePages_;
 
 public:
 		struct PaneKey {

@@ -70,12 +70,25 @@ struct Emu51ImguiAppTestAccess {
         app.assemblyEditorState_.open = true;
         app.markAssemblyEditorChanged();
     }
+    static bool containsLegacyGraph(const Emu51PeripheralConfig& actual, const Emu51PeripheralConfig& expected)
+    {
+        return std::all_of(expected.devices.begin(),expected.devices.end(),[&](const auto& d) { return std::find(actual.devices.begin(),actual.devices.end(),d) != actual.devices.end(); }) &&
+            std::all_of(expected.digital.begin(),expected.digital.end(),[&](const auto& w) { return std::find(actual.digital.begin(),actual.digital.end(),w) != actual.digital.end(); }) &&
+            std::all_of(expected.analog.begin(),expected.analog.end(),[&](const auto& w) { return std::find(actual.analog.begin(),actual.analog.end(),w) != actual.analog.end(); });
+    }
+    static auto& audioDevice(auto& config)
+    {
+        const auto found = std::find_if(config.devices.begin(),config.devices.end(),[](const auto& d) { return d.kind == Emu51PeripheralKind::Audio; });
+        check(found != config.devices.end(),"Audio fixture contains its audio device");
+        return found == config.devices.end() ? config.devices.front() : *found;
+    }
     static void openAudioExample(Emu51ImguiApp& app, int example)
     {
         const auto path = fs::path(EMU51_REPO_ROOT)/"progs/asm/demo"/
             (example == 3 ? "microphone_covox.emu51" : "covox_duet.emu51");
         check(app.openProjectFromPath(path), "Open a portable audio example through the project loader");
         app.compileAssemblyEditor();
+        check(app.hasCompiledAssemblyEditorOutput(),("Portable audio source compiles: "+app.statusMessage_).c_str());
     }
     static void configureAdcBoardFixture(Emu51ImguiApp& app)
     {
@@ -144,8 +157,9 @@ end
         check(editor.blocks_.size() == 3 && editor.blocks_[0].title == "Intel 8052",
             "Circuit canvas includes the actual CPU model and every device");
         check(editor.pin("cpu.P0") && editor.pin("cpu.P0")->bits.size() == 8 && editor.pin("cpu.P3")->bits.size() == 8 &&
-            editor.pin("cpu.xdata") && editor.pin("covox.out") && editor.pin("audio.playback"),
-            "Canvas exposes every CPU port bit, XDATA and analog audio pins");
+            editor.pin("cpu.ADDR") && editor.pin("cpu.DATA") && editor.pin("cpu.PSEN") &&
+            editor.pin("covox.out") && editor.pin("audio.playback"),
+            "Canvas exposes every CPU port bit, functional bus and analog audio pins");
         const auto original = config;
         const auto cpuPosition = editor.blocks_[0].position;
         const auto header = editor.screen({cpuPosition.x+35,cpuPosition.y+20});
@@ -1045,7 +1059,7 @@ end
             check(!app->running_ && app->instructionCount_ == 1, "Reset and single-step remain synchronized while worker exists");
             app->resetCpuState(true);
             // Breakpoint stop must run on the worker without touching editor/ImGui.
-            app->unifiedMemory_[0] = 0; app->unifiedMemory_[1] = 0; app->breakpoints_.insert(1);
+            app->cpu_.writeProg(0,0); app->cpu_.writeProg(1,0); app->breakpoints_.insert(1);
             app->toggleRun();
         }
         const auto waitStopped = [&] {
@@ -1068,7 +1082,7 @@ end
             check(app->cpu_.PC == 1 && app->statusMessage_.find("breakpoint") != std::string::npos,
                 "Breakpoint reports the correct synchronized program counter");
             app->breakpoints_.clear(); app->resetCpuState(true);
-            app->unifiedMemory_[0] = 0x75; app->unifiedMemory_[1] = 0x90; app->unifiedMemory_[2] = 0x55;
+            app->cpu_.writeProg(0,0x75); app->cpu_.writeProg(1,0x90); app->cpu_.writeProg(2,0x55);
             app->watchpoints_.push_back({Emu51ImguiApp::WatchSpace::Internal, 0x90, false, true, true});
             app->toggleRun();
         }
@@ -1137,9 +1151,9 @@ end
                 app->cycleCount_ == cycles && app->peripherals_->ticks() == ticks &&
                 std::equal(iram.begin(), iram.end(), app->cpu_.IRAM), "Live buffer changes preserve CPU and player position");
             check(app->peripherals_->audioLatencyMs() == (size ? size : 128) &&
-                app->peripherals_->config().devices.back().audioBufferMs == size &&
-                app->peripheralDraft_.devices.back().audioBufferMs == size &&
-                app->peripherals_->config().devices.back().inputGainDb == 12,
+                audioDevice(app->peripherals_->config()).audioBufferMs == size &&
+                audioDevice(app->peripheralDraft_).audioBufferMs == size &&
+                audioDevice(app->peripherals_->config()).inputGainDb == 12,
                 "Applied buffer controls real latency, saved graph and draft while retaining gain");
 #ifdef EMU51_GUI_HOST_AUDIO
             check(app->peripherals_->audioOpen() && app->peripherals_->audioRunning(), "Buffer resize reopens and resumes the same NULL host selection");
@@ -1157,10 +1171,10 @@ end
         check(app->saveProjectToPath(root / "audio-buffer.emu51"), "Project saves audio buffer size");
         auto restored = create();
         check(restored->openProjectFromPath(root / "audio-buffer.emu51") &&
-            restored->peripherals_->config().devices.back().audioBufferMs == 512 && restored->audioBufferMs_ == 512 &&
+            audioDevice(restored->peripherals_->config()).audioBufferMs == 512 && restored->audioBufferMs_ == 512 &&
             restored->peripherals_->audioLatencyMs() == 512 && !restored->peripherals_->audioOpen(),
             "Project reload restores buffer setting and allocates matching queues without opening hardware");
-        auto invalid = restored->peripherals_->config(); invalid.devices.back().audioBufferMs = -1;
+        auto invalid = restored->peripherals_->config(); audioDevice(invalid).audioBufferMs = -1;
         auto* original = restored->peripherals_.get();
         check(!restored->applyPeripheralConfig(invalid, 0.12) && restored->peripherals_.get() == original,
             "Graph validation rejects invalid stored audio buffering transactionally");
@@ -1222,7 +1236,7 @@ end
         auto app = create();
         openAudioExample(*app,4);
         check(app->hasCompiledAssemblyEditorOutput() && app->crystalMHz_ == 24.576 && app->cycleExact_ && !app->running_ &&
-            app->peripherals_ && app->peripherals_->config() == emu51PeripheralPreset(4) && !app->peripherals_->audioOpen(),
+            app->peripherals_ && containsLegacyGraph(app->peripherals_->config(),emu51PeripheralPreset(4)) && !app->peripherals_->audioOpen(),
             "Covox duet loads playback-only wiring and timer firmware at 24.576 MHz, paused with no microphone");
         for (unsigned i = 0; i < 30000; ++i) app->executeInstruction();
         check(app->cpu_.IRAM[0x30] == 1 && app->cpu_.IRAM[0x33] == 1 &&
@@ -1234,11 +1248,11 @@ end
         auto restored = create();
         check(restored->openProjectFromPath(file) && restored->peripherals_ && !restored->running_ &&
             !restored->peripherals_->audioOpen() && restored->crystalMHz_ == 24.576 &&
-            restored->peripherals_->config() == emu51PeripheralPreset(4) && restored->hasAssemblyEditorSource(),
+            containsLegacyGraph(restored->peripherals_->config(),emu51PeripheralPreset(4)) && restored->hasAssemblyEditorSource(),
             "Duet project restores wiring, clock and source without opening audio");
         auto packaged = create();
         check(packaged->openProjectFromPath(fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/covox_duet.emu51") &&
-            packaged->peripherals_->config() == emu51PeripheralPreset(4), "Portable Covox duet example opens");
+            containsLegacyGraph(packaged->peripherals_->config(),emu51PeripheralPreset(4)), "Portable Covox duet example opens");
         for (unsigned i = 0; i < 30000; ++i) packaged->executeInstruction();
         check(packaged->cpu_.IRAM[0x33] == 1 && packaged->cpu_.IRAM[0x3c] == 60,
             "Packaged duet's embedded source drives the real timer sequencer");
@@ -1259,7 +1273,7 @@ end
         auto app = create();
         openAudioExample(*app,3);
         check(app->hasCompiledAssemblyEditorOutput() && app->crystalMHz_ == 3 && app->cycleExact_ && !app->running_ &&
-            app->peripherals_ && app->peripherals_->config() == emu51PeripheralPreset(3) && !app->peripherals_->audioOpen(),
+            app->peripherals_ && containsLegacyGraph(app->peripherals_->config(),emu51PeripheralPreset(3)) && !app->peripherals_->audioOpen(),
             "Microphone demo loads direct ADC/P0 and P1/Covox firmware at 3 MHz without opening devices");
         initializeEcho(*app);
         for (unsigned i = 0; i < 500; ++i) app->executeInstruction();
@@ -1286,7 +1300,7 @@ end
         const auto file = root / "microphone_covox.emu51";
         check(app->saveProjectToPath(file), "Microphone example saves a portable project");
         auto restored = create();
-        check(restored->openProjectFromPath(file) && restored->peripherals_->config() == emu51PeripheralPreset(3) &&
+        check(restored->openProjectFromPath(file) && containsLegacyGraph(restored->peripherals_->config(),emu51PeripheralPreset(3)) &&
             restored->crystalMHz_ == 3 && restored->hasAssemblyEditorSource() && !restored->peripherals_->audioOpen(),
             "Microphone project restores embedded source and wiring with physical devices closed");
         const auto sample = fs::path(EMU51_REPO_ROOT) / "progs/asm/demo/microphone_covox.emu51";
@@ -1801,8 +1815,9 @@ fi
         check(app->saveProjectToPath(directory/"roundtrip.emu51"),"Expanded peripheral settings save in project JSON");
         auto restored=create(); check(restored->openProjectFromPath(directory/"roundtrip.emu51") &&
             restored->peripherals_->config()==config,"New device kinds, clocks, polarity and wiring round-trip through Kason");
+        config.devices[0].wiredBus = false; // Exercise legacy fixed-window validation.
         config.devices.push_back({"overlap",Emu51PeripheralKind::I8255,0x9000});
-        check(!app->applyPeripheralConfig(config,12),"AY and 8255 XDATA windows cannot overlap");
+        check(!app->applyPeripheralConfig(config,12),"Legacy fixed AY and 8255 XDATA windows cannot overlap");
         // Render Live with a complete LCD/keypad/button circuit as well as Graph.
         check(restored->openProjectFromPath(directory/"front_panel.emu51"),"Front panel reloads for GUI rendering");
         auto& io=ImGui::GetIO(); io.DisplaySize={1280,840}; io.DeltaTime=1.0f/60;
@@ -2361,10 +2376,10 @@ fi
             "Missing project inputs cannot reset the current CPU, memory or project path");
         fs::rename(moved / "missing.bin", moved / "overlay.bin");
         for (const auto& [from, to] : std::vector<std::pair<std::string, std::string>>{
-                {"\"version\":1", "\"version\":99"}, {"\"crystal_mhz\":11.0592", "\"crystal_mhz\":-1"},
+                {"\"version\":2", "\"version\":99"}, {"\"crystal_mhz\":11.0592", "\"crystal_mhz\":-1"},
                 {"\"binary_address\":1024", "\"binary_address\":65536"},
                 {"\"space\":1", "\"space\":4"}, {"\"breakpoints\":[256,512]", "\"breakpoints\":[-1]"},
-                {"\"version\":1", "\"version\":1,\"version\":1"}}) {
+                {"\"version\":2", "\"version\":2,\"version\":2"}}) {
             std::string malformed = document;
             const auto at = malformed.find(from);
             check(at != std::string::npos, "Invalid-project fixture locates its target field");

@@ -65,6 +65,8 @@ struct AssemblyImage {
 
 struct AssembleOptions {
     std::vector<std::filesystem::path> include_directories;
+    // Project editor drafts keyed by absolute, lexically normalized paths.
+    std::map<std::filesystem::path,std::string> source_overrides = {};
 };
 
 struct AssembleResult {

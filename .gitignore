@@ -14,3 +14,9 @@ progs/**/avt*
 progs/**/mtask2250*
 progs/**/bios.inc
 progs/**/const.inc
+
+# Publish only the ROM-free circuit metadata for this board.
+!progs/boards/avt2250/
+progs/boards/avt2250/*
+!progs/boards/avt2250/avt2250.emu51
+!progs/boards/avt2250/README.md

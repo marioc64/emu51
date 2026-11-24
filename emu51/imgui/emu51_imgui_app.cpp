@@ -579,6 +579,7 @@ Emu51ImguiApp::Emu51ImguiApp(bool persistState, bool attachHardware)
 	addMonitorView(MonitorView::MemoryKind::ExternalData, 0);
 	if (persistState_)
 		loadState(emu51GetStatePath());
+	if (persistState_ && !hardware_) (void)initializeCircuitProject();
 }
 
 Emu51ImguiApp::~Emu51ImguiApp()
@@ -718,11 +719,12 @@ void Emu51ImguiApp::requestLoadProgram()
 
 bool Emu51ImguiApp::hasLoadedProgram() const
 {
-	return !loadedProgramPath_.empty();
+	return !loadedProgramPath_.empty() || !projectUnits_.empty();
 }
 
 void Emu51ImguiApp::reloadProgram()
 {
+	if (!projectUnits_.empty()) { (void)buildProjectUnits(true); return; }
 	if (loadedProgramPath_.empty())
 		return;
 
@@ -790,7 +792,7 @@ bool Emu51ImguiApp::prepareToQuit()
 {
 	if (quitApproved_)
 		return true;
-	if (!confirmAssemblyEditorChanges())
+	if (!confirmProjectEditors())
 		return false;
 	quitApproved_ = true;
 	clearEditorRecovery();
@@ -1179,6 +1181,10 @@ bool Emu51ImguiApp::unifiedMode() const
 
 void Emu51ImguiApp::setUnifiedMode(bool unifiedMode)
 {
+	if (peripherals_ && peripherals_->circuitBus()) {
+		statusMessage_ = "CODE/XDATA sharing is configured by memory wiring in Graph";
+		return;
+	}
 	if (unifiedMode_ == unifiedMode)
 		return;
 
@@ -1277,6 +1283,7 @@ void Emu51ImguiApp::resetSnappedPanes()
 
 void Emu51ImguiApp::draw()
 {
+    refreshPhysicalSources();
     executionRedrawPending_.store(false, std::memory_order_release);
 	virtualScrollActive_ = false;
 	if (recoveryCheckPending_)
@@ -1344,6 +1351,7 @@ void Emu51ImguiApp::drawAssemblyEditor()
 		ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
 		ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 	notePaneActivity(pane, editorActive);
+	drawProjectTree();
 
 	if (loadedSources_.contains(editorSourceKey()) && !editorMatchesLoadedSource_)
 		ImGui::TextWrapped("Source differs from the loaded program. Compile and Load to update source debugging.");
@@ -1740,6 +1748,7 @@ void Emu51ImguiApp::resetMachine()
 	skipBreakpoint_.reset();
 	clearLoadedDebugInfo();
 	trace_.clear();
+	projectBuild_ = {}; physicalSourceRevision_ = 0;
 	running_ = false;
 	instructionCount_ = 0;
 	cycleCount_ = 0;
@@ -1812,6 +1821,30 @@ bool Emu51ImguiApp::loadProgram(
         return emu51_asm::prepare_program_file(fs::path(requestedPath), emu51_asm::ProgramLoadOptions{binaryLoadAddress});
     });
 	const auto& result = prepared.result;
+	if (result.success && peripherals_ && peripherals_->circuitBus()) {
+		const auto canonical = normalizedProgramPath(requestedPath);
+		auto unit = std::find_if(projectUnits_.begin(),projectUnits_.end(),[&](const auto& u) { return normalizedProgramPath(u.path) == canonical; });
+		if (unit == projectUnits_.end()) {
+			if (emu51_asm::detect_program_file_kind(requestedPath) == emu51_asm::ProgramFileKind::raw_binary) {
+				Emu51AssemblyUnit binary; binary.id = "binary"+std::to_string(projectUnits_.size()+1); binary.path = canonical; binary.binaryAddress = binaryLoadAddress;
+				projectUnits_.push_back(std::move(binary));
+			} else if (!addProjectUnit(canonical)) return false;
+			unit = std::find_if(projectUnits_.begin(),projectUnits_.end(),[&](const auto& u) { return normalizedProgramPath(u.path) == canonical; });
+		}
+		if (std::none_of(projectMappings_.begin(),projectMappings_.end(),[&](const auto& row) { return row.unit == unit->id; })) {
+			std::string target;
+			for (const auto& m : peripherals_->memories()) if (m.id == "system_memory" || m.id == "system_code") target = m.id;
+			unsigned order = 0; for (const auto& row : projectMappings_) order = std::max(order,row.order+1);
+			projectMappings_.push_back({"load"+std::to_string(order+1),unit->id,target,0,65536,0,order,false});
+			projectTreeOpen_ = true;
+			if (target.empty()) { statusMessage_ = "Choose this source's memory device and physical destination in Project files / Program load mappings"; return false; }
+		}
+		if (!buildProjectUnits(true)) return false;
+		if (resetCpuBeforeLoad) resetCpuState(true);
+		if (rememberForReload) { loadedProgramPath_ = canonical; loadedProgramBinaryAddress_ = binaryLoadAddress; }
+		if (rememberRecent) rememberRecentProgramPath(canonical);
+		return true;
+	}
 	if (result.success) {
 		if (memoryMode) unifiedMode_ = *memoryMode;
 		if (resetCpuBeforeLoad)
@@ -1835,6 +1868,7 @@ bool Emu51ImguiApp::loadProgram(
 
 bool Emu51ImguiApp::loadAssemblyFileIntoEditor(const fs::path& path)
 {
+	if (!projectUnits_.empty()) return addProjectUnit(path);
 	if (assemblyEditor_ == nullptr)
 		return false;
 	std::error_code error;
@@ -1993,7 +2027,13 @@ bool Emu51ImguiApp::compileAssemblyEditorImage(bool updateStatus)
 	}
 	const std::string sourceName = assemblyEditorState_.sourcePath.empty()
 		? (assemblyEditorBaseDirectory() / assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
-	emu51_asm::Assembler assembler;
+	emu51_asm::AssembleOptions options;
+	const auto project = captureBuildProject();
+	for (const auto& unit : project.units) if (unit.embedded || unit.editor.draft)
+		options.source_overrides.emplace(fs::absolute(unit.path).lexically_normal(),unit.editor.text);
+	for (const auto& unit : project.units) if (unit.id == activeProjectUnit_)
+		for (const auto& path : unit.includeDirectories) options.include_directories.emplace_back(path);
+	emu51_asm::Assembler assembler(options);
     const auto baseDirectory = assemblyEditorBaseDirectory();
     auto result = withoutExecutionLock([&] {
         return assembler.assemble_string(sourceName, assemblyEditor_->GetText(), baseDirectory);
@@ -2014,6 +2054,26 @@ bool Emu51ImguiApp::compileAssemblyEditorImage(bool updateStatus)
 
 bool Emu51ImguiApp::loadCompiledAssemblyEditorOutput(bool updateStatus, bool resetBeforeLoad)
 {
+	if (projectUnits_.empty() && peripherals_ && peripherals_->circuitBus()) {
+		if (!hasAssemblyEditorSource()) { statusMessage_ = "No assembly source to load"; return false; }
+		Emu51AssemblyUnit unit; unit.id = "source1"; unit.embedded = assemblyEditorState_.sourcePath.empty();
+		unit.path = unit.embedded ? (assemblyEditorBaseDirectory()/assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
+		unit.path = fs::absolute(unit.path).lexically_normal().string();
+		unit.baseDirectory = assemblyEditorBaseDirectory().string();
+		projectUnits_.push_back(std::move(unit)); activeProjectUnit_ = "source1"; syncProjectUnit();
+		std::string target;
+		for (const auto& m : peripherals_->memories()) if (m.id == "system_memory" || m.id == "system_code") target = m.id;
+		projectMappings_.push_back({"load1","source1",target,0,65536,0,0,false}); projectTreeOpen_ = true;
+		if (target.empty()) {
+			statusMessage_ = "Choose this source's memory device and physical destination in Project files / Program load mappings";
+			return false;
+		}
+	}
+	if (!projectUnits_.empty()) {
+		if (!buildProjectUnits(true)) return false;
+		if (resetBeforeLoad) resetCpuState(true);
+		return true;
+	}
 	trackAssemblyEditorChanges();
 	if (!hasCompiledAssemblyEditorOutput()) {
 		statusMessage_ = "compile assembly source first";
@@ -2101,11 +2161,14 @@ void Emu51ImguiApp::configureAddressSpace()
 	};
 	auto readProg = [this](std::uint16_t addr) -> std::uint8_t {
 		noteMemoryAccess(WatchSpace::Program, addr, false);
+		std::uint8_t value = 255;
+		if (peripherals_ && peripherals_->readProgram(addr,value,!instructionExecuting_)) return value;
 		return unifiedMode_ ? unifiedMemory_[addr] : romMemory_[addr];
 	};
 	auto writeProg = [this](std::uint16_t addr, std::uint8_t data) {
 		noteMemoryAccess(WatchSpace::Program, addr, true);
 		invalidateSourceLocation(addr);
+		if (peripherals_ && peripherals_->programLogical(true,addr,data)) { prevInstructionCacheDirty_ = true; return; }
 		if (unifiedMode_)
 			unifiedMemory_[addr] = data;
 		else
@@ -2117,6 +2180,8 @@ void Emu51ImguiApp::configureAddressSpace()
 
 void Emu51ImguiApp::clearMemory()
 {
+	if (peripherals_ && peripherals_->circuitBus())
+		for (const auto& m : peripherals_->memories()) (void)e51p_memory_fill(m.storage.get(),0,e51p_memory_capacity(m.storage.get()),0);
 	projectPrograms_.clear();
 	stopForDebugger("memory cleared");
 	clearLoadedDebugInfo();
@@ -2137,6 +2202,7 @@ void Emu51ImguiApp::clearMemory()
 
 void Emu51ImguiApp::clearRam()
 {
+	if (peripherals_ && peripherals_->circuitBus()) (void)fillCircuitMemory(false,0,65535,0,true);
 	if (unifiedMode_) projectPrograms_.clear();
 	stopForDebugger("memory cleared");
 	clearLoadedDebugInfo();
@@ -2155,6 +2221,7 @@ void Emu51ImguiApp::clearRam()
 
 void Emu51ImguiApp::clearRom()
 {
+	if (peripherals_ && peripherals_->circuitBus()) (void)fillCircuitMemory(true,0,65535,0,true);
 	projectPrograms_.clear();
 	stopForDebugger("memory cleared");
 	clearLoadedDebugInfo();
@@ -2189,6 +2256,10 @@ void Emu51ImguiApp::fillRange(bool fillRom, std::uint16_t start, std::uint16_t e
 		stopForDebugger("step canceled by memory edit");
 	if (start > end)
 		std::swap(start, end);
+	if (peripherals_ && peripherals_->circuitBus()) {
+		if (fillCircuitMemory(fillRom,start,end,value)) statusMessage_ = "Logical memory range programmed; selectors unchanged";
+		return;
+	}
 	auto& memory = unifiedMode_ ? unifiedMemory_ : (fillRom ? romMemory_ : ramMemory_);
 	for (std::uint16_t address = start; ; ++address) {
 		memory[address] = value;
@@ -2210,6 +2281,9 @@ void Emu51ImguiApp::fillRange(bool fillRom, std::uint16_t start, std::uint16_t e
 
 std::uint8_t Emu51ImguiApp::readProgramByte(std::uint16_t address) const
 {
+	const_cast<Emu51ImguiApp*>(this)->refreshPhysicalSources();
+	std::uint8_t value = 255;
+	if (peripherals_ && peripherals_->readProgram(address,value,true)) return value;
 	return unifiedMode_ ? unifiedMemory_[address] : romMemory_[address];
 }
 
@@ -2344,7 +2418,7 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 	if (!pendingWatchpointStop_.empty())
 		stopForDebugger(pendingWatchpointStop_);
     if (peripherals_ && peripherals_->status() != E51P_OK && peripherals_->status() != E51P_CONTENTION) {
-        stopForDebugger("peripheral error (SDK status " + std::to_string(peripherals_->status()) + "); reset or edit the graph");
+        stopForDebugger(peripherals_->busError().empty() ? "peripheral error (SDK status " + std::to_string(peripherals_->status()) + "); reset or edit the graph" : peripherals_->busError());
     }
 	return opcode;
 }

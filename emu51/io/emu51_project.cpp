@@ -39,6 +39,28 @@ struct StoredPeripheralDevice {
     int displayDigits, barSegments, commonAnode, displayColon;
     double persistenceMs;
     int displayColor, displayStyle, displayAddress;
+    std::uint64_t memoryCapacity;
+    int memoryFill, csLow, oeLow, weLow, decoderBits, wiredBus;
+    char keyLabels[32][64]; std::size_t keyLabelCount;
+    double pulseMs;
+    int directKeys, keyLayoutColumns, keyLayoutRows;
+    int keyLayout[64]; std::size_t keyLayoutCount;
+    char keyLegends[32][64]; std::size_t keyLegendCount;
+};
+struct StoredMemoryImage { char device[49], path[4096]; std::uint64_t offset, length; };
+struct StoredDecoderOutput { char device[49], id[49], name[129]; int activeLow; };
+struct StoredDecoderValue { char device[49], output[49]; std::uint32_t value; };
+struct StoredUnit {
+    char id[49], path[4096], baseDirectory[4096];
+    char includes[32][4096]; std::size_t includeCount;
+    int embedded, buildOnly, includeOnly, binaryAddress;
+    StoredEditor editor;
+};
+struct StoredMapping {
+    char id[49], unit[49], device[49];
+    std::uint32_t sourceStart, sourceEnd, order;
+    std::uint64_t destination;
+    int overlay;
 };
 struct StoredPeripheralWire { char a[65], b[65]; int aBit, bBit, width; };
 struct StoredAnalogWire { char from[65], to[65]; };
@@ -49,6 +71,13 @@ struct StoredProject {
     int serialTerminalOpen, serialLineEnding, serialFileLineEnding, serialFileLineDelayMs;
     char hardwareModule[128], cpuModel[16];
     double crystalMHz;
+    int circuitBus;
+    StoredMemoryImage memoryImages[1024]; std::size_t memoryImageCount;
+    StoredDecoderOutput decoderOutputs[1024]; std::size_t decoderOutputCount;
+    StoredDecoderValue decoderValues[131072]; std::size_t decoderValueCount;
+    StoredUnit units[32]; std::size_t unitCount;
+    StoredMapping mappings[256]; std::size_t mappingCount;
+    char activeUnit[49];
     StoredPeripheralDevice devices[32]; std::size_t deviceCount;
     StoredPeripheralWire digital[128]; std::size_t digitalCount;
     StoredAnalogWire analog[64]; std::size_t analogCount;
@@ -123,8 +152,22 @@ const kason_schema* projectSchema()
         KaSON_FIELD_INT(StoredPeripheralDevice, displayColor, "display_color", KaSON_DEFAULT_INT(0)),
         KaSON_FIELD_INT(StoredPeripheralDevice, displayStyle, "display_style", KaSON_DEFAULT_INT(7)),
         KaSON_FIELD_INT(StoredPeripheralDevice, displayAddress, "display_address", KaSON_DEFAULT_INT(112)),
+        KaSON_FIELD_U64(StoredPeripheralDevice, memoryCapacity, "memory_capacity", KaSON_DEFAULT_U64(65536)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, memoryFill, "memory_fill", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, csLow, "cs_low", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, oeLow, "oe_low", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, weLow, "we_low", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, decoderBits, "decoder_bits", KaSON_DEFAULT_INT(4)),
+        KaSON_FIELD_BOOL(StoredPeripheralDevice, wiredBus, "wired_bus", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_STRING_ARRAY(StoredPeripheralDevice, keyLabels, keyLabelCount, "key_labels", KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_DOUBLE(StoredPeripheralDevice, pulseMs, "pulse_ms", KaSON_DEFAULT_DOUBLE(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, directKeys, "direct_keys", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, keyLayoutColumns, "key_layout_columns", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, keyLayoutRows, "key_layout_rows", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT_ARRAY(StoredPeripheralDevice, keyLayout, keyLayoutCount, "key_layout", KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRING_ARRAY(StoredPeripheralDevice, keyLegends, keyLegendCount, "key_legends", KaSON_DEFAULT_EMPTY_ARRAY),
     };
-    KaSON_SCHEMA_DEFINE(deviceSchema, StoredPeripheralDevice, deviceFields, 32);
+    KaSON_SCHEMA_DEFINE(deviceSchema, StoredPeripheralDevice, deviceFields, 64);
     static const kason_schema_field digitalFields[] = {
         KaSON_FIELD_STRING(StoredPeripheralWire, a, "a", KaSON_REQUIRED),
         KaSON_FIELD_STRING(StoredPeripheralWire, b, "b", KaSON_REQUIRED),
@@ -154,8 +197,58 @@ const kason_schema* projectSchema()
         KaSON_FIELD_BOOL(StoredLiveBox, momentaryKeys, "momentary_keys", KaSON_DEFAULT_BOOL(false)),
     };
     KaSON_SCHEMA_DEFINE(liveBoxSchema, StoredLiveBox, liveBoxFields, 8);
+    static const kason_schema_field imageFields[] = {
+        KaSON_FIELD_STRING(StoredMemoryImage, device, "device", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredMemoryImage, path, "path", KaSON_REQUIRED),
+        KaSON_FIELD_U64(StoredMemoryImage, offset, "offset", KaSON_REQUIRED),
+        KaSON_FIELD_U64(StoredMemoryImage, length, "length", KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(imageSchema, StoredMemoryImage, imageFields, 8);
+    static const kason_schema_field outputFields[] = {
+        KaSON_FIELD_STRING(StoredDecoderOutput, device, "device", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredDecoderOutput, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredDecoderOutput, name, "name", KaSON_DEFAULT_STRING("")),
+        KaSON_FIELD_BOOL(StoredDecoderOutput, activeLow, "active_low", KaSON_DEFAULT_BOOL(true)),
+    };
+    KaSON_SCHEMA_DEFINE(outputSchema, StoredDecoderOutput, outputFields, 8);
+    static const kason_schema_field valueFields[] = {
+        KaSON_FIELD_STRING(StoredDecoderValue, device, "device", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredDecoderValue, output, "output", KaSON_REQUIRED),
+        KaSON_FIELD_U32(StoredDecoderValue, value, "value", KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(valueSchema, StoredDecoderValue, valueFields, 8);
+    static const kason_schema_field unitFields[] = {
+        KaSON_FIELD_STRING(StoredUnit, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredUnit, path, "path", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredUnit, baseDirectory, "base_directory", KaSON_DEFAULT_STRING("")),
+        KaSON_FIELD_STRING_ARRAY(StoredUnit, includes, includeCount, "include_directories", KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_BOOL(StoredUnit, embedded, "embedded", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_BOOL(StoredUnit, buildOnly, "build_only", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_BOOL(StoredUnit, includeOnly, "include_only", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_INT(StoredUnit, binaryAddress, "binary_address", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_STRUCT(StoredUnit, editor, "editor", &editorSchema, KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(unitSchema, StoredUnit, unitFields, 16);
+    static const kason_schema_field mappingFields[] = {
+        KaSON_FIELD_STRING(StoredMapping, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredMapping, unit, "unit", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredMapping, device, "device", KaSON_REQUIRED),
+        KaSON_FIELD_U32(StoredMapping, sourceStart, "source_start", KaSON_REQUIRED),
+        KaSON_FIELD_U32(StoredMapping, sourceEnd, "source_end", KaSON_REQUIRED),
+        KaSON_FIELD_U64(StoredMapping, destination, "destination", KaSON_REQUIRED),
+        KaSON_FIELD_U32(StoredMapping, order, "order", KaSON_REQUIRED),
+        KaSON_FIELD_BOOL(StoredMapping, overlay, "overlay", KaSON_DEFAULT_BOOL(false)),
+    };
+    KaSON_SCHEMA_DEFINE(mappingSchema, StoredMapping, mappingFields, 16);
     static const kason_schema_field fields[] = {
         KaSON_FIELD_INT(StoredProject, version, "version", KaSON_REQUIRED),
+        KaSON_FIELD_BOOL(StoredProject, circuitBus, "circuit_bus", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, memoryImages, memoryImageCount, "memory_images", &imageSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, decoderOutputs, decoderOutputCount, "decoder_outputs", &outputSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, decoderValues, decoderValueCount, "decoder_values", &valueSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, units, unitCount, "assembly_units", &unitSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, mappings, mappingCount, "load_mappings", &mappingSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRING(StoredProject, activeUnit, "active_unit", KaSON_DEFAULT_STRING("")),
         KaSON_FIELD_BOOL(StoredProject, unified, "unified_memory", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, debuggerOpen, "debugger_open", KaSON_REQUIRED),
         KaSON_FIELD_BOOL(StoredProject, traceEnabled, "trace_enabled", KaSON_REQUIRED),
@@ -181,10 +274,14 @@ const kason_schema* projectSchema()
         KaSON_FIELD_STRUCT_ARRAY(StoredProject, watchpoints, watchpointCount, "watchpoints", &watchSchema, KaSON_REQUIRED),
         KaSON_FIELD_STRING_ARRAY(StoredProject, watches, watchCount, "watches", KaSON_REQUIRED),
     };
-    KaSON_SCHEMA_DEFINE(schema, StoredProject, fields, 32);
-    static const bool initialized = kason_schema_init(&programSchema) == KaSON_SCHEMA_SUCCESS &&
+    KaSON_SCHEMA_DEFINE(schema, StoredProject, fields, 64);
+    static const bool initialized = kason_schema_init(&imageSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&outputSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&valueSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&mappingSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&programSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&watchSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&editorSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&unitSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&deviceSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&digitalSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&analogSchema) == KaSON_SCHEMA_SUCCESS &&
@@ -217,7 +314,7 @@ bool addressValid(int value) { return value >= 0 && value <= 65535; }
 
 Emu51Project decode(const StoredProject& s, const fs::path& base)
 {
-    if (s.version != 1) throw std::runtime_error("unsupported project version");
+    if (s.version != 1 && s.version != 2) throw std::runtime_error("unsupported project version");
     if (!Emu51CycleTiming::validCrystalMHz(s.crystalMHz) || s.stepsPerFrame < 1 || s.stepsPerFrame > 1000000 ||
         !addressValid(s.reloadBinaryAddress) || s.editor.line < 0 || s.editor.column < 0)
         throw std::runtime_error("invalid execution settings, cursor, or load address");
@@ -227,6 +324,8 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
         s.serialFileLineDelayMs < 0 || s.serialFileLineDelayMs > 10000)
         throw std::runtime_error("invalid serial transfer settings");
     Emu51Project p;
+    p.formatVersion = s.version;
+    p.peripherals.circuitBus = s.circuitBus != 0;
     p.cpuModel = *model;
     p.unified = s.unified; p.debuggerOpen = s.debuggerOpen; p.traceEnabled = s.traceEnabled;
     p.serialTerminalOpen = s.serialTerminalOpen;
@@ -241,6 +340,64 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
             d.bounceMs, d.columns, d.rows, d.i2cAddress, d.clockHz, resolvePath(d.storagePath,base),
             d.displayDigits, d.barSegments, d.commonAnode != 0, d.displayColon != 0, d.persistenceMs,
             d.displayColor, d.displayStyle, d.displayAddress});
+        auto& device = p.peripherals.devices.back();
+        device.memoryCapacity = d.memoryCapacity; device.memoryFill = d.memoryFill;
+        device.csLow = d.csLow; device.oeLow = d.oeLow; device.weLow = d.weLow;
+        device.decoderBits = d.decoderBits; device.wiredBus = d.wiredBus;
+        for (std::size_t j = 0; j < d.keyLabelCount; ++j) device.keyLabels.emplace_back(d.keyLabels[j]);
+        device.pulseMs = d.pulseMs;
+        device.directKeys = d.directKeys; device.keyLayoutColumns = d.keyLayoutColumns; device.keyLayoutRows = d.keyLayoutRows;
+        device.keyLayout.assign(d.keyLayout,d.keyLayout+d.keyLayoutCount);
+        for (std::size_t j = 0; j < d.keyLegendCount; ++j) device.keyLegends.emplace_back(d.keyLegends[j]);
+    }
+    const auto deviceFor = [&](const char* id) -> Emu51PeripheralDevice& {
+        const auto it = std::find_if(p.peripherals.devices.begin(),p.peripherals.devices.end(),[&](const auto& d) { return d.id == id; });
+        if (it == p.peripherals.devices.end()) throw std::runtime_error("Unknown device in memory/decoder configuration");
+        return *it;
+    };
+    for (std::size_t i = 0; i < s.memoryImageCount; ++i) {
+        const auto& image = s.memoryImages[i]; auto& d = deviceFor(image.device);
+        if (d.kind != Emu51PeripheralKind::Ram && d.kind != Emu51PeripheralKind::Rom) throw std::runtime_error("Image target is not memory");
+        d.memoryImages.push_back({resolvePath(image.path,base),image.offset,image.length});
+    }
+    for (std::size_t i = 0; i < s.decoderOutputCount; ++i) {
+        const auto& output = s.decoderOutputs[i]; auto& d = deviceFor(output.device);
+        if (d.kind != Emu51PeripheralKind::AddressDecoder) throw std::runtime_error("Output target is not a decoder");
+        d.decoderOutputs.push_back({output.id,output.name,output.activeLow != 0,{}});
+    }
+    for (std::size_t i = 0; i < s.decoderValueCount; ++i) {
+        const auto& value = s.decoderValues[i]; auto& d = deviceFor(value.device);
+        const auto it = std::find_if(d.decoderOutputs.begin(),d.decoderOutputs.end(),[&](const auto& o) { return o.id == value.output; });
+        if (it == d.decoderOutputs.end()) throw std::runtime_error("Unknown decoder output in assignment");
+        it->values.push_back(value.value);
+    }
+    for (std::size_t i = 0; i < s.unitCount; ++i) {
+        const auto& u = s.units[i];
+        if (!*u.id || !*u.path || !addressValid(u.binaryAddress) || u.editor.line < 0 || u.editor.column < 0 ||
+            std::any_of(p.units.begin(),p.units.end(),[&](const auto& other) { return other.id == u.id; }))
+            throw std::runtime_error("Invalid or duplicate assembly unit");
+        Emu51AssemblyUnit unit;
+        unit.id = u.id; unit.path = resolvePath(u.path,base); unit.baseDirectory = resolvePath(u.baseDirectory,base);
+        unit.embedded = u.embedded; unit.buildOnly = u.buildOnly; unit.includeOnly = u.includeOnly; unit.binaryAddress = static_cast<std::uint16_t>(u.binaryAddress);
+        for (std::size_t j = 0; j < u.includeCount; ++j) unit.includeDirectories.push_back(resolvePath(u.includes[j],base));
+        const auto& e = u.editor;
+        unit.editor = {e.present != 0,e.open != 0,e.draft != 0,resolvePath(e.path,base),e.name,resolvePath(e.baseDirectory,base),e.text,e.line,e.column};
+        p.units.push_back(std::move(unit));
+    }
+    p.activeUnit = s.activeUnit;
+    if (!p.activeUnit.empty() && std::none_of(p.units.begin(),p.units.end(),[&](const auto& u) { return u.id == p.activeUnit; }))
+        throw std::runtime_error("Unknown active assembly unit");
+    std::set<std::string> mappingIds;
+    std::set<std::uint32_t> orders;
+    for (std::size_t i = 0; i < s.mappingCount; ++i) {
+        const auto& row = s.mappings[i];
+        if (!*row.id || !mappingIds.insert(row.id).second || !orders.insert(row.order).second || row.sourceStart >= row.sourceEnd || row.sourceEnd > 65536 ||
+            std::none_of(p.units.begin(),p.units.end(),[&](const auto& u) { return u.id == row.unit; }))
+            throw std::runtime_error("Invalid load mapping, unit or order");
+        const auto& d = deviceFor(row.device);
+        if ((d.kind != Emu51PeripheralKind::Ram && d.kind != Emu51PeripheralKind::Rom) || row.destination > d.memoryCapacity || row.sourceEnd-row.sourceStart > d.memoryCapacity-row.destination)
+            throw std::runtime_error("Load mapping exceeds memory capacity");
+        p.mappings.push_back({row.id,row.unit,row.device,row.sourceStart,row.sourceEnd,row.destination,row.order,row.overlay != 0});
     }
     for (std::size_t i = 0; i < s.digitalCount; ++i) {
         const auto& w = s.digital[i]; p.peripherals.digital.push_back({w.a, w.b, w.aBit, w.bBit, w.width});
@@ -344,13 +501,31 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
             throw std::runtime_error("project has too many program loads, watches, or peripheral block positions");
         const auto base = projectBase(path);
         copyText(s->cpuModel, emu51ModelInfo(p.cpuModel).id);
-        s->version = 1; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
+        s->version = 2; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
         s->serialTerminalOpen = p.serialTerminalOpen;
         s->serialLineEnding = p.serialLineEnding;
         s->serialFileLineEnding = p.serialFileLineEnding;
         s->serialFileLineDelayMs = p.serialFileLineDelayMs;
         copyText(s->hardwareModule, p.hardwareModule);
         emu51ValidatePeripheralConfig(p.peripherals);
+        s->circuitBus = p.peripherals.circuitBus;
+        if (p.units.size() > std::size(s->units) || p.mappings.size() > std::size(s->mappings)) throw std::runtime_error("Too many assembly units or load mappings");
+        copyText(s->activeUnit,p.activeUnit);
+        for (const auto& unit : p.units) {
+            auto& to = s->units[s->unitCount++];
+            copyText(to.id,unit.id); copyText(to.path,portablePath(unit.path,base)); copyText(to.baseDirectory,portablePath(unit.baseDirectory,base));
+            to.embedded = unit.embedded; to.buildOnly = unit.buildOnly; to.includeOnly = unit.includeOnly; to.binaryAddress = unit.binaryAddress;
+            if (unit.includeDirectories.size() > std::size(to.includes)) throw std::runtime_error("Too many include directories");
+            for (const auto& include : unit.includeDirectories) copyText(to.includes[to.includeCount++],portablePath(include,base));
+            const auto& from = unit.editor; auto& e = to.editor;
+            e.present = from.present; e.open = from.open; e.draft = from.draft;
+            copyText(e.path,portablePath(from.path,base)); copyText(e.name,from.name); copyText(e.baseDirectory,portablePath(from.baseDirectory,base));
+            copyText(e.text,from.text); e.line = from.line; e.column = from.column;
+        }
+        for (const auto& row : p.mappings) {
+            auto& to = s->mappings[s->mappingCount++]; copyText(to.id,row.id); copyText(to.unit,row.unit); copyText(to.device,row.device);
+            to.sourceStart = row.sourceStart; to.sourceEnd = row.sourceEnd; to.destination = row.destination; to.order = row.order; to.overlay = row.overlay;
+        }
         for (const auto& d : p.peripherals.devices) {
             auto& to = s->devices[s->deviceCount++]; copyText(to.id, d.id);
             to.kind = static_cast<int>(d.kind); to.address = d.address; to.referenceVolts = d.referenceVolts;
@@ -362,6 +537,26 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
             to.displayDigits=d.displayDigits; to.barSegments=d.barSegments; to.commonAnode=d.commonAnode;
             to.displayColon=d.displayColon; to.persistenceMs=d.persistenceMs; to.displayColor=d.displayColor;
             to.displayStyle=d.displayStyle; to.displayAddress=d.displayAddress;
+            to.memoryCapacity=d.memoryCapacity; to.memoryFill=d.memoryFill; to.csLow=d.csLow; to.oeLow=d.oeLow; to.weLow=d.weLow;
+            to.decoderBits=d.decoderBits; to.wiredBus=d.wiredBus;
+            for (const auto& label : d.keyLabels) copyText(to.keyLabels[to.keyLabelCount++],label);
+            to.pulseMs = d.pulseMs;
+            to.directKeys = d.directKeys; to.keyLayoutColumns = d.keyLayoutColumns; to.keyLayoutRows = d.keyLayoutRows;
+            for (int key : d.keyLayout) to.keyLayout[to.keyLayoutCount++] = key;
+            for (const auto& legend : d.keyLegends) copyText(to.keyLegends[to.keyLegendCount++],legend);
+            for (const auto& image : d.memoryImages) {
+                if (s->memoryImageCount == std::size(s->memoryImages)) throw std::runtime_error("Too many initialization images");
+                auto& item = s->memoryImages[s->memoryImageCount++]; copyText(item.device,d.id); copyText(item.path,portablePath(image.path,base));
+                item.offset=image.offset; item.length=image.length;
+            }
+            for (const auto& output : d.decoderOutputs) {
+                if (s->decoderOutputCount == std::size(s->decoderOutputs)) throw std::runtime_error("Too many decoder outputs");
+                auto& item = s->decoderOutputs[s->decoderOutputCount++]; copyText(item.device,d.id); copyText(item.id,output.id); copyText(item.name,output.name); item.activeLow=output.activeLow;
+                for (auto value : output.values) {
+                    if (s->decoderValueCount == std::size(s->decoderValues)) throw std::runtime_error("Project supports 131072 decoder assignments");
+                    auto& entry = s->decoderValues[s->decoderValueCount++]; copyText(entry.device,d.id); copyText(entry.output,output.id); entry.value=value;
+                }
+            }
         }
         for (const auto& w : p.peripherals.digital) {
             auto& to = s->digital[s->digitalCount++]; copyText(to.a, w.a); copyText(to.b, w.b);

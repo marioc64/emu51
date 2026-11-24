@@ -179,7 +179,8 @@ void ay() {
 }
 void registry() {
     e51p_registry* r=nullptr; ok(e51p_registry_create(E51P_REGISTRY_ABI_VERSION,&r)); ok(e51p_registry_add_builtins(r));
-    const char* ids[]{"emu51.led","emu51.switch","emu51.button","emu51.hd44780","emu51.keypad4x4","emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910"};
+    const char* ids[]{"emu51.led","emu51.switch","emu51.button","emu51.hd44780","emu51.keypad4x4","emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910",
+        "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix"};
     for (const auto* id : ids) {
         Graph g; const e51p_factory_desc* desc=nullptr; ok(e51p_registry_find(r,id,&desc)); std::array<e51p_endpoint,16> pins{};
         ok(e51p_registry_instantiate(r,id,g.api,g.c,"device",nullptr,0,pins.data(),16)); ok(g.api->start(g.c));
@@ -187,5 +188,55 @@ void registry() {
     }
     e51p_registry_destroy(r);
 }
+void busAndMatrix() {
+    Graph g; std::array<e51p_endpoint,16> latch{},buffer{},matrix{};
+    auto* output = g.add(E51P_COMPONENT_BUS_LATCH,latch,nullptr,"latch");
+    ok(e51p_component_set_latch_pulse_ticks(output,10));
+    g.add(E51P_COMPONENT_BUS_BUFFER,buffer,nullptr,"buffer");
+    auto cfg = e51p_component_config_init(E51P_COMPONENT_MATRIX); cfg.rows = 8; cfg.columns = 4;
+    auto* keys = g.add(E51P_COMPONENT_MATRIX,matrix,&cfg,"matrix");
+    auto rows = g.pin(8); g.wire(rows,matrix[0],8);
+    g.wire(matrix[1],buffer[1],4);
+    auto bus = g.pin(8,true);
+    ok(g.api->map_bus(g.c,bus,0,2,latch[0],0)); ok(g.api->map_bus(g.c,bus,2,2,buffer[0],0));
+    ok(g.api->start(g.c)); uint32_t value = 0;
+    check(e51p_component_set_latch_pulse_ticks(output,20) == E51P_INVALID_STATE,"Pulse timing is configured before start");
+    check(g.sample(latch[1]) == 0 && g.sample(latch[2]) == 255 && g.sample(latch[4]) == 1,"Latch deterministic reset and inverse outputs");
+    ok(g.api->bus_write(g.c,bus,1,0x55));
+    check(g.sample(latch[1]) == 0x55 && g.sample(latch[2]) == 0xaa && g.sample(latch[3]) == 1,"Both local address aliases latch data and trigger pulse");
+    g.advance(8); ok(g.api->bus_write(g.c,bus,0,0x55)); g.advance(5);
+    check(g.sample(latch[3]) == 1,"Same-value writes retrigger the watchdog pulse");
+    g.advance(5); check(g.sample(latch[3]) == 0 && g.sample(latch[1]) == 0x55,"Pulse expiry preserves the output register");
+    check(g.api->bus_read(g.c,bus,0,E51P_PEEK,&value) == E51P_UNSUPPORTED &&
+        g.api->bus_write(g.c,bus,2,0) == E51P_UNSUPPORTED,"Output-only and input-only directions are enforced");
+    for (unsigned key = 0; key < 32; ++key) {
+        ok(e51p_component_set_keys(keys,1u<<key));
+        for (unsigned row = 0; row < 8; ++row) {
+            g.drive(rows,255u^(1u<<row),255);
+            ok(g.api->bus_read(g.c,bus,2,E51P_PEEK,&value));
+            check(value == (key/4 == row ? 255u^(1u<<(key%4)) : 255u),"Every matrix switch reaches the buffer at its selected scan row");
+        }
+    }
+    ok(e51p_component_set_keys(keys,UINT32_MAX)); g.drive(rows,0,255);
+    ok(g.api->bus_read(g.c,bus,3,E51P_READ,&value)); check(value == 0xf0,"Multiple selected rows and simultaneous keys combine open-drain columns");
+    const auto time = g.time; for (unsigned i = 0; i < 10; ++i) ok(g.api->bus_read(g.c,bus,2,E51P_PEEK,&value));
+    uint64_t now,rate; ok(g.api->clock(g.c,&now,&rate)); check(now == time,"Buffer peeks do not advance time");
+    ok(g.api->reset(g.c)); check(g.sample(latch[1]) == 0 && g.sample(latch[3]) == 0,"Context reset clears latch and pulse");
 }
-int main() { std::puts("Front panel"); frontPanel(); std::puts("Shift registers"); shiftRegisters(); std::puts("LCD"); lcd(); std::puts("EEPROM"); eeprom(); std::puts("AY"); ay(); registry(); std::puts("Component protocol tests passed"); }
+void directKeys() {
+    Graph g; std::array<e51p_endpoint,16> matrix{};
+    auto* keys = g.add(E51P_COMPONENT_MATRIX,matrix);
+    check(e51p_component_set_matrix_direct_keys(keys,9) == E51P_INVALID_ARGUMENT,"Independent key limit is checked");
+    ok(e51p_component_set_matrix_direct_keys(keys,2));
+    const auto rows = g.pin(8); g.wire(rows,matrix[0],8); ok(g.api->start(g.c));
+    check(e51p_component_set_matrix_direct_keys(keys,1) == E51P_INVALID_STATE,"Independent contacts are configured before start");
+    ok(e51p_component_set_keys(keys,(1u<<2)|(1u<<16)|(1u<<17))); g.drive(rows,255,255);
+    check(g.sample(matrix[1]) == 15 && g.sample(matrix[2]) == 252,"Independent contacts remain active with every scan row disabled");
+    g.drive(rows,253,255);
+    check(g.sample(matrix[1]) == 14 && g.sample(matrix[2]) == 252,"Scanned and independent contacts coexist");
+    ok(g.api->reset(g.c)); check(g.sample(matrix[2]) == 252,"Reset preserves physically held independent contacts");
+    ok(e51p_component_set_keys(keys,0)); check(g.sample(matrix[2]) == 255,"Released direct outputs return to weak pull-ups");
+    check(e51p_component_set_keys(keys,1u<<18) == E51P_INVALID_ARGUMENT,"Unconfigured independent key bits are rejected");
+}
+}
+int main() { std::puts("Front panel"); frontPanel(); std::puts("Shift registers"); shiftRegisters(); std::puts("LCD"); lcd(); std::puts("EEPROM"); eeprom(); std::puts("AY"); ay(); registry(); busAndMatrix(); directKeys(); std::puts("Component protocol tests passed"); }

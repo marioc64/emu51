@@ -3,6 +3,8 @@
 Start with [README.md](README.md) for build commands and application behavior,
 [RELEASE.md](RELEASE.md) for packaging, and
 [CYCLE_ACCURATE_EXECUTION.md](CYCLE_ACCURATE_EXECUTION.md) for timing limits.
+The physical-memory workflow is documented in [MEMORY_BUS.md](MEMORY_BUS.md),
+with the implementation design in [MEMORY_BUS_PLAN.md](MEMORY_BUS_PLAN.md).
 
 ## Build and validation
 
@@ -27,6 +29,13 @@ selections and cancellation. It compiles generated AppleScript with the system
 `osacompile` tool without displaying a file picker, including repeated opens and
 paths containing spaces. Run these with
 `ctest --test-dir build -C Debug -R 'emu51_(ui|project_picker)_tests' --output-on-failure`.
+
+`emu51_memory_bus_tests` validates the LGPL storage/decoder/routing contracts.
+`emu51_memory_project_tests` covers sparse programming, overlays, include drafts,
+binary lengths, migration and schema round trips. `emu51_memory_ui_tests` covers
+independent editors, physical source identity, Clock Apply, power-cycle recipes
+and failed replacement. The execution-worker timing check runs serially because
+it measures audio delivery during real UI stalls.
 
 Keep changes to vendored code separate from application changes. Preserve
 upstream license notices; project-owned code uses GPL-2.0-only, except the
@@ -105,6 +114,16 @@ available without a GPIO interface. See the SDK guide for electrical limits,
 reset/lifetime rules and sticky host error reporting.
 
 ## Assembly and loading
+
+`io/emu51_project_build.*` compiles independent units and plans a complete set of
+physical writes before mutating chips. `io/emu51_project_migration.cpp` converts
+legacy fallback arrays and fixed MMIO into explicit memory/decoder/Clock wiring.
+`peripherals/emu51_memory.cpp` adapts CPU CODE/XDATA and passive resolution to
+the LGPL wired bus. Keep direct programming separate from CPU writes.
+`imgui/emu51_project_editor.cpp` owns independent editor bundles and programming
+rows; `emu51_physical_sources.cpp` selects loaded sources by physical identity.
+Source refresh runs on the UI thread and checks routing plus relevant storage
+page revisions; it must never touch TextEditor from the execution worker.
 
 `core/emu51_serial.cpp` owns bounded byte queues and transmit/receive frame
 progress. Direct byte operands use `readDirect()`/`writeDirect()` so every SBUF
@@ -369,8 +388,13 @@ CPU/player state. Callback frame indices must not continue on the abandoned
 wall interval. UI recovery tests exercise an 80 ms service gap and a >1 s stall
 with a real NULL-host callback, including steady output after recovery.
 The SDK and local hardware interface below are mutually exclusive in an active
-session. No graph/device is loaded automatically at app startup. See the SDK
-README for timing/ownership contracts and standalone CMake package usage.
+session. Normal startup creates the default memory circuit without searching
+for board firmware. The AVT-2250 module has been replaced by a
+[public circuit](progs/boards/avt2250/README.md) using generic SDK primitives.
+`emu51_trainer_tests` validates this circuit with an original synthetic ROM;
+optional monitor/serial arguments accept local user-supplied files. Normal CTest
+does not require them. See the SDK README for timing/ownership contracts and
+standalone CMake package usage.
 
 `imgui/emu51_hardware.*` defines one optional, statically registered hardware
 factory. Standard builds register none and do not search for modules or firmware.

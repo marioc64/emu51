@@ -1,6 +1,42 @@
 <!-- SPDX-License-Identifier: LGPL-2.1-only -->
 # Interactive components and serial devices
 
+## Functional parallel peripherals
+
+`emu51.bus-latch8` (`E51P_COMPONENT_BUS_LATCH`) has `bus`, `Q`, `Q_n`, `PULSE`
+and `PULSE_n`. A committed write stores eight bits; either local address aliases
+the same register. Reads are unsupported. Q resets to zero and Q_n to FFh.
+`e51p_component_set_latch_pulse_ticks` configures an optional retriggerable pulse
+before start; the registry exposes `pulse_ticks`. Every write, including an
+unchanged byte, retriggers it. Expiry releases the active pulse without changing
+Q. Time advancement and reset control pulse lifetime; peeks never trigger it.
+
+`emu51.bus-buffer8` (`E51P_COMPONENT_BUS_BUFFER`) has `bus` and `IN`. Reads and
+peeks sample its eight digital inputs, which have weak pull-ups. Floating or
+contended relevant bits return a fault. Writes are unsupported; both local
+addresses alias the input. Neither model is a complete physical TTL chip.
+They provide generic transaction adapters for latches and input buffers.
+
+`emu51.key-matrix` (`E51P_COMPONENT_MATRIX`) has eight active-low `rows` inputs,
+four open-drain `columns` outputs and eight open-drain `direct` outputs. Configure 1–8 rows and 1–4 columns; defaults
+are 8×2. Key bit `row * columns + column` closes that contact. Multiple selected
+rows combine their keys, with diode-isolated behavior and no ghost paths. Unused
+columns release their lines. This adds a configurable device without changing
+the existing 4×4 keypad's pin widths or key encoding. The C configuration
+structure and ABI-v1 function table retain their layouts.
+
+Before start, `e51p_component_set_matrix_direct_keys` adds 0–8 independent keys
+after the scanned contacts, up to 32 contacts total. The registry parameter is
+`direct_keys`. Key bit `rows*columns+n` pulls `direct[n]` low without depending on
+the selected scan row. Unconfigured direct outputs release their lines. Reset
+preserves physically held contacts, and peeks never consume a press.
+
+The GPL host exposes these devices in Graph. Latch/buffer address, data and
+controls use the wired bus adapter. Leave the latch's bus OE and buffer's WE
+inactive. Matrix labels and latch pulse milliseconds are project settings;
+the SDK timing API uses context ticks. These primitives support the ROM-free
+[AVT-2250 circuit](../progs/boards/avt2250/README.md) and other parallel devices.
+
 `emu51/components.h` adds context-owned devices to the existing C ABI. The
 constructors and device callbacks do no file, GUI or native audio I/O. Use
 `e51p_component_config_init`, edit the required properties, then call

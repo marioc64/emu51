@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace {
 constexpr float blockWidth = 320, headerHeight = 58, rowHeight = 52;
@@ -43,6 +44,7 @@ std::string range(const std::string& name, int bit, int width)
 void Emu51PeripheralEditor::restore(const std::vector<Emu51PeripheralBlockPosition>& positions)
 {
     positions_ = positions;
+    decoderText_.clear(); decoderErrors_.clear(); decoderNewValues_.clear(); memoryRequest_.reset();
     selected_.clear(); wire_ = {}; draggingBlock_.clear(); draggingPin_ = {};
     fitBlock_.clear(); rightGesture_ = rightPanned_ = false;
     pan_ = {24,24}; fit_ = true;
@@ -87,9 +89,9 @@ void Emu51PeripheralEditor::rebuild(const Emu51PeripheralConfig& config, Emu51Mo
         blocks_.push_back(std::move(b));
     };
     add("cpu", std::string("Intel ") + emu51ModelInfo(model).id,
-        std::string("CPU ") + emu51ModelInfo(model).id + "  /  P0-P3  /  XDATA");
+        std::string("CPU ") + emu51ModelInfo(model).id + "  /  P0-P3  /  CODE / XDATA");
     for (const auto& d : config.devices) {
-        if (const int size = emu51PeripheralBusSize(d.kind)) {
+        if (const int size = emu51PeripheralBusSize(d.kind); size && !d.wiredBus) {
             char subtitle[96]; std::snprintf(subtitle,sizeof(subtitle),"%s / XDATA %04X-%04X",emu51PeripheralKindName(d.kind),d.address,d.address+size-1);
             add(d.id,d.id,subtitle);
         } else add(d.id,d.id,emu51PeripheralKindName(d.kind));
@@ -176,6 +178,9 @@ void Emu51PeripheralEditor::removeDevice(Emu51PeripheralConfig& config, const st
     std::erase_if(config.analog,[&](const auto& w) { return w.from.starts_with(prefix) || w.to.starts_with(prefix); });
     std::erase_if(config.devices,[&](const auto& d) { return d.id == id; });
     std::erase_if(positions_,[&](const auto& p) { return p.id == id; });
+    std::erase_if(decoderText_,[&](const auto& p) { return p.first.starts_with(id+"."); });
+    std::erase_if(decoderErrors_,[&](const auto& p) { return p.first.starts_with(id+"."); });
+    std::erase_if(decoderNewValues_,[&](const auto& p) { return p.first.starts_with(id+"."); });
     selected_.clear(); wire_ = {};
 }
 bool Emu51PeripheralEditor::rename(const std::string& id, const std::string& name)
@@ -204,6 +209,7 @@ void Emu51PeripheralEditor::draw(Emu51PeripheralConfig& config, Emu51Model model
         if (sideBySide) ImGui::SameLine();
         ImGui::BeginChild("circuit-inspector",ImVec2(0,sideBySide ? canvasHeight : std::max(80.0f,ImGui::GetContentRegionAvail().y)),ImGuiChildFlags_Borders);
         inspector(config);
+        interacting_ |= ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         ImGui::EndChild();
     }
 }
@@ -323,7 +329,7 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     for (std::size_t i = 0; i < config.devices.size(); ++i) {
         const auto& d = config.devices[i];
         const int size = emu51PeripheralBusSize(d.kind);
-        if (!size) continue;
+        if (!size || d.wiredBus) continue;
         char label[64]; std::snprintf(label,sizeof(label),"XDATA %04X-%04X",d.address,d.address+size-1);
         link(pin("cpu.xdata"),-1,pin(d.id+".bus"),-1,busColor,label,{3,static_cast<int>(i)});
     }
@@ -340,7 +346,15 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
         dl->PopClipRect();
         for (const auto& p : b.pins) {
             const auto c = color(p.descriptor.kind);
-            const auto shortName = p.descriptor.name.substr(p.descriptor.name.find('.')+1);
+            auto shortName = p.descriptor.name.substr(p.descriptor.name.find('.')+1);
+            if (b.id == "cpu" && (shortName == "PSEN" || shortName == "RD" || shortName == "WR")) shortName = "/"+shortName;
+            const auto device = std::find_if(config.devices.begin(),config.devices.end(),[&](const auto& d) { return d.id == b.id; });
+            if (device != config.devices.end()) {
+                if (device->kind == Emu51PeripheralKind::AddressDecoder) {
+                    const auto output = std::find_if(device->decoderOutputs.begin(),device->decoderOutputs.end(),[&](const auto& o) { return o.id == shortName; });
+                    if (output != device->decoderOutputs.end()) shortName = output->name.empty() ? (output->activeLow ? "/" : "")+output->id : output->name;
+                } else if ((shortName == "CS" && device->csLow) || (shortName == "OE" && device->oeLow) || (shortName == "WE" && device->weLow)) shortName = "/"+shortName;
+            }
             const auto label = shortName + (p.descriptor.width > 1 && p.descriptor.kind == E51P_DIGITAL ? " ["+std::to_string(p.descriptor.width-1)+":0]" : "") + "  " + direction(p.descriptor);
             const auto extent = ImGui::GetFont()->CalcTextSizeA(12*zoom_,FLT_MAX,0,label.c_str());
             const auto at = plus(p.position,{p.left ? 14.0f : -14.0f-extent.x/zoom_,-7});
@@ -408,13 +422,19 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
     if (ImGui::BeginMenu("Add",config.devices.size() < 32)) {
         const char* kinds[] = {"8255", "ADC0804", "Covox / DAC", "Voltage source", "Digital source", "Host audio",
             "LED", "Switch", "Pushbutton", "HD44780 LCD", "4x4 matrix keypad", "74HC595", "74HC165", "24C02 EEPROM", "AY-3-8910", "7-segment LED display", "14-segment LED display", "16-segment LED display", "LED bar graph",
-            "CD4511 BCD decoder", "74LS47 BCD decoder", "MAX7219", "MAX7221", "HT16K33", "TM1637"};
+            "CD4511 BCD decoder", "74LS47 BCD decoder", "MAX7219", "MAX7221", "HT16K33", "TM1637",
+            "RAM", "ROM", "Clock", "Address Decoder", "8-bit bus output latch", "8-bit bus input buffer", "Configurable key matrix"};
         const bool hasAudio = std::any_of(config.devices.begin(),config.devices.end(),[](const auto& d) { return d.kind == Emu51PeripheralKind::Audio; });
-        for (int kind = 0; kind <= static_cast<int>(Emu51PeripheralKind::Tm1637); ++kind) {
+        for (int kind = 0; kind <= static_cast<int>(Emu51PeripheralKind::KeyMatrix); ++kind) {
             if (!ImGui::MenuItem(kinds[kind],nullptr,false,kind != static_cast<int>(Emu51PeripheralKind::Audio) || !hasAudio)) continue;
             int suffix = 1; std::string id;
             do { id = "device" + std::to_string(suffix++); } while (std::any_of(config.devices.begin(),config.devices.end(),[&](const auto& d) { return d.id == id; }));
             Emu51PeripheralDevice device; device.id = id; device.kind = static_cast<Emu51PeripheralKind>(kind);
+            device.wiredBus = emu51PeripheralBusSize(device.kind) && emu51CircuitBus(config);
+            if (device.kind == Emu51PeripheralKind::BusLatch || device.kind == Emu51PeripheralKind::BusBuffer) device.wiredBus = true;
+            if (device.kind == Emu51PeripheralKind::KeyMatrix) { device.rows = 8; device.columns = 2; }
+            if (device.kind == Emu51PeripheralKind::Rom) device.memoryFill = 255;
+            if (device.kind == Emu51PeripheralKind::Clock) device.clockHz = 12000000;
             if (const int size = emu51PeripheralBusSize(device.kind)) {
                 device.address = device.kind == Emu51PeripheralKind::Ay38910 ? 0x9000 : 0x8000;
                 while (device.address <= 65536-size && std::any_of(config.devices.begin(),config.devices.end(),[&](const auto& d) {
@@ -510,7 +530,7 @@ void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
             ImGui::TextUnformatted("CPU");
             ImGui::TextWrapped("P0-P3: four bidirectional 8-bit ports. Each numbered connector is one bit.");
             ImGui::TextWrapped("P3 alternate inputs/outputs: RXD, TXD, INT0, INT1, T0, T1, WR, RD. 8052 also uses P1.0/P1.1 for T2/T2EX.");
-            ImGui::TextWrapped("XDATA: 16-bit address, 8-bit data bus. 8255 blocks map four addresses here.");
+            ImGui::TextWrapped("ADDR: 16 address bits. DATA: 8 data bits. /PSEN reads CODE, /RD reads XDATA, /WR writes XDATA. CLK accepts a Clock source. These are functional transaction signals.");
             ImGui::TextDisabled("Choose CPU model in Execution settings.");
         } else {
             const auto found = std::find_if(config.devices.begin(),config.devices.end(),[&](const auto& d) { return d.id == id; });
@@ -518,9 +538,126 @@ void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
                 auto& d = *found;
                 ImGui::TextWrapped("%s",d.id.c_str()); ImGui::TextWrapped("%s",emu51PeripheralKindName(d.kind)); ImGui::Separator();
                 ImGui::PushItemWidth(110);
+                if (emu51PeripheralBusSize(d.kind)) ImGui::Checkbox("Wire address/data/control pins",&d.wiredBus);
+                if (d.kind == Emu51PeripheralKind::BusLatch) {
+                    ImGui::TextWrapped("Writes store DATA in Q and its complement Q_n. CS defines address aliases. Leave bus OE inactive: this output latch cannot drive a bus read.");
+                    ImGui::InputDouble("Pulse duration (ms)",&d.pulseMs,1,10,"%.3f");
+                    ImGui::TextWrapped("Each write retriggers PULSE/PULSE_n. Zero disables the pulse; stored Q is retained after expiry.");
+                }
+                if (d.kind == Emu51PeripheralKind::BusBuffer)
+                    ImGui::TextWrapped("Reads sample IN with weak pull-ups. CS defines address aliases. Leave WE inactive: the buffer has no writable state.");
+                if (d.kind == Emu51PeripheralKind::KeyMatrix || d.kind == Emu51PeripheralKind::Keypad) keypadInspector(d);
                 if (d.kind == Emu51PeripheralKind::I8255) {
-                    ImGui::InputInt("XDATA base",&d.address,0,0,ImGuiInputTextFlags_CharsHexadecimal);
-                    ImGui::TextWrapped("Four registers: A, B, C, control. RESET is active high. The XDATA bus connection is automatic.");
+                    if (!d.wiredBus) ImGui::InputInt("XDATA base",&d.address,0,0,ImGuiInputTextFlags_CharsHexadecimal);
+                    ImGui::TextWrapped("Four registers selected by ADDR bits 0/1: A, B, C, control. RESET is active high.");
+                }
+                if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) {
+                    ImGui::InputScalar("Capacity (bytes)",ImGuiDataType_U64,&d.memoryCapacity);
+                    ImGui::InputInt("Power-on fill (hex)",&d.memoryFill,0,0,ImGuiInputTextFlags_CharsHexadecimal);
+                    ImGui::TextWrapped("One continuous physical byte array. Higher address pins can be driven by GPIO, 8255 ports or latches.");
+                    if (ImGui::TreeNode("Power-on binary images")) {
+                        for (std::size_t i = 0; i < d.memoryImages.size();) {
+                            auto& image = d.memoryImages[i]; ImGui::PushID(static_cast<int>(i));
+                            char path[4096]; std::snprintf(path,sizeof(path),"%s",image.path.c_str());
+                            if (ImGui::InputText("Image path",path,sizeof(path))) image.path = path;
+                            ImGui::InputScalar("Physical offset",ImGuiDataType_U64,&image.offset);
+                            ImGui::InputScalar("Image length",ImGuiDataType_U64,&image.length);
+                            const bool remove = ImGui::SmallButton("Remove image"); ImGui::PopID();
+                            if (remove) d.memoryImages.erase(d.memoryImages.begin()+static_cast<std::ptrdiff_t>(i)); else ++i;
+                        }
+                        if (d.memoryImages.size() < 32 && ImGui::SmallButton("Add initialization image")) d.memoryImages.push_back({"",0,d.memoryCapacity});
+                        ImGui::TextWrapped("Applied on power cycle. Save Project does not overwrite image files.");
+                        ImGui::TreePop();
+                    }
+                    auto& range = memoryRanges_[d.id];
+                    ImGui::Checkbox("Whole device",&range.whole);
+                    if (!range.whole) {
+                        ImGui::InputScalar("Physical offset",ImGuiDataType_U64,&range.offset);
+                        ImGui::InputScalar("Length (bytes)",ImGuiDataType_U64,&range.length);
+                    }
+                    const auto offset = range.whole ? 0 : range.offset, length = range.whole ? d.memoryCapacity : range.length;
+                    const bool valid = length && offset <= d.memoryCapacity && length <= d.memoryCapacity-offset;
+                    const bool active = std::find(activeMemories_.begin(),activeMemories_.end(),d.id) != activeMemories_.end();
+                    ImGui::BeginDisabled(!valid || !active);
+                    if (ImGui::Button("Load binary...")) memoryRequest_ = MemoryRequest{d.id,false,offset,length};
+                    if (ImGui::Button("Save binary...")) memoryRequest_ = MemoryRequest{d.id,true,offset,length};
+                    ImGui::EndDisabled();
+                    if (!valid) ImGui::TextWrapped("Choose a nonempty range inside the physical capacity.");
+                    if (!active) ImGui::TextWrapped("Apply before using binary Load/Save. New/type/capacity changes recreate this storage; wiring/Clock edits preserve unchanged chips.");
+                    ImGui::TextWrapped("Load/Save uses physical storage without changing selector pins.");
+                }
+                if (d.kind == Emu51PeripheralKind::Clock) {
+                    ImGui::InputDouble("Oscillator (Hz)",&d.clockHz,1000000,12000000,"%.0f");
+                    ImGui::TextWrapped("Connect OUT to cpu.CLK. Apply resets and pauses the CPU, preserving unchanged external memory.");
+                }
+                if (d.kind == Emu51PeripheralKind::AddressDecoder) {
+                    ImGui::InputInt("Input bits (1..32)",&d.decoderBits,0);
+                    ImGui::TextWrapped("IN bit 0 is the least significant bit. Each input value may activate exactly one output.");
+                    for (std::size_t i = 0; i < d.decoderOutputs.size();) {
+                        auto& output = d.decoderOutputs[i];
+                        const auto key = d.id+"."+output.id;
+                        ImGui::PushID(output.id.c_str()); ImGui::SeparatorText(output.id.c_str());
+                        char name[129]; std::snprintf(name,sizeof(name),"%s",output.name.c_str());
+                        if (ImGui::InputText("Output name",name,sizeof(name))) output.name = name;
+                        ImGui::Checkbox("Active low (/CS)",&output.activeLow);
+                        auto [it,inserted] = decoderText_.try_emplace(key);
+                        auto& buffer = it->second;
+                        if (inserted) {
+                            std::string text;
+                            for (auto value : output.values) { char token[16]; std::snprintf(token,sizeof(token),"%Xh ",value); text += token; }
+                            buffer.assign(text.begin(),text.end()); buffer.resize(text.size()+4096,0);
+                        }
+                        ImGui::SetNextItemWidth(-1);
+                        if (ImGui::InputTextMultiline("##input-values",buffer.data(),buffer.size(),{-1,90})) {
+                            std::vector<std::uint32_t> values; std::string error;
+                            if (emu51ParseDecoderValues(buffer.data(),values,error)) { output.values = std::move(values); decoderErrors_.erase(key); }
+                            else decoderErrors_[key] = error;
+                        }
+                        ImGui::TextDisabled("Values: decimal or hexadecimal (0x10, 10h).");
+                        auto& newValue = decoderNewValues_[key];
+                        ImGui::InputScalar("New value (hex)",ImGuiDataType_U32,&newValue,nullptr,nullptr,"%X",ImGuiInputTextFlags_CharsHexadecimal);
+                        ImGui::BeginDisabled(decoderErrors_.contains(key));
+                        if (ImGui::SmallButton("Add value")) {
+                            output.values.push_back(newValue); decoderText_.erase(key);
+                        }
+                        ImGui::EndDisabled();
+                        if (ImGui::TreeNode("Assigned values and bits")) {
+                            ImGui::BeginChild("value-bits",{0,120},ImGuiChildFlags_Borders);
+                            ImGuiListClipper clipper; clipper.Begin(static_cast<int>(output.values.size()));
+                            std::optional<std::size_t> erase;
+                            while (clipper.Step()) for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                                const auto value = output.values[static_cast<std::size_t>(row)];
+                                std::string bits;
+                                for (int bit = std::clamp(d.decoderBits,1,32)-1; bit >= 0; --bit) bits += (value >> bit)&1 ? '1' : '0';
+                                ImGui::PushID(row); ImGui::Text("%Xh  %s",value,bits.c_str()); ImGui::SameLine();
+                                ImGui::BeginDisabled(decoderErrors_.contains(key));
+                                if (ImGui::SmallButton("Remove")) erase = static_cast<std::size_t>(row);
+                                ImGui::EndDisabled(); ImGui::PopID();
+                            }
+                            if (erase) { output.values.erase(output.values.begin()+static_cast<std::ptrdiff_t>(*erase)); decoderText_.erase(key); }
+                            ImGui::EndChild(); ImGui::TreePop();
+                        }
+                        const bool remove = ImGui::SmallButton("Remove output"); ImGui::PopID();
+                        if (remove) {
+                            const auto endpoint = d.id+"."+output.id;
+                            std::erase_if(config.digital,[&](const auto& w) { return w.a == endpoint || w.b == endpoint; });
+                            decoderText_.erase(key); decoderErrors_.erase(key);
+                            decoderNewValues_.erase(key);
+                            d.decoderOutputs.erase(d.decoderOutputs.begin()+static_cast<std::ptrdiff_t>(i));
+                        } else ++i;
+                    }
+                    if (d.decoderOutputs.size() < 32 && ImGui::Button("Add output")) {
+                        unsigned suffix = 0; std::string name;
+                        do { name = "CS"+std::to_string(suffix++); } while (std::any_of(d.decoderOutputs.begin(),d.decoderOutputs.end(),[&](const auto& o) { return o.id == name; }));
+                        d.decoderOutputs.push_back({name,"/"+name,true,{}});
+                    }
+                    auto error = emu51DecoderError(d);
+                    if (error.empty()) error = validationError();
+                    if (!error.empty()) ImGui::TextWrapped("%s",error.c_str());
+                }
+                if (d.wiredBus || d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) {
+                    ImGui::Checkbox("CS active low",&d.csLow); ImGui::Checkbox("OE active low",&d.oeLow);
+                    if (d.kind != Emu51PeripheralKind::Rom) ImGui::Checkbox("WE active low",&d.weLow);
                 }
                 if (d.kind == Emu51PeripheralKind::Led || d.kind == Emu51PeripheralKind::Switch || d.kind == Emu51PeripheralKind::Button)
                     ImGui::Checkbox("Active low",&d.activeLow);
@@ -540,7 +677,7 @@ void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
                     ImGui::TextWrapped("Optional 256-byte image. Committed bytes save on Pause/exit. SDA needs open-drain master drive; WP high protects writes.");
                 }
                 if (d.kind == Emu51PeripheralKind::Ay38910) {
-                    ImGui::InputInt("XDATA base",&d.address,0,0,ImGuiInputTextFlags_CharsHexadecimal);
+                    if (!d.wiredBus) ImGui::InputInt("XDATA base",&d.address,0,0,ImGuiInputTextFlags_CharsHexadecimal);
                     ImGui::InputDouble("Chip clock (Hz)",&d.clockHz,1000,100000,"%.0f");
                     ImGui::TextWrapped("XDATA +0 selects a register, +1 reads/writes it. Alternatively use DA/BDIR/BC1 with BC2 high. RESET is active low. Connect out to host audio playback.");
                 }
@@ -585,4 +722,92 @@ void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
     ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(analogColor),"Analog  /  squares");
     ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(busColor),"XDATA bus  /  address mapping");
     ImGui::TextWrapped("IN / OUT / I/O indicate signal direction. Unconnected ports remain visible.");
+}
+void Emu51PeripheralEditor::keypadInspector(Emu51PeripheralDevice& d)
+{
+    if (d.kind == Emu51PeripheralKind::KeyMatrix) {
+        ImGui::InputInt("Electrical scan rows (1..8)",&d.rows,0);
+        ImGui::InputInt("Electrical columns (1..4)",&d.columns,0);
+        ImGui::InputInt("Independent keys (0..8)",&d.directKeys,0);
+        ImGui::TextWrapped("Scanned contacts use bit = row * columns + column. Independent contacts follow them and drive direct output bits without scanning.");
+    }
+    const int count = emu51KeyCount(d);
+    if (count < 1 || count > 32) { ImGui::TextWrapped("Choose electrical dimensions and independent keys totaling at most 32 contacts."); return; }
+    ImGui::SeparatorText("Keypad appearance");
+    ImGui::TextWrapped("Layout positions select existing contacts. Rearranging or renaming keys preserves their electrical codes. Empty positions are not clickable.");
+    bool custom = d.keyLayoutColumns != 0 || d.keyLayoutRows != 0 || !d.keyLayout.empty();
+    const auto reset = [&] {
+        d.keyLayoutColumns = 4; d.keyLayoutRows = (count+3)/4;
+        d.keyLayout.assign(static_cast<std::size_t>(d.keyLayoutColumns*d.keyLayoutRows),-1);
+        for (int key = 0; key < count; ++key) d.keyLayout[static_cast<std::size_t>(key)] = key;
+    };
+    if (ImGui::Checkbox("Custom key layout",&custom)) {
+        if (custom) reset(); else { d.keyLayout.clear(); d.keyLayoutColumns = d.keyLayoutRows = 0; }
+    }
+    if (custom) {
+        int columns = d.keyLayoutColumns, rows = d.keyLayoutRows;
+        bool changed = ImGui::InputInt("Layout columns (1..8)",&columns,0);
+        changed |= ImGui::InputInt("Layout rows (1..8)",&rows,0);
+        if (changed) {
+            columns = std::clamp(columns,1,8); rows = std::clamp(rows,1,8);
+            std::vector<int> layout(static_cast<std::size_t>(columns*rows),-1);
+            for (int row = 0; row < std::min(rows,d.keyLayoutRows); ++row)
+                for (int col = 0; col < std::min(columns,d.keyLayoutColumns); ++col) {
+                    const auto old = static_cast<std::size_t>(row*d.keyLayoutColumns+col);
+                    if (old < d.keyLayout.size()) layout[static_cast<std::size_t>(row*columns+col)] = d.keyLayout[old];
+                }
+            d.keyLayout = std::move(layout); d.keyLayoutColumns = columns; d.keyLayoutRows = rows;
+        }
+        const bool fits = d.keyLayoutColumns >= 1 && d.keyLayoutColumns <= 8 && d.keyLayoutRows >= 1 && d.keyLayoutRows <= 8 &&
+            d.keyLayoutColumns*d.keyLayoutRows >= count;
+        ImGui::BeginDisabled(!fits);
+        if (ImGui::SmallButton("Place all contacts in order")) {
+            d.keyLayout.assign(static_cast<std::size_t>(d.keyLayoutColumns*d.keyLayoutRows),-1);
+            for (int key = 0; key < count; ++key) d.keyLayout[static_cast<std::size_t>(key)] = key;
+        }
+        ImGui::EndDisabled();
+        if (d.keyLayoutColumns >= 1 && d.keyLayoutColumns <= 8 && d.keyLayoutRows >= 1 && d.keyLayoutRows <= 8 &&
+            d.keyLayout.size() == static_cast<std::size_t>(d.keyLayoutColumns*d.keyLayoutRows) &&
+            ImGui::BeginTable("key-layout",d.keyLayoutColumns,ImGuiTableFlags_Borders|ImGuiTableFlags_SizingStretchSame)) {
+            for (std::size_t cell = 0; cell < d.keyLayout.size(); ++cell) {
+                ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(cell)); ImGui::SetNextItemWidth(-1);
+                const int assigned = d.keyLayout[cell];
+                const auto preview = assigned < 0 ? std::string("Empty") : emu51KeyLabel(d,static_cast<unsigned>(assigned));
+                if (ImGui::BeginCombo("##contact",preview.c_str())) {
+                    for (int key = -1; key < count; ++key) {
+                        const auto label = key < 0 ? std::string("Empty") : emu51KeyLabel(d,static_cast<unsigned>(key))+" ["+std::to_string(key)+"]";
+                        if (ImGui::Selectable(label.c_str(),assigned == key)) {
+                            if (key >= 0) {
+                                const auto other = std::find(d.keyLayout.begin(),d.keyLayout.end(),key);
+                                if (other != d.keyLayout.end()) *other = assigned;
+                            }
+                            d.keyLayout[cell] = key;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Row %d, column %d. Selecting an already placed contact swaps the positions.",
+                    static_cast<int>(cell)/d.keyLayoutColumns+1,static_cast<int>(cell)%d.keyLayoutColumns+1);
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+    if (ImGui::TreeNode("Key labels and function legends")) {
+        ImGui::TextWrapped("Labels and legends change the display; firmware determines each key's function.");
+        for (int key = 0; key < count; ++key) {
+            ImGui::PushID(key); ImGui::Text("Contact %d%s",key,d.kind == Emu51PeripheralKind::KeyMatrix && key >= d.rows*d.columns ? " (independent)" : "");
+            char label[64], legend[64]; std::snprintf(label,sizeof(label),"%s",emu51KeyLabel(d,static_cast<unsigned>(key)).c_str());
+            std::snprintf(legend,sizeof(legend),"%s",static_cast<std::size_t>(key) < d.keyLegends.size() ? d.keyLegends[static_cast<std::size_t>(key)].c_str() : "");
+            if (ImGui::InputText("Label",label,sizeof(label))) { d.keyLabels.resize(static_cast<std::size_t>(count)); d.keyLabels[static_cast<std::size_t>(key)] = label; }
+            if (ImGui::InputText("Legend",legend,sizeof(legend))) { d.keyLegends.resize(static_cast<std::size_t>(count)); d.keyLegends[static_cast<std::size_t>(key)] = legend; }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+}
+
+std::string Emu51PeripheralEditor::validationError() const
+{
+    return decoderErrors_.empty() ? std::string{} : decoderErrors_.begin()->second;
 }

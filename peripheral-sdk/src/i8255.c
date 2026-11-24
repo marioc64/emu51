@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 // Copyright (C) 2026 Mariusz Kasolik
 #include "emu51/devices.h"
+#include "emu51/snapshot.h"
 #include <stdlib.h>
 
 typedef struct i8255 {
     const e51p_api* api;
+    e51p_context* context;
     e51p_i8255_endpoints pins;
     uint32_t control, latch[3];
 } i8255;
+static int reset_held(i8255*, e51p_context*);
+
+static e51p_status validate_write(void* user, uint32_t address, uint32_t value) {
+    i8255* ppi = (i8255*)user;
+    if (address > 3 || value > 255) return E51P_INVALID_ARGUMENT;
+    if (address == 3 && (value & 0x80) && (value & 0x64)) return E51P_UNSUPPORTED;
+    if (reset_held(ppi,ppi->context)) return E51P_INVALID_STATE;
+    return E51P_OK;
+}
 
 static uint32_t output_mask(const i8255* ppi, unsigned port) {
     if (port == 0) return (ppi->control & 0x10) ? 0 : 255;
@@ -96,6 +107,7 @@ e51p_status e51p_add_i8255_mode0(const e51p_api* api, e51p_context* context,
     ppi = (i8255*)calloc(1, sizeof(*ppi));
     if (!ppi) return E51P_NO_MEMORY;
     ppi->api = api;
+    ppi->context = context;
     ppi->pins.struct_size = sizeof(ppi->pins);
     ppi->pins.bus = ppi->pins.reset = E51P_INVALID_ID;
     ppi->pins.port_a = ppi->pins.port_b = ppi->pins.port_c = E51P_INVALID_ID;
@@ -115,6 +127,8 @@ e51p_status e51p_add_i8255_mode0(const e51p_api* api, e51p_context* context,
     endpoint.width = 8;
     endpoint.address_bits = 2;
     status = api->add_endpoint(context, id, &endpoint, &ppi->pins.bus);
+    if (status != E51P_OK) return status;
+    status = e51p_target_set_write_validator(context, ppi->pins.bus, validate_write, ppi);
     if (status != E51P_OK) return status;
     endpoint.kind = E51P_DIGITAL;
     endpoint.direction = E51P_INPUT | E51P_OUTPUT;

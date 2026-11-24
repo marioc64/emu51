@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 // Copyright (C) 2026 Mariusz Kasolik
 #include "emu51/peripheral.h"
+#include "emu51/snapshot.h"
 
 #include <cmath>
 #include <limits>
@@ -22,10 +23,13 @@ struct Endpoint {
     double analog = 0;
     bool analog_valid = false;
     e51p_endpoint source = E51P_INVALID_ID;
+    e51p_write_validator validate_write = nullptr;
+    void* validator_user = nullptr;
 };
 struct Pin {
     uint32_t parent;
     bool high = false, low = false, up = false, down = false;
+    uint32_t high_count = 0, low_count = 0;
 };
 struct Mapping {
     e51p_endpoint initiator, target;
@@ -47,6 +51,16 @@ struct e51p_context {
     std::vector<Endpoint> endpoints;
     std::vector<Pin> pins;
     std::vector<Mapping> mappings;
+    const e51p_snapshot* inspection = nullptr;
+};
+
+struct e51p_snapshot {
+    const e51p_context* context;
+    struct Net { uint32_t high = 0, low = 0, undefined = 0; bool up = false, down = false; };
+    struct Drive { uint32_t value = 0, enable = 0, drain = 0, undefined = 0; };
+    std::vector<uint32_t> roots;
+    std::vector<Net> nets;
+    std::vector<Drive> drives;
 };
 
 namespace {
@@ -86,7 +100,10 @@ e51p_status settle(e51p_context& c) {
     for (unsigned round = 0; c.dirty; ++round) {
         if (round == 1024) { c.fault = true; return E51P_OSCILLATION; }
         c.dirty = false;
-        for (auto& p : c.pins) p.high = p.low = p.up = p.down = false;
+        for (auto& p : c.pins) {
+            p.high = p.low = p.up = p.down = false;
+            p.high_count = p.low_count = 0;
+        }
         for (const auto& e : c.endpoints) {
             if (e.desc.kind != E51P_DIGITAL) continue;
             for (uint32_t bit = 0; bit < e.desc.width; ++bit) {
@@ -95,8 +112,8 @@ e51p_status settle(e51p_context& c) {
                 p.up |= (e.desc.pull_up & flag) != 0;
                 p.down |= (e.desc.pull_down & flag) != 0;
                 if (!(e.enable & flag)) continue;
-                if (!(e.value & flag)) p.low = true;
-                else if (!(e.open_drain & flag)) p.high = true;
+                if (!(e.value & flag)) { p.low = true; ++p.low_count; }
+                else if (!(e.open_drain & flag)) { p.high = true; ++p.high_count; }
             }
         }
         for (auto& e : c.endpoints) {
@@ -299,6 +316,7 @@ e51p_status drive(e51p_context* c, e51p_endpoint id, uint32_t value,
 e51p_status sample(const e51p_context* c, e51p_endpoint id, e51p_digital_state* state) noexcept {
     if (!live(c)) return E51P_INVALID_STATE;
     if (!state || !endpoint(c, id, E51P_DIGITAL)) return E51P_INVALID_ARGUMENT;
+    if (c->inspection) return e51p_snapshot_sample(c->inspection, id, state);
     *state = c->endpoints[id].state;
     return E51P_OK;
 }
@@ -376,4 +394,164 @@ extern "C" e51p_status e51p_get_api(uint32_t version, const e51p_api** result) {
     if (version != E51P_ABI_VERSION) return E51P_UNSUPPORTED;
     *result = &api;
     return E51P_OK;
+}
+
+extern "C" {
+e51p_status e51p_snapshot_create(const e51p_context* c, e51p_snapshot** result) {
+    if (!result) return E51P_INVALID_ARGUMENT;
+    *result = nullptr;
+    if (!live(c) || c->busy) return E51P_INVALID_STATE;
+    try {
+        auto s = new e51p_snapshot;
+        try {
+            s->context = c;
+            s->roots.resize(c->pins.size());
+            s->nets.resize(c->pins.size());
+            s->drives.resize(c->endpoints.size());
+            for (uint32_t i = 0; i < c->pins.size(); ++i) {
+                auto r = i;
+                while (c->pins[r].parent != r) r = c->pins[r].parent;
+                s->roots[i] = r;
+            }
+        } catch (...) { delete s; throw; }
+        const auto status = e51p_snapshot_begin(s);
+        if (status != E51P_OK) { delete s; return status; }
+        *result = s;
+        return E51P_OK;
+    } catch (const std::bad_alloc&) { return E51P_NO_MEMORY; }
+    catch (...) { return E51P_DEVICE_ERROR; }
+}
+void e51p_snapshot_destroy(e51p_snapshot* s) { delete s; }
+e51p_status e51p_snapshot_begin(e51p_snapshot* s) {
+    if (!s || !live(s->context) || s->context->busy) return E51P_INVALID_STATE;
+    const auto& c = *s->context;
+    for (size_t i = 0; i < c.pins.size(); ++i) {
+        const auto& p = c.pins[i];
+        s->nets[i] = {p.high_count, p.low_count, 0, p.up, p.down};
+    }
+    for (size_t i = 0; i < c.endpoints.size(); ++i) {
+        const auto& e = c.endpoints[i];
+        s->drives[i] = {e.value, e.enable, e.open_drain, 0};
+    }
+    return E51P_OK;
+}
+e51p_status e51p_snapshot_drive(e51p_snapshot* s, e51p_endpoint id,
+    uint32_t value, uint32_t enable, uint32_t drain, uint32_t undefined) {
+    if (!s || !endpoint(s->context, id, E51P_DIGITAL)) return E51P_INVALID_ARGUMENT;
+    const auto& e = s->context->endpoints[id];
+    if (!(e.desc.direction & E51P_OUTPUT) || ((value | enable | drain | undefined) & ~mask(e.desc.width)))
+        return E51P_INVALID_ARGUMENT;
+    auto& previous = s->drives[id];
+    for (uint32_t bit = 0; bit < e.desc.width; ++bit) {
+        const auto flag = UINT32_C(1) << bit;
+        auto& net = s->nets[s->roots[e.first_pin + bit]];
+        const auto adjust = [&](uint32_t v, uint32_t en, uint32_t od, uint32_t un, bool add) {
+            if (un & flag) { if (add) ++net.undefined; else --net.undefined; }
+            else if (en & flag) {
+                if (!(v & flag)) { if (add) ++net.low; else --net.low; }
+                else if (!(od & flag)) { if (add) ++net.high; else --net.high; }
+            }
+        };
+        adjust(previous.value, previous.enable, previous.drain, previous.undefined, false);
+        adjust(value, enable, drain, undefined, true);
+    }
+    previous = {value, enable, drain, undefined};
+    return E51P_OK;
+}
+e51p_status e51p_snapshot_sample(const e51p_snapshot* s, e51p_endpoint id, e51p_digital_state* result) {
+    if (!s || !result || !endpoint(s->context, id, E51P_DIGITAL)) return E51P_INVALID_ARGUMENT;
+    const auto& e = s->context->endpoints[id];
+    e51p_digital_state state{};
+    for (uint32_t bit = 0; bit < e.desc.width; ++bit) {
+        const auto flag = UINT32_C(1) << bit;
+        const auto& net = s->nets[s->roots[e.first_pin + bit]];
+        const bool strong = net.high || net.low;
+        if (net.undefined) state.floating |= flag;
+        else if (strong ? net.high && net.low : net.up && net.down) state.contention |= flag;
+        else if (strong ? net.high != 0 : net.up) state.value |= flag;
+        else if (!strong && !net.down) state.floating |= flag;
+    }
+    *result = state;
+    return E51P_OK;
+}
+e51p_status e51p_digital_net(const e51p_context* c, e51p_endpoint id, uint32_t bit, uint32_t* net) {
+    if (!live(c) || !net || !endpoint(c, id, E51P_DIGITAL) || bit >= c->endpoints[id].desc.width)
+        return E51P_INVALID_ARGUMENT;
+    auto r = c->endpoints[id].first_pin + bit;
+    while (c->pins[r].parent != r) r = c->pins[r].parent;
+    *net = r;
+    return E51P_OK;
+}
+e51p_status e51p_target_set_write_validator(e51p_context* c, e51p_endpoint id,
+    e51p_write_validator validator, void* user) {
+    if (!configuring(c) || !endpoint(c, id, E51P_BUS_TARGET)) return E51P_INVALID_ARGUMENT;
+    c->endpoints[id].validate_write = validator;
+    c->endpoints[id].validator_user = user;
+    return E51P_OK;
+}
+e51p_status e51p_target_check_write(e51p_context* c, e51p_endpoint id, uint32_t address, uint32_t value, const e51p_snapshot* snapshot) {
+    if (!live(c) || c->busy || !endpoint(c, id, E51P_BUS_TARGET) || (snapshot && snapshot->context != c)) return E51P_INVALID_ARGUMENT;
+    const auto& e = c->endpoints[id];
+    if (uint64_t(address) >= (UINT64_C(1) << e.desc.address_bits) || (value & ~mask(e.desc.width)))
+        return E51P_INVALID_ARGUMENT;
+    if (!e.validate_write) return E51P_UNSUPPORTED;
+    return protect(c,[&]() -> e51p_status {
+        Busy busy(*c); c->inspection = snapshot; c->peek = true;
+        e51p_status status;
+        try { status = e.validate_write(e.validator_user,address,value); }
+        catch (...) { c->inspection = nullptr; throw; }
+        c->inspection = nullptr;
+        return status;
+    });
+}
+e51p_status e51p_target_read(e51p_context* c, e51p_endpoint id, uint32_t address,
+    uint32_t access, const e51p_snapshot* snapshot, uint32_t* value) {
+    if (!live(c) || c->busy) return E51P_INVALID_STATE;
+    if (!value || !endpoint(c, id, E51P_BUS_TARGET) || (snapshot && snapshot->context != c) ||
+        (access != E51P_READ && access != E51P_PEEK)) return E51P_INVALID_ARGUMENT;
+    const auto& e = c->endpoints[id];
+    if (uint64_t(address) >= (UINT64_C(1) << e.desc.address_bits)) return E51P_INVALID_ARGUMENT;
+    const auto& d = c->devices[e.owner].desc;
+    if (!d.bus_read) return E51P_UNSUPPORTED;
+    return protect(c, [&]() -> e51p_status {
+        Busy busy(*c);
+        c->inspection = snapshot;
+        c->peek = access == E51P_PEEK;
+        uint32_t result = 0;
+        e51p_status status;
+        try { status = d.bus_read(d.user, c, id, address, access, &result); }
+        catch (...) { c->inspection = nullptr; throw; }
+        c->inspection = nullptr;
+        c->peek = false;
+        if (access != E51P_PEEK) {
+            const auto propagated = settle(*c);
+            if (status == E51P_OK) status = propagated;
+        }
+        if (status != E51P_OK) return status == E51P_NOT_FOUND ? E51P_DEVICE_ERROR : status;
+        if (result & ~mask(e.desc.width)) return E51P_DEVICE_ERROR;
+        *value = result;
+        return E51P_OK;
+    });
+}
+e51p_status e51p_target_write(e51p_context* c, e51p_endpoint id, uint32_t address,
+    uint32_t value, const e51p_snapshot* snapshot) {
+    if (!live(c) || c->busy) return E51P_INVALID_STATE;
+    if (!endpoint(c, id, E51P_BUS_TARGET) || (snapshot && snapshot->context != c)) return E51P_INVALID_ARGUMENT;
+    const auto& e = c->endpoints[id];
+    if (uint64_t(address) >= (UINT64_C(1) << e.desc.address_bits) || (value & ~mask(e.desc.width)))
+        return E51P_INVALID_ARGUMENT;
+    const auto& d = c->devices[e.owner].desc;
+    if (!d.bus_write) return E51P_UNSUPPORTED;
+    return protect(c, [&]() -> e51p_status {
+        Busy busy(*c);
+        c->inspection = snapshot;
+        e51p_status status;
+        try { status = d.bus_write(d.user, c, id, address, value); }
+        catch (...) { c->inspection = nullptr; throw; }
+        c->inspection = nullptr;
+        const auto propagated = settle(*c);
+        if (status == E51P_NOT_FOUND) return E51P_DEVICE_ERROR;
+        return status == E51P_OK ? propagated : status;
+    });
+}
 }

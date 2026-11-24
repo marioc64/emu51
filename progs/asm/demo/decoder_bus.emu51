@@ -1,0 +1,246 @@
+{
+  "version": 2,
+  "unified_memory": false,
+  "debugger_open": true,
+  "trace_enabled": false,
+  "cpu_model": "8051",
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "circuit_bus": true,
+  "peripheral_devices": [
+    {
+      "id": "boot_rom",
+      "kind": 26,
+      "memory_capacity": 65536,
+      "memory_fill": 255
+    },
+    {
+      "id": "work_ram",
+      "kind": 25,
+      "memory_capacity": 32768
+    },
+    {
+      "id": "ppi",
+      "kind": 0,
+      "wired_bus": true
+    },
+    {
+      "id": "led",
+      "kind": 6,
+      "active_low": false
+    },
+    {
+      "id": "select",
+      "kind": 28,
+      "decoder_bits": 2
+    },
+    {
+      "id": "clock",
+      "kind": 27,
+      "clock_hz": 12000000
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.ADDR",
+      "b": "boot_rom.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 16
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "boot_rom.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "boot_rom.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "boot_rom.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "select.IN",
+      "a_bit": 15,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "select.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "select.CS_RAM",
+      "b": "work_ram.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "select.CS_PPI",
+      "b": "ppi.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "work_ram.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 15
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "work_ram.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.RD",
+      "b": "work_ram.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "work_ram.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "ppi.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 2
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "ppi.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.RD",
+      "b": "ppi.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "ppi.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "ppi.B",
+      "b": "led.in",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "clock.OUT",
+      "b": "cpu.CLK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "programs": [],
+  "reload_program": "",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": false,
+    "open": false,
+    "draft": false,
+    "path": "",
+    "name": "untitled.asm",
+    "base_directory": "",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "assembly_units": [
+    {
+      "id": "monitor",
+      "path": "decoder_bus.asm",
+      "editor": {
+        "present": true,
+        "open": true,
+        "draft": false,
+        "path": "decoder_bus.asm",
+        "name": "decoder_bus.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    }
+  ],
+  "load_mappings": [
+    {
+      "id": "boot_image",
+      "unit": "monitor",
+      "device": "boot_rom",
+      "source_start": 0,
+      "source_end": 65536,
+      "destination": 0,
+      "order": 0,
+      "overlay": false
+    }
+  ],
+  "active_unit": "monitor",
+  "decoder_outputs": [
+    {
+      "device": "select",
+      "id": "CS_RAM",
+      "name": "/CS_RAM",
+      "active_low": true
+    },
+    {
+      "device": "select",
+      "id": "CS_PPI",
+      "name": "/CS_PPI",
+      "active_low": true
+    }
+  ],
+  "decoder_values": [
+    {
+      "device": "select",
+      "output": "CS_RAM",
+      "value": 2
+    },
+    {
+      "device": "select",
+      "output": "CS_PPI",
+      "value": 3
+    }
+  ]
+}

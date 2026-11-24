@@ -17,7 +17,7 @@ bool Emu51PeripheralLive::visible(Emu51PeripheralKind kind)
 {
     return emu51PeripheralDisplayKind(kind) >= 0 || kind == Emu51PeripheralKind::Led ||
         kind == Emu51PeripheralKind::Switch || kind == Emu51PeripheralKind::Button ||
-        kind == Emu51PeripheralKind::Lcd || kind == Emu51PeripheralKind::Keypad ||
+        kind == Emu51PeripheralKind::Lcd || kind == Emu51PeripheralKind::Keypad || kind == Emu51PeripheralKind::KeyMatrix ||
         kind == Emu51PeripheralKind::Audio || kind == Emu51PeripheralKind::Voltage || kind == Emu51PeripheralKind::Digital;
 }
 std::vector<Emu51PeripheralLiveBox> Emu51PeripheralLive::layout(const Emu51PeripheralConfig& config) const

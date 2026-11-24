@@ -10,7 +10,8 @@ with a reusable emulation engine and a Dear ImGui interface. See
 
 ## Features
 
-- Selectable 8051/8052 CPU emulation with unified or separate program/data memory.
+- Selectable 8051/8052 CPU emulation with wired external RAM/ROM, shared CODE/XDATA
+  storage, GPIO banking, a lookup address decoder and graph-configured Clock.
 - Register, disassembly, internal RAM, and external memory views.
 - Run, pause, reset, Step In, Step Over, and Step Out.
 - Execution breakpoints, memory watchpoints, instruction tracing, and assembly
@@ -19,11 +20,15 @@ with a reusable emulation engine and a Dear ImGui interface. See
 - Portable project sessions with program overlays, editor drafts, and debugger settings.
 - Assembly editing with syntax highlighting, diagnostics, formatting, and
   compilation directly into emulator memory.
+- Multiple independent assembly editors, sparse physical load mappings, and
+  whole-chip/range binary images; see [memory circuits and projects](MEMORY_BUS.md).
 - Save/discard/cancel protection, atomic source saves, and recovery drafts.
 - Saved layouts, Follow PC settings, and execution preferences.
 - Crystal-paced execution using the classic 12-clock 8051 timing model.
 - Serial modes 0–3, Timer 1/SMOD and 8052 Timer 2 baud clocks, serial interrupts, and a byte-oriented terminal.
 - Configurable peripheral graphs: 8255, ADC0804, Covox, LCD, keypad, switches/LEDs, shift registers, I²C EEPROM, AY-3-8910, and optional host audio.
+- Generic bus output latches, input buffers and configurable key matrices;
+  the [AVT-2250 circuit](progs/boards/avt2250/README.md) uses these with a user-supplied ROM.
 - A standalone assembler, bounded console runner, and dispatch benchmark.
 
 The timing mode paces emulated machine cycles against wall time. It does not

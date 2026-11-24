@@ -1,0 +1,212 @@
+{
+  "version": 2,
+  "unified_memory": true,
+  "debugger_open": true,
+  "trace_enabled": false,
+  "cpu_model": "8051",
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "circuit_bus": true,
+  "peripheral_devices": [
+    {
+      "id": "shared_ram",
+      "kind": 25,
+      "memory_capacity": 65536
+    },
+    {
+      "id": "select",
+      "kind": 28,
+      "decoder_bits": 1
+    },
+    {
+      "id": "read_enable",
+      "kind": 28,
+      "decoder_bits": 2
+    },
+    {
+      "id": "clock",
+      "kind": 27,
+      "clock_hz": 12000000
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.PSEN",
+      "b": "select.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "select.CS_MEMORY",
+      "b": "shared_ram.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "shared_ram.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 16
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "shared_ram.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "read_enable.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.RD",
+      "b": "read_enable.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "read_enable.READ",
+      "b": "shared_ram.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "shared_ram.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "clock.OUT",
+      "b": "cpu.CLK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "programs": [],
+  "reload_program": "",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": false,
+    "open": false,
+    "draft": false,
+    "path": "",
+    "name": "untitled.asm",
+    "base_directory": "",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "assembly_units": [
+    {
+      "id": "code",
+      "path": "shared_ram_code.asm",
+      "editor": {
+        "present": true,
+        "open": true,
+        "draft": false,
+        "path": "shared_ram_code.asm",
+        "name": "shared_ram_code.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    },
+    {
+      "id": "tables",
+      "path": "shared_ram_tables.asm",
+      "editor": {
+        "present": true,
+        "open": true,
+        "draft": false,
+        "path": "shared_ram_tables.asm",
+        "name": "shared_ram_tables.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    }
+  ],
+  "load_mappings": [
+    {
+      "id": "code_image",
+      "unit": "code",
+      "device": "shared_ram",
+      "source_start": 0,
+      "source_end": 256,
+      "destination": 0,
+      "order": 0,
+      "overlay": false
+    },
+    {
+      "id": "tables_image",
+      "unit": "tables",
+      "device": "shared_ram",
+      "source_start": 512,
+      "source_end": 516,
+      "destination": 512,
+      "order": 1,
+      "overlay": false
+    }
+  ],
+  "active_unit": "code",
+  "decoder_outputs": [
+    {
+      "device": "select",
+      "id": "CS_MEMORY",
+      "name": "/CS_MEMORY",
+      "active_low": true
+    },
+    {
+      "device": "read_enable",
+      "id": "READ",
+      "name": "/READ",
+      "active_low": true
+    }
+  ],
+  "decoder_values": [
+    {
+      "device": "select",
+      "output": "CS_MEMORY",
+      "value": 0
+    },
+    {
+      "device": "select",
+      "output": "CS_MEMORY",
+      "value": 1
+    },
+    {
+      "device": "read_enable",
+      "output": "READ",
+      "value": 0
+    },
+    {
+      "device": "read_enable",
+      "output": "READ",
+      "value": 1
+    },
+    {
+      "device": "read_enable",
+      "output": "READ",
+      "value": 2
+    }
+  ]
+}

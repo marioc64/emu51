@@ -4,6 +4,8 @@
 This independently buildable SDK provides a C ABI and headless wiring runtime
 for composable peripherals. The core has no CPU, GUI or native audio dependency.
 An optional separate native audio host is described in [AUDIO.md](AUDIO.md).
+Physical RAM/ROM, sparse lookup decoders, passive electrical snapshots and a
+functional pin-routed bus are described in [MEMORY_BUS.md](MEMORY_BUS.md).
 Its headers, implementation, build rules, documentation, tests and
 examples are **LGPL-2.1-only**, Copyright (C) 2026 Mariusz Kasolik. See
 [LICENSE](LICENSE) for LGPL 2.1 and [COPYING](COPYING) for the referenced GPL 2.
@@ -74,8 +76,8 @@ After `start`, topology is immutable. `reset` retains wiring and frequency,
 releases output drives, invalidates analog signals, resets time to zero, calls
 device reset callbacks, then propagates initial signals. Devices may establish
 their own reset output levels in those callbacks. Destroy and recreate the
-context to reconfigure wiring. There is no project serializer or GUI wiring
-editor yet.
+context to reconfigure wiring. Project serialization and the desktop graph
+editor belong to the GPL host; they are not SDK dependencies.
 
 ## Digital electrical behavior
 
@@ -325,6 +327,9 @@ lifecycle. See the registry guide for ownership and extension limits.
 [COMPONENTS.md](COMPONENTS.md) documents the LED, switch, bouncing pushbutton,
 HD44780 LCD, 4x4 keypad, 74HC595/165, 24C02 EEPROM and AY-3-8910 profiles.
 They use the existing C ABI and are included in the installed LGPL SDK.
+The same guide covers generic eight-bit bus latches/input buffers and a
+configurable 1–8-row, 1–4-column key matrix, including a retriggerable latch
+pulse suitable for scan watchdogs.
 [DISPLAYS.md](DISPLAYS.md) adds 7/14/16-segment displays, bar graphs, BCD decoders
 and serial display controllers, with emulated-time brightness snapshots.
 

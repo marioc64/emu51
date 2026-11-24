@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <set>
 
 namespace {
 void require(e51p_status s, const std::string& operation)
@@ -32,7 +33,8 @@ const char* factoryType(Emu51PeripheralKind kind)
     if (const int display=emu51PeripheralDisplayKind(kind); display>=0) return e51p_display_type_id(static_cast<unsigned>(display));
     if (const int component = emu51PeripheralComponentKind(kind); component >= 0) {
         static const char* types[]{"emu51.led","emu51.switch","emu51.button","emu51.hd44780","emu51.keypad4x4",
-            "emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910"};
+            "emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910",
+            "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix"};
         return types[component];
     }
     switch (kind) {
@@ -65,10 +67,11 @@ struct Emu51PeripheralSession::Source {
     e51p_context* context;
     e51p_endpoint pin = E51P_INVALID_ID;
     bool analog;
+    unsigned width = 8;
     double value;
     e51p_status publish() {
         return analog ? api->analog_write(context, pin, value) :
-            api->drive(context, pin, static_cast<std::uint32_t>(value), 255, 0);
+            api->drive(context, pin, static_cast<std::uint32_t>(value), (1u << width)-1, 0);
     }
     static void reset(void* user, e51p_context*) { (void)static_cast<Source*>(user)->publish(); }
     static void destroy(void* user) { delete static_cast<Source*>(user); }
@@ -79,15 +82,38 @@ std::vector<Emu51PeripheralPin> Emu51PeripheralSession::describe(const Emu51Peri
     std::vector<Emu51PeripheralPin> pins;
     for (unsigned i = 0; i < 4; ++i)
         pins.push_back({"cpu.P" + std::to_string(i), E51P_DIGITAL, E51P_INPUT | E51P_OUTPUT, 8});
-    if (includeBus) pins.push_back({"cpu.xdata", E51P_BUS_INITIATOR, E51P_OUTPUT, 8});
+    if (includeBus && std::any_of(c.devices.begin(),c.devices.end(),[](const auto& d) { return !d.wiredBus && emu51PeripheralBusSize(d.kind); }))
+        pins.push_back({"cpu.xdata", E51P_BUS_INITIATOR, E51P_OUTPUT, 8});
+    pins.push_back({"cpu.ADDR",E51P_DIGITAL,E51P_OUTPUT,16});
+    pins.push_back({"cpu.DATA",E51P_DIGITAL,E51P_INPUT|E51P_OUTPUT,8});
+    for (const auto* name : {"PSEN","RD","WR"}) pins.push_back({std::string("cpu.")+name,E51P_DIGITAL,E51P_OUTPUT,1});
+    pins.push_back({"cpu.CLK",E51P_DIGITAL,E51P_INPUT,1});
     for (const auto& d : c.devices) {
         const auto add = [&](const char* name, std::uint32_t kind, unsigned direction, unsigned width = 1) {
             pins.push_back({d.id + "." + name, kind, direction, width});
         };
+        if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom || d.wiredBus) {
+            unsigned bits = 1;
+            if (d.kind == Emu51PeripheralKind::BusLatch || d.kind == Emu51PeripheralKind::BusBuffer) bits = 0;
+            else if (d.wiredBus) bits = d.kind == Emu51PeripheralKind::I8255 ? 2 : 1;
+            else { auto highest = d.memoryCapacity ? d.memoryCapacity-1 : 0; while ((highest >>= 1) != 0) ++bits; }
+            if (bits) add("ADDR",E51P_DIGITAL,E51P_INPUT,bits);
+            add("DATA",E51P_DIGITAL,E51P_INPUT|E51P_OUTPUT,8);
+            add("CS",E51P_DIGITAL,E51P_INPUT); add("OE",E51P_DIGITAL,E51P_INPUT);
+            if (d.kind != Emu51PeripheralKind::Rom) add("WE",E51P_DIGITAL,E51P_INPUT);
+        }
+        if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) continue;
+        if (d.kind == Emu51PeripheralKind::Clock) { add("OUT",E51P_DIGITAL,E51P_OUTPUT); continue; }
+        if (d.kind == Emu51PeripheralKind::AddressDecoder) {
+            add("IN",E51P_DIGITAL,E51P_INPUT,static_cast<unsigned>(std::clamp(d.decoderBits,1,32)));
+            for (const auto& output : d.decoderOutputs) add(output.id.c_str(),E51P_DIGITAL,E51P_OUTPUT);
+            continue;
+        }
         if (emu51PeripheralComponentKind(d.kind) >= 0 || emu51PeripheralDisplayKind(d.kind) >= 0) {
             const auto* descriptor = factory(d.kind);
             for (unsigned i = 0; i < descriptor->pin_count; ++i) {
                 const auto& p = descriptor->pins[i];
+                if (p.kind == E51P_BUS_TARGET && d.wiredBus) continue;
                 if (p.kind == E51P_DIGITAL || p.kind == E51P_ANALOG || includeBus) add(p.name,p.kind,p.direction,p.width);
             }
             continue;
@@ -99,6 +125,7 @@ std::vector<Emu51PeripheralPin> Emu51PeripheralSession::describe(const Emu51Peri
             const auto* descriptor = factory(d.kind);
             for (unsigned i = 0; i < descriptor->pin_count; ++i) {
                 const auto& p = descriptor->pins[i];
+                if (p.kind == E51P_BUS_TARGET && d.wiredBus) continue;
                 if (p.kind == E51P_DIGITAL || p.kind == E51P_ANALOG || includeBus)
                     add(p.name, p.kind, p.direction, p.width);
             }
@@ -115,10 +142,11 @@ std::vector<Emu51PeripheralPin> Emu51PeripheralSession::describe(const Emu51Peri
     }
     return pins;
 }
-std::unique_ptr<Emu51PeripheralSession> Emu51PeripheralSession::create(const Emu51PeripheralConfig& c, double mhz)
+std::unique_ptr<Emu51PeripheralSession> Emu51PeripheralSession::create(const Emu51PeripheralConfig& c, double mhz,
+    const Emu51PeripheralSession* previous)
 {
     auto result = std::unique_ptr<Emu51PeripheralSession>(new Emu51PeripheralSession);
-    result->build(c, mhz);
+    result->build(c, mhz, previous);
     return result;
 }
 Emu51PeripheralSession::~Emu51PeripheralSession()
@@ -130,6 +158,7 @@ Emu51PeripheralSession::~Emu51PeripheralSession()
     e51p_audio_host_destroy(audioHost_);
 #endif
     gpio_.reset();
+    e51p_wired_bus_destroy(wiredBus_);
     if (context_) api_->destroy(context_);
     if (audio_) e51p_audio_release(audio_);
 }
@@ -139,9 +168,11 @@ e51p_endpoint Emu51PeripheralSession::endpoint(const std::string& name) const
     if (found == endpoints_.end()) throw std::runtime_error("Unknown peripheral pin: " + name);
     return found->second;
 }
-void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz)
+void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, const Emu51PeripheralSession* previous)
 {
     emu51ValidatePeripheralConfig(c);
+    mhz = emu51PeripheralClockMHz(c,mhz);
+    crystalMHz_ = mhz;
     if (!std::isfinite(mhz) || mhz < 0.000001 || mhz > 1000) throw std::runtime_error("Invalid peripheral clock");
     config_ = c;
     require(e51p_get_api(E51P_ABI_VERSION, &api_), "Get peripheral API");
@@ -155,8 +186,54 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz)
     require(api_->add_device(context_, &host, &hostId), "Add CPU bus");
     e51p_endpoint_desc busDesc{sizeof(busDesc), "xdata", E51P_BUS_INITIATOR, 0, 8, 16, 0, 0};
     require(api_->add_endpoint(context_, hostId, &busDesc, &bus_), "Add XDATA endpoint");
+    e51p_initiator_pins cpuBus{};
+    require(e51p_wired_bus_create(api_,context_,"cpu-functional-bus",16,&wiredBus_,&cpuBus),"Create functional bus");
+    endpoints_.insert(endpoints_.end(),{{"cpu.ADDR",cpuBus.address},{"cpu.DATA",cpuBus.data},
+        {"cpu.PSEN",cpuBus.code_read_n},{"cpu.RD",cpuBus.data_read_n},{"cpu.WR",cpuBus.data_write_n}});
+    e51p_endpoint clockPin;
+    const e51p_endpoint_desc clockDesc{sizeof(clockDesc),"CLK",E51P_DIGITAL,E51P_INPUT,1,0,0,0};
+    require(api_->add_endpoint(context_,hostId,&clockDesc,&clockPin),"Add CPU Clock input");
+    endpoints_.emplace_back("cpu.CLK",clockPin);
+    const auto busPins = [&](const Emu51PeripheralDevice& d, const e51p_bus_pins& p) {
+        if (p.address != E51P_INVALID_ID) endpoints_.emplace_back(d.id+".ADDR",p.address);
+        endpoints_.insert(endpoints_.end(),{{d.id+".DATA",p.data},
+            {d.id+".CS",p.cs},{d.id+".OE",p.oe}});
+        if (p.we != E51P_INVALID_ID) endpoints_.emplace_back(d.id+".WE",p.we);
+    };
     for (const auto& d : c.devices) {
         const auto pin = [&](const char* name, e51p_endpoint ep) { endpoints_.emplace_back(d.id + "." + name, ep); };
+        if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) {
+            std::shared_ptr<e51p_memory> storage;
+            if (previous) for (const auto& old : previous->memories_)
+                if (old.id == d.id && e51p_memory_capacity(old.storage.get()) == d.memoryCapacity &&
+                    e51p_memory_kind(old.storage.get()) == (d.kind == Emu51PeripheralKind::Rom ? E51P_ROM : E51P_RAM)) storage = old.storage;
+            if (!storage) {
+                const e51p_memory_config settings{sizeof(settings),d.kind == Emu51PeripheralKind::Rom ? E51P_ROM : E51P_RAM,
+                    d.memoryCapacity,static_cast<std::uint8_t>(d.memoryFill)};
+                e51p_memory* raw = nullptr;
+                require(e51p_memory_create(&settings,&raw),"Create memory " + d.id);
+                storage.reset(raw,e51p_memory_release);
+                for (const auto& image : d.memoryImages) {
+                    const auto bytes = readBinary(image.path,image.length);
+                    require(e51p_memory_program(raw,image.offset,bytes.data(),bytes.size()),"Initialize memory " + d.id);
+                }
+            }
+            e51p_bus_pins pins{}; uint32_t target;
+            require(e51p_wired_bus_add_memory(wiredBus_,d.id.c_str(),storage.get(),d.csLow,d.oeLow,d.weLow,&pins,&target),"Attach memory " + d.id);
+            busPins(d,pins); memories_.push_back({d.id,std::move(storage),target});
+            continue;
+        }
+        if (d.kind == Emu51PeripheralKind::AddressDecoder) {
+            std::vector<e51p_decoder_output> outputs;
+            for (const auto& o : d.decoderOutputs)
+                outputs.push_back({sizeof(e51p_decoder_output),o.id.c_str(),o.activeLow,o.values.data(),static_cast<unsigned>(o.values.size())});
+            e51p_endpoint in; std::vector<e51p_endpoint> out(outputs.size());
+            require(e51p_wired_bus_add_decoder(wiredBus_,d.id.c_str(),static_cast<unsigned>(d.decoderBits),outputs.data(),
+                static_cast<unsigned>(outputs.size()),&in,out.data()),"Create decoder " + d.id);
+            pin("IN",in);
+            for (std::size_t i = 0; i < out.size(); ++i) pin(d.decoderOutputs[i].id.c_str(),out[i]);
+            continue;
+        }
         if (const int kind=emu51PeripheralDisplayKind(d.kind); kind>=0) {
             auto settings=e51p_display_config_init(static_cast<unsigned>(kind));
             settings.digits=static_cast<unsigned>(d.displayDigits); settings.bar_segments=static_cast<unsigned>(d.barSegments);
@@ -177,9 +254,20 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz)
             settings.i2c_address = static_cast<unsigned>(d.i2cAddress); settings.clock_hz = d.clockHz;
             e51p_endpoint handles[16]; e51p_component* handle = nullptr;
             require(e51p_add_component(api_,context_,d.id.c_str(),&settings,&handle,handles,16),"Create "+d.id);
+            if (d.kind == Emu51PeripheralKind::KeyMatrix)
+                require(e51p_component_set_matrix_direct_keys(handle,static_cast<unsigned>(d.directKeys)),"Configure direct keys "+d.id);
+            if (d.kind == Emu51PeripheralKind::BusLatch) {
+                const auto ticks = static_cast<uint64_t>(std::llround(mhz*1000*d.pulseMs));
+                require(e51p_component_set_latch_pulse_ticks(handle,d.pulseMs > 0 ? std::max<uint64_t>(1,ticks) : 0),"Configure latch pulse "+d.id);
+            }
             const auto* descriptor = factory(d.kind);
             for (unsigned i = 0; i < descriptor->pin_count; ++i) pin(descriptor->pins[i].name,handles[i]);
-            if (const int size = emu51PeripheralBusSize(d.kind))
+            if (d.wiredBus) {
+                e51p_bus_pins pins{}; uint32_t target;
+                const auto bits = d.kind == Emu51PeripheralKind::Ay38910 ? 1u : 0u;
+                require(e51p_wired_bus_add_target(wiredBus_,d.id.c_str(),handles[0],bits,d.csLow,d.oeLow,d.weLow,&pins,&target),"Attach wired peripheral " + d.id);
+                busPins(d,pins);
+            } else if (const int size = emu51PeripheralBusSize(d.kind))
                 require(api_->map_bus(context_,bus_,static_cast<unsigned>(d.address),static_cast<unsigned>(size),handles[0],0),"Map "+d.id);
             Component component; component.id = d.id; component.handle = handle;
             component.kind = static_cast<unsigned>(kind); component.pressed = d.initiallyPressed;
@@ -216,24 +304,33 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz)
             require(e51p_registry_instantiate(registry(), descriptor->type_id, api_, context_, d.id.c_str(),
                 values.data(), static_cast<unsigned>(values.size()), handles.data(), static_cast<unsigned>(handles.size())), "Create " + d.id);
             for (unsigned i = 0; i < descriptor->pin_count; ++i) pin(descriptor->pins[i].name, handles[i]);
-            if (d.kind == Emu51PeripheralKind::I8255)
-                require(api_->map_bus(context_, bus_, static_cast<unsigned>(d.address), 4, endpoint(d.id + ".bus"), 0), "Map 8255 XDATA");
+            if (d.kind == Emu51PeripheralKind::I8255) {
+                if (d.wiredBus) {
+                    e51p_bus_pins pins{}; uint32_t target;
+                    require(e51p_wired_bus_add_target(wiredBus_,d.id.c_str(),endpoint(d.id+".bus"),2,d.csLow,d.oeLow,d.weLow,&pins,&target),"Attach wired 8255");
+                    busPins(d,pins);
+                } else require(api_->map_bus(context_, bus_, static_cast<unsigned>(d.address), 4, endpoint(d.id + ".bus"), 0), "Map 8255 XDATA");
+            }
             break;
         }
         case Emu51PeripheralKind::Voltage:
+        case Emu51PeripheralKind::Clock:
         case Emu51PeripheralKind::Digital: {
             auto source = std::make_unique<Source>();
             source->api = api_; source->context = context_; source->analog = d.kind == Emu51PeripheralKind::Voltage;
-            source->value = source->analog ? d.voltage : d.digitalValue;
+            source->width = d.kind == Emu51PeripheralKind::Clock ? 1 : 8;
+            source->value = d.kind == Emu51PeripheralKind::Clock ? 1 : source->analog ? d.voltage : d.digitalValue;
             e51p_device_desc desc{}; desc.struct_size = sizeof(desc); desc.instance_id = d.id.c_str();
             desc.user = source.get(); desc.reset = Source::reset; desc.destroy = Source::destroy;
             e51p_device device;
             require(api_->add_device(context_, &desc, &device), "Add source");
             auto* state = source.release(); // context owns it from here
             e51p_endpoint_desc p{sizeof(p), "out", state->analog ? E51P_ANALOG : E51P_DIGITAL,
-                E51P_OUTPUT, state->analog ? 1u : 8u, 0, 0, 0};
+                E51P_OUTPUT, state->analog ? 1u : state->width, 0, 0, 0};
             require(api_->add_endpoint(context_, device, &p, &state->pin), "Add source pin");
-            pin("out", state->pin); sources_.emplace_back(d.id, state); break;
+            pin(d.kind == Emu51PeripheralKind::Clock ? "OUT" : "out", state->pin);
+            if (d.kind != Emu51PeripheralKind::Clock) sources_.emplace_back(d.id, state);
+            break;
         }
         case Emu51PeripheralKind::Audio: {
             auto settings = e51p_audio_config_init(static_cast<unsigned>(d.audioDirections));
@@ -260,17 +357,40 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz)
     for (const auto& w : c.analog)
         require(api_->connect_analog(context_, endpoint(w.from), endpoint(w.to)), "Connect " + w.from + " to " + w.to);
     require(api_->start(context_), "Start graph");
+    require(e51p_wired_bus_compile(wiredBus_),"Compile circuit bus");
+    std::set<std::uint32_t> transactionNets, decoderOutputs, selectorNets;
+    const auto net = [&](e51p_endpoint p, unsigned bit) { uint32_t n = 0; require(e51p_digital_net(context_,p,bit,&n),"Resolve circuit net"); return n; };
+    for (unsigned bit = 0; bit < 16; ++bit) transactionNets.insert(net(cpuBus.address,bit));
+    for (const auto p : {cpuBus.code_read_n,cpuBus.data_read_n,cpuBus.data_write_n}) transactionNets.insert(net(p,0));
+    for (const auto& d : c.devices) if (d.kind == Emu51PeripheralKind::AddressDecoder)
+        for (const auto& o : d.decoderOutputs) decoderOutputs.insert(net(endpoint(d.id+"."+o.id),0));
+    for (const auto& p : describe(c)) {
+        if (p.kind != E51P_DIGITAL || p.name.starts_with("cpu.")) continue;
+        const auto suffix = p.name.substr(p.name.find('.')+1);
+        if (suffix != "ADDR" && suffix != "IN" && suffix != "CS" && suffix != "OE" && suffix != "WE") continue;
+        if (suffix == "IN") {
+            const auto id = p.name.substr(0,p.name.find('.'));
+            const auto device = std::find_if(c.devices.begin(),c.devices.end(),[&](const auto& d) { return d.id == id; });
+            if (device == c.devices.end() || device->kind != Emu51PeripheralKind::AddressDecoder) continue;
+        }
+        const auto handle = endpoint(p.name);
+        for (unsigned bit = 0; bit < p.width; ++bit) {
+            const auto n = net(handle,bit);
+            if (!transactionNets.contains(n) && !decoderOutputs.contains(n) && selectorNets.insert(n).second) selectorPins_.push_back({handle,bit});
+        }
+    }
     built_ = true;
     if (audio_) require(e51p_audio_set_paused(audio_, 1), "Pause audio");
 }
 bool Emu51PeripheralSession::claims(std::uint16_t a) const
 {
     return std::any_of(config_.devices.begin(), config_.devices.end(), [&](const auto& d) {
-        return emu51PeripheralBusSize(d.kind) && a >= d.address && a < d.address + emu51PeripheralBusSize(d.kind);
+        return !d.wiredBus && emu51PeripheralBusSize(d.kind) && a >= d.address && a < d.address + emu51PeripheralBusSize(d.kind);
     });
 }
 bool Emu51PeripheralSession::readData(std::uint16_t a, std::uint8_t& value, bool peek)
 {
+    if (circuitBus()) return circuitAccess(E51P_DATA_READ,a,value,peek);
     if (!claims(a)) return false;
     value = 0xff;
     std::uint32_t data = 255;
@@ -281,6 +401,7 @@ bool Emu51PeripheralSession::readData(std::uint16_t a, std::uint8_t& value, bool
 }
 bool Emu51PeripheralSession::writeData(std::uint16_t a, std::uint8_t value)
 {
+    if (circuitBus()) return circuitAccess(E51P_DATA_WRITE,a,value,false);
     if (!claims(a)) return false;
     const auto result = api_->bus_write(context_, bus_, a, value);
     if (!fatal(busStatus_)) busStatus_ = result;
@@ -300,7 +421,7 @@ std::uint64_t Emu51PeripheralSession::ticks() const
 }
 bool Emu51PeripheralSession::sampleDigital(const std::string& name, e51p_digital_state& sample) const
 {
-    const auto result = api_->sample(context_, endpoint(name), &sample);
+    const auto result = e51p_wired_bus_sample(wiredBus_,endpoint(name),&sample);
     return result == E51P_OK || result == E51P_CONTENTION;
 }
 bool Emu51PeripheralSession::sampleAnalog(const std::string& name, double& value) const

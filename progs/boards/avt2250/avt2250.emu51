@@ -1,0 +1,785 @@
+{
+  "version": 2,
+  "unified_memory": false,
+  "debugger_open": true,
+  "trace_enabled": false,
+  "serial_terminal_open": true,
+  "serial_file_ending": 3,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "circuit_bus": true,
+  "cycle_exact": true,
+  "crystal_mhz": 11.0592,
+  "instructions_per_frame": 500,
+  "programs": [],
+  "reload_program": "",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": false,
+    "open": false,
+    "draft": false,
+    "path": "",
+    "name": "untitled.asm",
+    "base_directory": "",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "assembly_units": [],
+  "active_unit": "",
+  "peripheral_analog_wires": [],
+  "decoder_outputs": [
+    {
+      "device": "address_decode",
+      "id": "ROM",
+      "name": "/ROM",
+      "active_low": true
+    },
+    {
+      "device": "address_decode",
+      "id": "DISPLAY",
+      "name": "/DISPLAY",
+      "active_low": true
+    },
+    {
+      "device": "address_decode",
+      "id": "KEYS",
+      "name": "/KEYS",
+      "active_low": true
+    },
+    {
+      "device": "address_decode",
+      "id": "RAM",
+      "name": "/RAM",
+      "active_low": true
+    },
+    {
+      "device": "latch_decode",
+      "id": "SEGMENTS",
+      "name": "/SEGMENTS",
+      "active_low": true
+    },
+    {
+      "device": "latch_decode",
+      "id": "SCAN",
+      "name": "/SCAN",
+      "active_low": true
+    },
+    {
+      "device": "ram_read",
+      "id": "READ",
+      "name": "/READ",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y0",
+      "name": "/Y0",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y1",
+      "name": "/Y1",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y2",
+      "name": "/Y2",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y3",
+      "name": "/Y3",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y4",
+      "name": "/Y4",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y5",
+      "name": "/Y5",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y6",
+      "name": "/Y6",
+      "active_low": true
+    },
+    {
+      "device": "digit_decode",
+      "id": "Y7",
+      "name": "/Y7",
+      "active_low": true
+    }
+  ],
+  "decoder_values": [
+    {
+      "device": "address_decode",
+      "output": "ROM",
+      "value": 0
+    },
+    {
+      "device": "address_decode",
+      "output": "DISPLAY",
+      "value": 2
+    },
+    {
+      "device": "address_decode",
+      "output": "KEYS",
+      "value": 3
+    },
+    {
+      "device": "address_decode",
+      "output": "RAM",
+      "value": 4
+    },
+    {
+      "device": "address_decode",
+      "output": "RAM",
+      "value": 5
+    },
+    {
+      "device": "address_decode",
+      "output": "RAM",
+      "value": 6
+    },
+    {
+      "device": "address_decode",
+      "output": "RAM",
+      "value": 7
+    },
+    {
+      "device": "latch_decode",
+      "output": "SEGMENTS",
+      "value": 0
+    },
+    {
+      "device": "latch_decode",
+      "output": "SCAN",
+      "value": 1
+    },
+    {
+      "device": "ram_read",
+      "output": "READ",
+      "value": 0
+    },
+    {
+      "device": "ram_read",
+      "output": "READ",
+      "value": 1
+    },
+    {
+      "device": "ram_read",
+      "output": "READ",
+      "value": 2
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y0",
+      "value": 0
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y1",
+      "value": 1
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y2",
+      "value": 2
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y3",
+      "value": 3
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y4",
+      "value": 4
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y5",
+      "value": 5
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y6",
+      "value": 6
+    },
+    {
+      "device": "digit_decode",
+      "output": "Y7",
+      "value": 7
+    }
+  ],
+  "peripheral_devices": [
+    {
+      "id": "monitor_rom",
+      "kind": 26,
+      "memory_capacity": 8192,
+      "memory_fill": 255
+    },
+    {
+      "id": "program_ram",
+      "kind": 25,
+      "memory_capacity": 32768,
+      "memory_fill": 0
+    },
+    {
+      "id": "clock",
+      "kind": 27,
+      "clock_hz": 11059200
+    },
+    {
+      "id": "address_decode",
+      "kind": 28,
+      "decoder_bits": 3
+    },
+    {
+      "id": "latch_decode",
+      "kind": 28,
+      "decoder_bits": 2
+    },
+    {
+      "id": "ram_read",
+      "kind": 28,
+      "decoder_bits": 2
+    },
+    {
+      "id": "segments",
+      "kind": 29,
+      "wired_bus": true,
+      "pulse_ms": 25
+    },
+    {
+      "id": "scan",
+      "kind": 29,
+      "wired_bus": true
+    },
+    {
+      "id": "keyboard_input",
+      "kind": 30,
+      "wired_bus": true
+    },
+    {
+      "id": "keypad",
+      "kind": 31,
+      "rows": 8,
+      "columns": 2,
+      "key_labels": [
+        "0",
+        "8",
+        "1",
+        "9",
+        "2",
+        "A",
+        "3",
+        "B",
+        "4",
+        "C",
+        "5",
+        "D",
+        "6",
+        "E",
+        "7",
+        "F",
+        "M",
+        "OK"
+      ],
+      "direct_keys": 2,
+      "key_legends": [
+        "Jump",
+        "Save",
+        "",
+        "Test",
+        "",
+        "",
+        "",
+        "Baud",
+        "Dec",
+        "Copy",
+        "",
+        "Dump",
+        "Inc",
+        "Edit",
+        "Load",
+        "Fill",
+        "Monitor",
+        "Enter"
+      ],
+      "key_layout_columns": 5,
+      "key_layout_rows": 4,
+      "key_layout": [
+        2,
+        4,
+        6,
+        5,
+        7,
+        8,
+        10,
+        12,
+        9,
+        11,
+        14,
+        1,
+        3,
+        13,
+        15,
+        16,
+        0,
+        17,
+        -1,
+        -1
+      ]
+    },
+    {
+      "id": "digit_decode",
+      "kind": 28,
+      "decoder_bits": 4
+    },
+    {
+      "id": "display",
+      "kind": 15,
+      "display_digits": 8,
+      "common_anode": false,
+      "persistence_ms": 25
+    }
+  ],
+  "memory_images": [
+    {
+      "device": "monitor_rom",
+      "path": "monitor.bin",
+      "offset": 0,
+      "length": 8192
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "clock.OUT",
+      "b": "cpu.CLK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "address_decode.IN",
+      "a_bit": 13,
+      "b_bit": 0,
+      "width": 3
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "monitor_rom.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 13
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "monitor_rom.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "address_decode.ROM",
+      "b": "monitor_rom.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "program_ram.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 15
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "program_ram.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "address_decode.RAM",
+      "b": "program_ram.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "monitor_rom.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "ram_read.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.RD",
+      "b": "ram_read.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "ram_read.READ",
+      "b": "program_ram.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "program_ram.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "latch_decode.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "address_decode.DISPLAY",
+      "b": "latch_decode.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "segments.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "latch_decode.SEGMENTS",
+      "b": "segments.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "segments.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "scan.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "latch_decode.SCAN",
+      "b": "scan.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "scan.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "keyboard_input.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "address_decode.KEYS",
+      "b": "keyboard_input.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.RD",
+      "b": "keyboard_input.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "scan.Q",
+      "b": "digit_decode.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 3
+    },
+    {
+      "a": "segments.PULSE_n",
+      "b": "digit_decode.IN",
+      "a_bit": 0,
+      "b_bit": 3,
+      "width": 1
+    },
+    {
+      "a": "segments.Q",
+      "b": "display.segments",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "digit_decode.Y0",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y0",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y1",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y1",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y2",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y2",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y3",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 3,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y3",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 3,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y4",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 4,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y4",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 4,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y5",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 5,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y5",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 5,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y6",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 6,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y6",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 6,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y7",
+      "b": "display.commons",
+      "a_bit": 0,
+      "b_bit": 7,
+      "width": 1
+    },
+    {
+      "a": "digit_decode.Y7",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 7,
+      "width": 1
+    },
+    {
+      "a": "keypad.columns",
+      "b": "keyboard_input.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 2
+    },
+    {
+      "a": "keypad.direct",
+      "b": "keyboard_input.IN",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 2
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "display",
+      "x": 12,
+      "y": 12,
+      "width": 600,
+      "height": 150,
+      "momentary_keys": false
+    },
+    {
+      "id": "keypad",
+      "x": 12,
+      "y": 172,
+      "width": 600,
+      "height": 330,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0,
+      "y": 0,
+      "name": "AVT-2250 / 8051"
+    },
+    {
+      "id": "monitor_rom",
+      "x": 340,
+      "y": 0,
+      "name": "27C64 monitor ROM"
+    },
+    {
+      "id": "program_ram",
+      "x": 680,
+      "y": 0,
+      "name": "62256 shared program/data RAM"
+    },
+    {
+      "id": "clock",
+      "x": 1020,
+      "y": 0,
+      "name": "11.0592 MHz"
+    },
+    {
+      "id": "address_decode",
+      "x": 0,
+      "y": 280,
+      "name": "address_decode"
+    },
+    {
+      "id": "latch_decode",
+      "x": 340,
+      "y": 280,
+      "name": "latch_decode"
+    },
+    {
+      "id": "ram_read",
+      "x": 680,
+      "y": 280,
+      "name": "ram_read"
+    },
+    {
+      "id": "segments",
+      "x": 1020,
+      "y": 280,
+      "name": "Segment latch / scan watchdog"
+    },
+    {
+      "id": "scan",
+      "x": 0,
+      "y": 560,
+      "name": "Digit scan latch"
+    },
+    {
+      "id": "keyboard_input",
+      "x": 340,
+      "y": 560,
+      "name": "Keyboard input buffer"
+    },
+    {
+      "id": "keypad",
+      "x": 680,
+      "y": 560,
+      "name": "AVT-2250 keypad"
+    },
+    {
+      "id": "digit_decode",
+      "x": 340,
+      "y": 840,
+      "name": "digit_decode"
+    },
+    {
+      "id": "display",
+      "x": 680,
+      "y": 840,
+      "name": "AVT-2250 display"
+    }
+  ],
+  "load_mappings": []
+}

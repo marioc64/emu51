@@ -5,6 +5,7 @@
 #include "emu51/audio.h"
 #include "emu51/components.h"
 #include "emu51/displays.h"
+#include "emu51/wired_bus.h"
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -17,12 +18,18 @@ struct Emu51PeripheralPin {
     std::uint32_t kind;
     unsigned direction, width;
 };
+struct Emu51PhysicalAddress {
+    std::string device;
+    std::uint64_t offset = 0, revision = 0;
+    bool operator==(const Emu51PhysicalAddress&) const = default;
+};
 
 // One simulation-thread-owned graph. Detach CPU port I/O before destruction.
 // Construction is transactional: create the replacement before touching CPU.
 class Emu51PeripheralSession {
 public:
-    static std::unique_ptr<Emu51PeripheralSession> create(const Emu51PeripheralConfig&, double crystalMHz);
+    static std::unique_ptr<Emu51PeripheralSession> create(const Emu51PeripheralConfig&, double crystalMHz,
+        const Emu51PeripheralSession* preserveMemory = nullptr);
     ~Emu51PeripheralSession();
     Emu51PeripheralSession(const Emu51PeripheralSession&) = delete;
     Emu51PeripheralSession& operator=(const Emu51PeripheralSession&) = delete;
@@ -31,6 +38,23 @@ public:
     std::shared_ptr<Emu51PeripheralGpio> gpio() const { return gpio_; }
     bool readData(std::uint16_t address, std::uint8_t& value, bool peek);
     bool writeData(std::uint16_t address, std::uint8_t value);
+    bool readProgram(std::uint16_t address, std::uint8_t& value, bool peek);
+    bool programLogical(bool code, std::uint16_t address, std::uint8_t value);
+    bool resolve(bool code, std::uint16_t address, Emu51PhysicalAddress&, std::uint8_t* value = nullptr) const;
+    bool circuitBus() const { return emu51CircuitBus(config_); }
+    double crystalMHz() const { return crystalMHz_; }
+    const std::string& busError() const { return busError_; }
+    std::uint64_t routingRevision(bool includeStorage = true) const;
+    struct Memory {
+        std::string id;
+        std::shared_ptr<e51p_memory> storage;
+        std::uint32_t target;
+    };
+    const std::vector<Memory>& memories() const { return memories_; }
+    e51p_memory* memory(const std::string& id) const;
+    std::vector<std::uint8_t> snapshotMemory(const std::string&, std::uint64_t offset, std::uint64_t length) const;
+    bool programMemory(const std::string&, std::uint64_t offset, const std::vector<std::uint8_t>&);
+    static std::vector<std::uint8_t> readBinary(const std::filesystem::path&, std::uint64_t exactLength);
     e51p_status status() const;
     void resetStatus() { busStatus_ = E51P_OK; }
     std::uint64_t ticks() const;
@@ -71,7 +95,8 @@ public:
     bool audioScope(e51p_audio_scope_frame*, uint32_t capacity, uint32_t& count, uint32_t& rate) const;
 private:
     Emu51PeripheralSession() = default;
-    void build(const Emu51PeripheralConfig&, double crystalMHz);
+    void build(const Emu51PeripheralConfig&, double crystalMHz, const Emu51PeripheralSession*);
+    bool circuitAccess(unsigned kind, std::uint16_t, std::uint8_t&, bool peek);
     bool claims(std::uint16_t address) const;
     e51p_endpoint endpoint(const std::string&) const;
     struct Source;
@@ -94,6 +119,11 @@ private:
     bool built_ = false;
     bool storageActive_ = false;
     e51p_endpoint bus_ = E51P_INVALID_ID;
+    e51p_wired_bus* wiredBus_ = nullptr;
+    std::vector<Memory> memories_;
+    double crystalMHz_ = 12;
+    std::string busError_;
+    std::vector<std::pair<e51p_endpoint,unsigned>> selectorPins_;
     e51p_status busStatus_ = E51P_OK;
     e51p_audio_stream* audio_ = nullptr;
     [[maybe_unused]] e51p_audio_host* audioHost_ = nullptr;

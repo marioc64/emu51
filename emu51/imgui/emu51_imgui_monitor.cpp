@@ -345,6 +345,7 @@ std::uint8_t Emu51ImguiApp::readMonitorByte(const MonitorView& view, std::uint16
 	case MonitorView::MemoryKind::InternalRam:
 		return cpu_.readIndirect(static_cast<std::uint8_t>(address));
 	case MonitorView::MemoryKind::ExternalProgram:
+		if (peripherals_ && peripherals_->circuitBus()) return readProgramByte(address);
 		return unifiedMode_ ? cpu_.readData(address) : cpu_.readProg(address);
 	case MonitorView::MemoryKind::ExternalData:
 	default:

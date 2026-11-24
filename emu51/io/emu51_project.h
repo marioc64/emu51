@@ -31,8 +31,23 @@ struct Emu51ProjectEditor {
     std::string path, name = "untitled.asm", baseDirectory, text;
     int line = 0, column = 0;
 };
+struct Emu51AssemblyUnit {
+    std::string id, path, baseDirectory;
+    std::vector<std::string> includeDirectories = {};
+    bool embedded = false, buildOnly = false, includeOnly = false;
+    std::uint16_t binaryAddress = 0;
+    Emu51ProjectEditor editor;
+};
+struct Emu51ProgramMapping {
+    std::string id, unit, device;
+    std::uint32_t sourceStart = 0, sourceEnd = 65536; // exclusive end
+    std::uint64_t destination = 0;
+    std::uint32_t order = 0;
+    bool overlay = false;
+};
 
 struct Emu51Project {
+    int formatVersion = 1;
     bool unified = true, debuggerOpen = false, traceEnabled = false;
     bool serialTerminalOpen = false;
     int serialLineEnding = 0, serialFileLineEnding = 0, serialFileLineDelayMs = 0;
@@ -49,6 +64,9 @@ struct Emu51Project {
     std::set<std::uint16_t> breakpoints;
     std::vector<Emu51ProjectWatchpoint> watchpoints;
     std::set<std::string> watches;
+    std::vector<Emu51AssemblyUnit> units = {};
+    std::vector<Emu51ProgramMapping> mappings = {};
+    std::string activeUnit = {};
 };
 
 // Decode/validate before applying anything. Paths returned by load are absolute;

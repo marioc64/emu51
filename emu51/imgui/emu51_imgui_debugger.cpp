@@ -239,6 +239,16 @@ void Emu51ImguiApp::noteMemoryAccess(WatchSpace space, std::uint16_t address, bo
 
 void Emu51ImguiApp::setLoadedSourceMap(const emu51_asm::AssemblyImage& image)
 {
+    if (peripherals_ && peripherals_->circuitBus() && !rebuildingPhysicalSources_) {
+        Emu51ProjectBuild build; build.units.push_back({"loaded",image,{}});
+        for (const auto& [address,byte] : image.bytes) {
+            Emu51PhysicalAddress physical;
+            if (peripherals_->resolve(true,address,physical))
+                build.writes[{physical.device,physical.offset}] = {byte,"loaded","loaded",address,false};
+        }
+        installProjectSources(build);
+        return;
+    }
     // Replacing an image invalidates old source locations, including overlay
     // loads whose unchanged bytes may belong to a different source version.
     if (stepTask_)
@@ -294,6 +304,15 @@ void Emu51ImguiApp::runToEditorCursor()
 
 void Emu51ImguiApp::showSource(std::uint16_t address)
 {
+    refreshPhysicalSources();
+    if (peripherals_ && peripherals_->circuitBus()) {
+        Emu51PhysicalAddress physical;
+        if (peripherals_->resolve(true,address,physical)) {
+            const auto byte = projectBuild_.writes.find({physical.device,physical.offset});
+            if (byte != projectBuild_.writes.end() && std::any_of(projectUnits_.begin(),projectUnits_.end(),[&](const auto& u) { return u.id == byte->second.unit; }))
+                if (!switchProjectUnit(byte->second.unit)) return;
+        }
+    }
     const auto found = sourceLines_.find(address);
     if (found == sourceLines_.end())
         return;
@@ -301,8 +320,10 @@ void Emu51ImguiApp::showSource(std::uint16_t address)
     const auto source = found->second;
     trackAssemblyEditorChanges();
     if (source.file != editorSourceKey()) {
-        if (!confirmAssemblyEditorChanges() || !loadAssemblyFileIntoEditor(source.file))
-            return;
+        if (!projectUnits_.empty()) {
+            if (!addProjectUnit(source.file)) return;
+            for (auto& unit : projectUnits_) if (unit.id == activeProjectUnit_) unit.includeOnly = true;
+        } else if (!confirmAssemblyEditorChanges() || !loadAssemblyFileIntoEditor(source.file)) return;
     }
     trackAssemblyEditorChanges();
     if (!editorMatchesLoadedSource_) {
@@ -326,6 +347,7 @@ void Emu51ImguiApp::drawDebugger()
         return;
     }
     ImGui::TextWrapped("%s", statusMessage_.c_str());
+    drawPhysicalMemory();
     trackAssemblyEditorChanges();
     ImGui::SetNextItemWidth(220);
     ImGui::InputText("Address or symbol", debugAddress_, sizeof(debugAddress_));
