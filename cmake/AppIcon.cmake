@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
-if(NOT TARGET emu51_imgui)
+if(NOT TARGET emu51)
     return()
 endif()
 
 set(icon_dir "${PROJECT_SOURCE_DIR}/resources/icons")
 if(APPLE)
-    set_target_properties(emu51_imgui PROPERTIES MACOSX_BUNDLE_ICON_FILE emu51.icns)
+    set_target_properties(emu51 PROPERTIES MACOSX_BUNDLE_ICON_FILE emu51.icns)
     set_source_files_properties("${icon_dir}/emu51.icns" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-    target_sources(emu51_imgui PRIVATE "${icon_dir}/emu51.icns")
+    target_sources(emu51 PRIVATE "${icon_dir}/emu51.icns")
 else()
     # Embed the window icons so relocated executables need no image loader or asset path.
     set(header "// Generated from resources/icons/*.rgba by AppIcon.cmake.\n#pragma once\n")
@@ -24,12 +24,12 @@ else()
     # configure_file avoids recompilation if only unrelated CMake settings changed.
     file(WRITE "${header_path}.in" "${header}")
     configure_file("${header_path}.in" "${header_path}" COPYONLY)
-    target_include_directories(emu51_imgui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_include_directories(emu51 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
     if(WIN32)
         enable_language(RC)
-        target_sources(emu51_imgui PRIVATE "${PROJECT_SOURCE_DIR}/emu51/imgui/windows/emu51.rc")
-        target_include_directories(emu51_imgui PRIVATE "${icon_dir}")
+        target_sources(emu51 PRIVATE "${PROJECT_SOURCE_DIR}/emu51/imgui/windows/emu51.rc")
+        target_include_directories(emu51 PRIVATE "${icon_dir}")
         set_source_files_properties("${PROJECT_SOURCE_DIR}/emu51/imgui/windows/emu51.rc" PROPERTIES
             OBJECT_DEPENDS "${icon_dir}/emu51.ico")
     elseif(UNIX)

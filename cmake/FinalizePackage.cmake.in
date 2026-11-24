@@ -6,20 +6,20 @@ if(APPLE AND NOT identity STREQUAL "")
     if(NOT identity STREQUAL "-")
         list(APPEND flags --options runtime --timestamp)
     endif()
-    foreach(tool emu51 emu51_asm emu51_bench)
+    foreach(tool emu51cli emu51_asm emu51_bench)
         execute_process(COMMAND /usr/bin/codesign ${flags} "${stage}/@CMAKE_INSTALL_BINDIR@/${tool}"
             RESULT_VARIABLE result)
         if(NOT result EQUAL 0)
             message(FATAL_ERROR "Signing ${tool} failed: ${result}")
         endif()
     endforeach()
-    if(EXISTS "${stage}/emu51_imgui.app")
-        execute_process(COMMAND /usr/bin/codesign ${flags} "${stage}/emu51_imgui.app"
+    if(EXISTS "${stage}/emu51.app")
+        execute_process(COMMAND /usr/bin/codesign ${flags} "${stage}/emu51.app"
             RESULT_VARIABLE result)
         if(NOT result EQUAL 0)
-            message(FATAL_ERROR "Signing emu51_imgui.app failed: ${result}")
+            message(FATAL_ERROR "Signing emu51.app failed: ${result}")
         endif()
-        execute_process(COMMAND /usr/bin/codesign --verify --deep --strict "${stage}/emu51_imgui.app"
+        execute_process(COMMAND /usr/bin/codesign --verify --deep --strict "${stage}/emu51.app"
             RESULT_VARIABLE result)
         if(NOT result EQUAL 0)
             message(FATAL_ERROR "Bundle signature verification failed: ${result}")

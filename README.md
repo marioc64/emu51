@@ -69,10 +69,10 @@ Run the desktop executable for your build:
 
 | Platform/generator | Executable |
 | --- | --- |
-| macOS, single configuration | `build/emu51/emu51_imgui.app/Contents/MacOS/emu51_imgui` |
-| Linux, single configuration | `build/emu51/emu51_imgui` |
-| Windows, Visual Studio Debug | `build\emu51\Debug\emu51_imgui.exe` |
-| Windows, single configuration | `build\emu51\emu51_imgui.exe` |
+| macOS, single configuration | `build/emu51/emu51.app/Contents/MacOS/emu51` |
+| Linux, single configuration | `build/emu51/emu51` |
+| Windows, Visual Studio Debug | `build\emu51\Debug\emu51.exe` |
+| Windows, single configuration | `build\emu51\emu51.exe` |
 
 Other multi-configuration builds also put executables or app bundles under their
 configuration directory. Useful build options are `-DEMU51_WERROR=ON` for warnings
@@ -156,7 +156,7 @@ are descriptive and do not restrict the loader.
 The console runner and benchmark accept `--model 8051` or `--model 8052`, for example:
 
 ```sh
-build/emu51/emu51 --model 8052 --steps 1000000 program.hex
+build/emu51/emu51cli --model 8052 --steps 1000000 program.hex
 ```
 
 ## Loading programs and memory modes
@@ -470,8 +470,8 @@ instructions; its default is 1,000,000. It runs at full speed rather than using
 the GUI pacing setting. It reports instructions, cycles, PC, SP, and a state hash.
 
 ```sh
-./build/emu51/emu51 --steps 100000 progs/hex/mtask2.hex
-./build/emu51/emu51 --help
+./build/emu51/emu51cli --steps 100000 progs/hex/mtask2.hex
+./build/emu51/emu51cli --help
 ```
 
 Use a Release build for benchmarking:
@@ -498,8 +498,8 @@ After building all targets, stage an installation:
 cmake --install build --config Debug --prefix /path/to/package
 ```
 
-The default layout contains `bin/emu51_asm`, `bin/emu51`, `bin/emu51_bench`, the
-GUI under `bin/` or as a root-level macOS `.app`, and the device modules under
+The default layout contains `bin/emu51_asm`, `bin/emu51cli`, `bin/emu51_bench`, the
+GUI as `bin/emu51` or a root-level macOS `emu51.app`, and the device modules under
 `share/emu51/asm/`. Windows tools have an `.exe` suffix. Documentation and licenses
 are under `share/doc/emu51/`; `SHA256SUMS` covers installed files. The
 macOS app has its own resource, license, and notice copies and can be moved by

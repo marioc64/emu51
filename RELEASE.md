@@ -57,7 +57,7 @@ The default install/archive tree contains:
 | Location | Content |
 | --- | --- |
 | `bin/` | Assembler, console runner, benchmark; desktop executable on Linux/Windows |
-| `emu51_imgui.app/` | Desktop app on macOS |
+| `emu51.app/` | Desktop app on macOS |
 | `share/emu51/asm/mod*` | Packaged 8051-family assembler modules |
 | `share/applications/emu51.desktop` | Linux desktop launcher |
 | `share/icons/hicolor/*/apps/emu51.png` | Linux application icons |
@@ -75,7 +75,7 @@ in binary packages.
 
 The macOS bundle and Windows executable contain the same application icon.
 Linux installs the launcher and icons under the selected data directory. The
-launcher expects `emu51_imgui` on `PATH`; for an unpacked archive, add its `bin/`
+launcher expects `emu51` on `PATH`; for an unpacked archive, add its `bin/`
 directory to `PATH` and copy the launcher and icons into the corresponding
 `~/.local/share/` directories for desktop-menu integration.
 
@@ -104,7 +104,7 @@ adds platform dependency/signature checks. For custom install paths, supply
 - **Linux:** the host normally supplies GLFW, compatible libc/libstdc++, OpenGL
   drivers, and window-system libraries. Build on the oldest distribution you
   intend to support; the TGZ is not a universal Linux binary. Check dependencies
-  with `ldd bin/emu51_imgui` after extraction.
+  with `ldd bin/emu51` after extraction.
 
 Linux can bundle GLFW itself with `-DEMU51_BUNDLE_GLFW=ON` and
 `-DEMU51_GLFW_LICENSE=/path/to/that/runtime/copyright`. This requires a CMake

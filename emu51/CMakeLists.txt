@@ -72,14 +72,14 @@ endforeach()
 install(TARGETS emu51_asm RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES ${EMU51_ASM_MODULE_FILES} DESTINATION "${CMAKE_INSTALL_DATADIR}/emu51/asm")
 
-add_executable(emu51       "main.cpp")
+add_executable(emu51cli    "main.cpp")
 add_executable(emu51_tests "tests.cpp" "serial_tests.cpp" "model_tests.cpp" "validation_tests.cpp")
 add_executable(emu51_bench "bench.cpp")
 
-target_link_libraries(emu51       PRIVATE emu51_asm_lib emu51_warnings)
+target_link_libraries(emu51cli    PRIVATE emu51_asm_lib emu51_warnings)
 target_link_libraries(emu51_tests PRIVATE emu51_asm_lib emu51_settings_lib emu51_editor_files_lib emu51_warnings)
 target_link_libraries(emu51_bench PRIVATE emu51_asm_lib emu51_warnings)
-target_include_directories(emu51       PRIVATE "${EMU51_CORE_DIR}")
+target_include_directories(emu51cli    PRIVATE "${EMU51_CORE_DIR}")
 target_include_directories(emu51_tests PRIVATE "${EMU51_CORE_DIR}" "${EMU51_ASM_DIR}")
 target_compile_definitions(emu51_tests PRIVATE
 	EMU51_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
@@ -244,25 +244,25 @@ if (APPLE AND TARGET emu51_imgui_common)
 	)
 	target_compile_options(emu51_thirdparty_backends PRIVATE "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
 
-	add_executable(emu51_imgui
+	add_executable(emu51
 		$<TARGET_OBJECTS:emu51_imgui_common>
 		$<TARGET_OBJECTS:emu51_thirdparty_imgui>
 		$<TARGET_OBJECTS:emu51_thirdparty_backends>
 		"imgui/macos/emu51_imgui_main.mm"
 	)
 
-	target_include_directories(emu51_imgui SYSTEM PRIVATE
+	target_include_directories(emu51 SYSTEM PRIVATE
 		"${CMAKE_SOURCE_DIR}/third_party/imgui"
 		"${CMAKE_SOURCE_DIR}/third_party/imgui/backends"
 		"${CMAKE_SOURCE_DIR}/third_party/ImGuiColorTextEdit"
 	)
-	target_include_directories(emu51_imgui PRIVATE
+	target_include_directories(emu51 PRIVATE
 		"${EMU51_CORE_DIR}"
 		"${EMU51_ASM_DIR}"
 		"${EMU51_IMGUI_DIR}"
 	)
-	target_compile_options(emu51_imgui PRIVATE "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
-	target_link_libraries(emu51_imgui PRIVATE
+	target_compile_options(emu51 PRIVATE "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
+	target_link_libraries(emu51 PRIVATE
 		emu51_asm_lib
 		emu51_settings_lib
 		emu51_editor_files_lib
@@ -273,14 +273,14 @@ if (APPLE AND TARGET emu51_imgui_common)
 		${METALKIT_FRAMEWORK}
 		${QUARTZCORE_FRAMEWORK}
 	)
-	set_target_properties(emu51_imgui PROPERTIES
+	set_target_properties(emu51 PROPERTIES
 		MACOSX_BUNDLE TRUE
 		MACOSX_BUNDLE_INFO_PLIST "${EMU51_IMGUI_DIR}/macos/Info.plist.in"
 		XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
 	)
 	set_source_files_properties(${EMU51_ASM_MODULE_FILES} PROPERTIES
 		MACOSX_PACKAGE_LOCATION "Resources/asm")
-	target_sources(emu51_imgui PRIVATE ${EMU51_ASM_MODULE_FILES})
+	target_sources(emu51 PRIVATE ${EMU51_ASM_MODULE_FILES})
 elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 	find_package(OpenGL REQUIRED)
 	find_package(glfw3 CONFIG QUIET)
@@ -347,7 +347,7 @@ elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 			"$<$<PLATFORM_ID:Windows>:NOMINMAX;WIN32_LEAN_AND_MEAN>"
 		)
 
-		add_executable(emu51_imgui
+		add_executable(emu51
 			$<TARGET_OBJECTS:emu51_imgui_common>
 			$<TARGET_OBJECTS:emu51_thirdparty_imgui>
 			$<TARGET_OBJECTS:emu51_thirdparty_backends>
@@ -355,17 +355,17 @@ elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 			"imgui/emu51_imgui_glfw.cpp"
 		)
 
-		target_include_directories(emu51_imgui SYSTEM PRIVATE
+		target_include_directories(emu51 SYSTEM PRIVATE
 			"${CMAKE_SOURCE_DIR}/third_party/imgui"
 			"${CMAKE_SOURCE_DIR}/third_party/imgui/backends"
 			"${CMAKE_SOURCE_DIR}/third_party/ImGuiColorTextEdit"
 		)
-		target_include_directories(emu51_imgui PRIVATE
+		target_include_directories(emu51 PRIVATE
 			"${EMU51_CORE_DIR}"
 			"${EMU51_ASM_DIR}"
 			"${EMU51_IMGUI_DIR}"
 		)
-		target_link_libraries(emu51_imgui PRIVATE
+		target_link_libraries(emu51 PRIVATE
 			emu51_asm_lib
 			emu51_settings_lib
 			emu51_editor_files_lib
@@ -374,12 +374,12 @@ elseif((WIN32 OR UNIX) AND NOT APPLE AND TARGET emu51_imgui_common)
 			OpenGL::GL
 		)
 	else()
-		message(STATUS "Skipping emu51_imgui: GLFW3 not found on ${CMAKE_SYSTEM_NAME}")
+		message(STATUS "Skipping emu51: GLFW3 not found on ${CMAKE_SYSTEM_NAME}")
 	endif()
 endif()
 
-if (TARGET emu51_imgui AND NOT EMU51_LOCAL_EXTENSION)
-	install(TARGETS emu51_imgui
+if (TARGET emu51 AND NOT EMU51_LOCAL_EXTENSION)
+	install(TARGETS emu51
 		BUNDLE DESTINATION "."
 		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 	)
@@ -396,7 +396,7 @@ add_test(NAME emu51_packaged_resources
 
 add_test(NAME emu51_headless_tools
     COMMAND "${CMAKE_COMMAND}"
-        "-DRUNNER=$<TARGET_FILE:emu51>"
+        "-DRUNNER=$<TARGET_FILE:emu51cli>"
         "-DBENCH=$<TARGET_FILE:emu51_bench>"
         "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/headless-tools-test/$<CONFIG>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/headless_tools_test.cmake")

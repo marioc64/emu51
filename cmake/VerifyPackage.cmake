@@ -117,7 +117,7 @@ if(HOST_AUDIO_EXPECTED)
             message(FATAL_ERROR "Missing installed miniaudio license: ${path}")
         endif()
     endforeach()
-    if(APPLE AND GUI_EXPECTED AND NOT EXISTS "${root}/emu51_imgui.app/Contents/Resources/licenses/miniaudio/LICENSE")
+    if(APPLE AND GUI_EXPECTED AND NOT EXISTS "${root}/emu51.app/Contents/Resources/licenses/miniaudio/LICENSE")
         message(FATAL_ERROR "Missing miniaudio bundle license")
     endif()
 endif()
@@ -153,7 +153,7 @@ foreach(module IN LISTS EMU51_ASM_MODULE_NAMES)
         message(FATAL_ERROR "Installed ${module} produced incorrect bytes: ${bytes}")
     endif()
 endforeach()
-execute_process(COMMAND "${root}/${BINDIR}/emu51${suffix}" --steps 100 "${WORK_DIR}/program.asm"
+execute_process(COMMAND "${root}/${BINDIR}/emu51cli${suffix}" --steps 100 "${WORK_DIR}/program.asm"
     WORKING_DIRECTORY "${WORK_DIR}/unrelated cwd" RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if(NOT result EQUAL 0 OR NOT output MATCHES "instructions=100 cycles=200 PC=0003")
     message(FATAL_ERROR "Relocated runner failed: ${output}\n${error}")
@@ -165,8 +165,8 @@ if(NOT result EQUAL 0)
 endif()
 if(GUI_EXPECTED)
     if(APPLE)
-        set(app "${root}/emu51_imgui.app")
-        foreach(path IN ITEMS Contents/MacOS/emu51_imgui Contents/Info.plist
+        set(app "${root}/emu51.app")
+        foreach(path IN ITEMS Contents/MacOS/emu51 Contents/Info.plist
                 Contents/Resources/asm/mod851 Contents/Resources/THIRD_PARTY_NOTICES.md
                 Contents/Resources/LICENSE Contents/Resources/COPYRIGHT Contents/Resources/emu51.icns
                 Contents/Resources/licenses/imgui/LICENSE.txt Contents/Resources/licenses/codicons/LICENSE
@@ -188,7 +188,7 @@ if(GUI_EXPECTED)
         if(NOT plist MATCHES "<key>CFBundleIconFile</key>[ \t\r\n]*<string>emu51.icns</string>")
             message(FATAL_ERROR "Bundle does not declare its application icon")
         endif()
-    elseif(NOT EXISTS "${root}/${BINDIR}/emu51_imgui${suffix}")
+    elseif(NOT EXISTS "${root}/${BINDIR}/emu51${suffix}")
         message(FATAL_ERROR "Missing packaged desktop executable")
     endif()
     if(UNIX AND NOT APPLE)

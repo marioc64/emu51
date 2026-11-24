@@ -8,7 +8,7 @@ set(EMU51_BUNDLE_ID "org.emu51.app" CACHE STRING "macOS bundle identifier")
 
 # Only explicitly listed runtime files enter binary packages. In particular,
 # never install the development progs/ tree or generate source archives here.
-install(TARGETS emu51 emu51_bench RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(TARGETS emu51cli emu51_bench RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES "${PROJECT_SOURCE_DIR}/README.md" "${PROJECT_SOURCE_DIR}/RELEASE.md"
     "${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${PROJECT_SOURCE_DIR}/HISTORY.md"
     "${PROJECT_SOURCE_DIR}/COPYRIGHT" "${PROJECT_SOURCE_DIR}/CONTRIBUTING.md"
@@ -23,10 +23,10 @@ function(emu51_package_license source component)
     endif()
     install(FILES "${source}"
         DESTINATION "${CMAKE_INSTALL_DOCDIR}/licenses/${component}")
-    if(APPLE AND TARGET emu51_imgui)
+    if(APPLE AND TARGET emu51)
         set_source_files_properties("${source}" PROPERTIES
             MACOSX_PACKAGE_LOCATION "Resources/licenses/${component}")
-        target_sources(emu51_imgui PRIVATE "${source}")
+        target_sources(emu51 PRIVATE "${source}")
     endif()
 endfunction()
 emu51_package_license("third_party/imgui/LICENSE.txt" imgui)
@@ -41,19 +41,19 @@ if(EMU51_PERIPHERAL_HOST_AUDIO)
     emu51_package_license("${EMU51_MINIAUDIO_DIR}/LICENSE" miniaudio)
 endif()
 
-if(APPLE AND TARGET emu51_imgui)
-    set_target_properties(emu51_imgui PROPERTIES
+if(APPLE AND TARGET emu51)
+    set_target_properties(emu51 PROPERTIES
         MACOSX_BUNDLE_BUNDLE_NAME "emu51"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${EMU51_BUNDLE_ID}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
     set_source_files_properties("${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources)
-    target_sources(emu51_imgui PRIVATE "${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md")
+    target_sources(emu51 PRIVATE "${PROJECT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md")
     foreach(notice LICENSE COPYRIGHT)
         set_source_files_properties("${PROJECT_SOURCE_DIR}/${notice}" PROPERTIES
             MACOSX_PACKAGE_LOCATION Resources)
-        target_sources(emu51_imgui PRIVATE "${PROJECT_SOURCE_DIR}/${notice}")
+        target_sources(emu51 PRIVATE "${PROJECT_SOURCE_DIR}/${notice}")
     endforeach()
 endif()
 
@@ -78,11 +78,11 @@ if(WIN32)
         endif()
     endif()
     set(runtime_gui_line "")
-    if(TARGET emu51_imgui)
-        set(runtime_gui_line "list(APPEND runtime_executables \"$<TARGET_FILE:emu51_imgui>\")")
+    if(TARGET emu51)
+        set(runtime_gui_line "list(APPEND runtime_executables \"$<TARGET_FILE:emu51>\")")
     endif()
     file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/deploy-windows-$<CONFIG>.cmake" CONTENT
-"set(runtime_executables \"$<TARGET_FILE:emu51>\" \"$<TARGET_FILE:emu51_asm>\" \"$<TARGET_FILE:emu51_bench>\")
+"set(runtime_executables \"$<TARGET_FILE:emu51cli>\" \"$<TARGET_FILE:emu51_asm>\" \"$<TARGET_FILE:emu51_bench>\")
 ${runtime_gui_line}
 set(runtime_search_dirs \"${EMU51_RUNTIME_SEARCH_DIRS}\")
 set(runtime_bindir \"${CMAKE_INSTALL_BINDIR}\")
@@ -90,7 +90,7 @@ ${runtime_tool_lines}
 include(\"${PROJECT_SOURCE_DIR}/cmake/DeployWindows.cmake\")
 ")
     install(SCRIPT "${PROJECT_BINARY_DIR}/deploy-windows-$<CONFIG>.cmake")
-elseif(UNIX AND NOT APPLE AND TARGET emu51_imgui AND EMU51_BUNDLE_GLFW)
+elseif(UNIX AND NOT APPLE AND TARGET emu51 AND EMU51_BUNDLE_GLFW)
     # Bundle GLFW itself. The host supplies graphics drivers and their platform
     # libraries; carrying those across Linux distributions would be unreliable.
     get_target_property(glfw_type "${EMU51_GLFW_TARGET}" TYPE)
@@ -105,7 +105,7 @@ elseif(UNIX AND NOT APPLE AND TARGET emu51_imgui AND EMU51_BUNDLE_GLFW)
         install(CODE "file(INSTALL \"$<TARGET_SONAME_FILE:${EMU51_GLFW_TARGET}>\"
             DESTINATION \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\"
             FOLLOW_SYMLINK_CHAIN)")
-        set_target_properties(emu51_imgui PROPERTIES
+        set_target_properties(emu51 PROPERTIES
             INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
     else()
         message(FATAL_ERROR "EMU51_BUNDLE_GLFW requires a CMake SHARED_LIBRARY target")
@@ -155,5 +155,5 @@ add_test(NAME emu51_installed_package
         "-DDATADIR=${CMAKE_INSTALL_DATADIR}"
         "-DINCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}"
         "-DHOST_AUDIO_EXPECTED=${EMU51_PERIPHERAL_HOST_AUDIO}"
-        "-DGUI_EXPECTED=$<TARGET_EXISTS:emu51_imgui>"
+        "-DGUI_EXPECTED=$<TARGET_EXISTS:emu51>"
         -P "${PROJECT_SOURCE_DIR}/cmake/VerifyPackage.cmake")

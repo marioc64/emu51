@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
             continue;
         }
         if (arg == "--help" || arg == "-h") {
-            std::puts("Usage: emu51 [--model 8051|8052] [--steps COUNT] PROGRAM\n"
+            std::puts("Usage: emu51cli [--model 8051|8052] [--steps COUNT] PROGRAM\n"
                       "Run ASM, Intel HEX, or BIN (loaded at address 0) at full speed.\n"
                       "Execution starts at PC=0 and stops after COUNT instructions (default 1000000).");
             return 0;

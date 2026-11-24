@@ -30,6 +30,6 @@ if platform.system() == 'Linux':
         if 'not found' in result.stdout or (result.returncode and 'not a dynamic executable' not in result.stderr):
             raise SystemExit(f'Unresolved runtime dependencies for {executable}:\n{result.stdout}\n{result.stderr}')
 if platform.system() == 'Darwin':
-    for signed in [root / 'emu51_imgui.app', *((root / 'bin') / name for name in ('emu51', 'emu51_asm', 'emu51_bench'))]:
+    for signed in [root / 'emu51.app', *((root / 'bin') / name for name in ('emu51cli', 'emu51_asm', 'emu51_bench'))]:
         subprocess.run(['codesign', '--verify', '--deep', '--strict', str(signed)], check=True)
 print(f'Archive verified: {archives[0]}')

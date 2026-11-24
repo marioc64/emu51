@@ -2,7 +2,7 @@
 Type=Application
 Name=emu51
 Comment=8051 emulator, debugger and assembler
-Exec=emu51_imgui
+Exec=emu51
 Icon=emu51
 Terminal=false
 Categories=Development;Debugger;

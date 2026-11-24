@@ -70,7 +70,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Launch `build/emu51/emu51_imgui.app` on macOS or `build/emu51/emu51_imgui` on
+Launch `build/emu51/emu51.app` on macOS or `build/emu51/emu51` on
 Linux. Windows paths depend on the selected CMake generator/configuration.
 Normal application builds enable `EMU51_PERIPHERAL_HOST_AUDIO`; turn it off to
 build without native sound-card support. The analog audio bridge remains usable.
@@ -159,7 +159,7 @@ From the public source root:
 
 ```sh
 cmake -S . -B build-audio -DCMAKE_BUILD_TYPE=Release
-cmake --build build-audio --target emu51_imgui emu51_covox_duet --parallel
+cmake --build build-audio --target emu51 emu51_covox_duet --parallel
 ./build-audio/emu51/emu51_covox_duet --run --seconds 8
 ```
 
@@ -260,7 +260,7 @@ Use an optimized build for real-time audio. From the public source root:
 
 ```sh
 cmake -S . -B build-audio -DCMAKE_BUILD_TYPE=Release
-cmake --build build-audio --target emu51_imgui emu51_microphone_covox --parallel
+cmake --build build-audio --target emu51 emu51_microphone_covox --parallel
 ./build-audio/emu51/emu51_microphone_covox --list
 ./build-audio/emu51/emu51_microphone_covox --run --capture default --seconds 10
 ```

@@ -55,8 +55,8 @@ is not a complete secret scanner or license audit.
 | `scripts/` | Public-source and release checks |
 | `third_party/` | Vendored dependencies and their upstream documentation |
 
-Executables are `emu51_imgui`, `emu51_asm`, `emu51`, `emu51_bench`, `emu51_tests`,
-and `emu51_ui_tests`. `emu51_core_lib` supplies the core; `emu51_asm_lib` links it
+Executables are `emu51` (desktop), `emu51cli` (console), `emu51_asm`,
+`emu51_bench`, `emu51_tests`, and `emu51_ui_tests`. `emu51_core_lib` supplies the core; `emu51_asm_lib` links it
 and exposes assembly/loading services. Settings, file storage, and shared ImGui
 code have their own build targets. Strict warning flags apply to project-owned
 sources, not the vendored UI libraries.
