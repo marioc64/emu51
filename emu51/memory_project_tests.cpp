@@ -81,6 +81,28 @@ int main() {
     invalid = *loaded; invalid.peripherals.devices[2].decoderOutputs[1].values.push_back(4);
     check(!emu51SaveProject(root/"bad.emu51",invalid,error),"Persistence rejects decoder collisions");
 
+    Emu51Project inversion;
+    Emu51PeripheralDevice memory{"memory",Emu51PeripheralKind::Rom};
+    memory.memoryCapacity = 2;
+    Emu51PeripheralDevice led{"led",Emu51PeripheralKind::Led};
+    led.activeLow = false;
+    inversion.peripherals.devices = {memory,led,clock,{"source",Emu51PeripheralKind::Digital},
+        {"gpio_not",Emu51PeripheralKind::Inverter},{"address_not",Emu51PeripheralKind::Inverter}};
+    inversion.peripherals.digital = {{"clock.OUT","cpu.CLK"},{"source.out","gpio_not.IN",3,0,1},{"gpio_not.OUT","led.in"},
+        {"cpu.ADDR","address_not.IN"},{"address_not.OUT","memory.ADDR"},
+        {"cpu.PSEN","memory.CS"},{"cpu.PSEN","memory.OE"},{"cpu.DATA","memory.DATA",0,0,8}};
+    check(emu51SaveProject(root/"inverter.emu51",inversion,error),"Save inverter circuit: "+error);
+    const auto invertedProject = emu51LoadProject(root/"inverter.emu51",error);
+    check(invertedProject && invertedProject->peripherals == inversion.peripherals,"Inverter devices and wiring round trip");
+    auto inverted = Emu51PeripheralSession::create(invertedProject->peripherals,12);
+    bool defined = false;
+    check(inverted->ledState("led",defined) && defined,"Inverter drives high for a low input");
+    check(inverted->setSource("source",8) && !inverted->ledState("led",defined) && defined,"Inverter drives low for a high input");
+    check(inverted->setSource("source",0) && inverted->ledState("led",defined) && defined,"Inverter follows a falling input without advancing time");
+    check(inverted->programMemory("memory",0,{0x42,0x43}),"Program two bytes behind an inverted address line");
+    check(inverted->readProgram(0,value,true) && value == 0x43 && inverted->readProgram(1,value,true) && value == 0x42,
+        "Functional CPU bus reads evaluate the inverter with each virtual address");
+
     auto includes = project;
     includes.units = {source("main",root/"main.asm","$include(values.inc)\norg 1234h\ndb VALUE\nend\n"),
         source("include",root/"values.inc","VALUE equ 5ah\n")};
@@ -110,6 +132,16 @@ int main() {
         check(migrated->writeData(0x1234,0x55),"Migrated fallback RAM accepts XDATA write");
         migrated->readProgram(0x1234,value,true); check(value == (unified ? 0x55 : 0),"Split/unified alias semantics survive migration");
     }
+    Emu51Project split;
+    split.unified = false;
+    check(emu51MigrateProject(split,error),"Migrate separate CODE and XDATA with no I/O: "+error);
+    check(split.peripherals.devices.size() == 4 && split.peripherals.devices[2].kind == Emu51PeripheralKind::Inverter,
+        "Legacy split memory uses a bit inverter for the complementary chip select");
+    auto splitMemory = Emu51PeripheralSession::create(split.peripherals,12);
+    check(splitMemory->programMemory("system_code",0,{0x42}) && splitMemory->writeData(0,0x55) &&
+        splitMemory->readProgram(0,value,true) && value == 0x42 && splitMemory->readData(0,value,true) && value == 0x55,
+        "Inverted PSEN preserves independent CODE and XDATA storage");
+
     Emu51Project overlap;
     Emu51PeripheralDevice first; first.id = "first"; first.kind = Emu51PeripheralKind::I8255; first.address = 0x8000;
     auto second = first; second.id = "second";

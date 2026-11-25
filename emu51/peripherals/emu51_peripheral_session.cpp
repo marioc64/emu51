@@ -104,6 +104,11 @@ std::vector<Emu51PeripheralPin> Emu51PeripheralSession::describe(const Emu51Peri
         }
         if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) continue;
         if (d.kind == Emu51PeripheralKind::Clock) { add("OUT",E51P_DIGITAL,E51P_OUTPUT); continue; }
+        if (d.kind == Emu51PeripheralKind::Inverter) {
+            add("IN",E51P_DIGITAL,E51P_INPUT);
+            add("OUT",E51P_DIGITAL,E51P_OUTPUT);
+            continue;
+        }
         if (d.kind == Emu51PeripheralKind::AddressDecoder) {
             add("IN",E51P_DIGITAL,E51P_INPUT,static_cast<unsigned>(std::clamp(d.decoderBits,1,32)));
             for (const auto& output : d.decoderOutputs) add(output.id.c_str(),E51P_DIGITAL,E51P_OUTPUT);
@@ -221,6 +226,16 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, c
             e51p_bus_pins pins{}; uint32_t target;
             require(e51p_wired_bus_add_memory(wiredBus_,d.id.c_str(),storage.get(),d.csLow,d.oeLow,d.weLow,&pins,&target),"Attach memory " + d.id);
             busPins(d,pins); memories_.push_back({d.id,std::move(storage),target});
+            continue;
+        }
+        if (d.kind == Emu51PeripheralKind::Inverter) {
+            // Use the same combinational model for live pins and virtual CPU bus cycles.
+            constexpr uint32_t high = 1;
+            const e51p_decoder_output output{sizeof(output),"OUT",1,&high,1};
+            e51p_endpoint in, out;
+            require(e51p_wired_bus_add_decoder(wiredBus_,d.id.c_str(),1,&output,1,&in,&out),"Create inverter " + d.id);
+            pin("IN",in);
+            pin("OUT",out);
             continue;
         }
         if (d.kind == Emu51PeripheralKind::AddressDecoder) {

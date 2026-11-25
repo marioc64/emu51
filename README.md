@@ -86,7 +86,8 @@ as errors and `-DEMU51_ASAN=ON` for AddressSanitizer/UBSan with Clang or GCC.
 ## Peripherals
 
 Open **Window → Peripherals** to edit a graph or inspect its signals in **Live**.
-Examples are loaded with **File → Open project**.
+Examples are loaded with **File → Open project**. On Linux this opens an
+in-app browser where you can select an `.emu51` file or enter its path.
 
 For microphone loopback, open the [example project](progs/asm/demo/microphone_covox.emu51),
 then use **Live → List audio devices → Open selected audio devices** and **Run**.
@@ -115,9 +116,16 @@ with every supported digital/analog port visible. Drag connector circles for
 whole ports or numbered connectors for individual bits; select a wire to edit
 its bit range. Analog squares and XDATA bus links have distinct colors. Wheel
 zooms and middle/right drag pans. Right-click the canvas for **Add**, **Fit**,
-**Arrange blocks**, and the **Inspector** toggle. New blocks appear at the
-right-click position. The inspector edits selected block/wire settings and names. The Peripherals title supports the same docking targets as the other
-windows. Projects also save block positions and names.
+**Arrange blocks**, and the **Inspector** toggle. Close the Inspector with the
+× in its header and reopen it with **Inspector** in the Peripherals title bar.
+Arrange blocks groups connected devices into columns and aligns their pins
+where space permits. Wires leave each
+connector perpendicular to the block edge, then bend around blocks with rounded
+corners. They reroute when a block moves. The graph opens at a readable zoom.
+Use **Fit → All blocks** for a circuit overview. New blocks appear at the
+right-click position. The inspector edits block names and selected block or wire
+settings. The Peripherals title supports the same docking targets as the other
+windows. Projects save block positions and names.
 The wiring tables remain available for precise edits. Click **Apply** in the
 Peripherals title bar to activate graph and inspector settings; this validates
 the draft, resets the CPU and pauses execution. Save Project stores the active

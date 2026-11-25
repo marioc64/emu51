@@ -156,10 +156,31 @@ end
         frame(); frame();
         check(editor.blocks_.size() == 3 && editor.blocks_[0].title == "Intel 8052",
             "Circuit canvas includes the actual CPU model and every device");
+        const auto blockSize = [&](const std::string& id) {
+            const auto block = std::find_if(editor.blocks_.begin(),editor.blocks_.end(),[&](const auto& b) { return b.id == id; });
+            return block == editor.blocks_.end() ? ImVec2{} : block->size;
+        };
+        const auto cpuSize = blockSize("cpu"), audioSize = blockSize("audio"), dacSize = blockSize("covox");
+        check(cpuSize.x > 0 && cpuSize.x <= 500 && cpuSize.y < 700 &&
+            audioSize.x > 0 && audioSize.x < dacSize.x && audioSize.y < dacSize.y,
+            "The CPU is compact and a single-pin device takes less space than a multi-pin device");
         check(editor.pin("cpu.P0") && editor.pin("cpu.P0")->bits.size() == 8 && editor.pin("cpu.P3")->bits.size() == 8 &&
             editor.pin("cpu.ADDR") && editor.pin("cpu.DATA") && editor.pin("cpu.PSEN") &&
             editor.pin("covox.out") && editor.pin("audio.playback"),
             "Canvas exposes every CPU port bit, functional bus and analog audio pins");
+        if (const auto* address = editor.pin("cpu.ADDR"); address && address->bits.size() == 16) {
+            bool aligned = !address->left;
+            for (int i = 0; i < 8; ++i)
+                aligned &= address->bits[i].x == address->bits[i+8].x &&
+                    address->bits[i].y == address->bits[0].y &&
+                    address->bits[i+8].y == address->bits[8].y &&
+                    address->bits[i].y < address->bits[i+8].y;
+            check(aligned,"The CPU address bus uses two aligned rows of eight output bits");
+        } else check(false,"The CPU address bus exposes all sixteen bits");
+        check(editor.zoom_ == 0.5f,"Opening a graph keeps its compact default scale");
+        editor.fit_ = true;
+        editor.readableFit_ = false;
+        frame();
         const auto original = config;
         const auto cpuPosition = editor.blocks_[0].position;
         const auto header = editor.screen({cpuPosition.x+35,cpuPosition.y+20});
@@ -168,9 +189,8 @@ end
         io.AddMousePosEvent(header.x-25,header.y+30); frame();
         check(editor.interacting(),"Paused circuit drag requests animation frames");
         io.AddMouseButtonEvent(0,false); frame();
-        const auto positions = editor.positions(config);
-        const auto cpu = std::find_if(positions.begin(),positions.end(),[](const auto& p) { return p.id == "cpu"; });
-        check(cpu != positions.end() && cpu->x < cpuPosition.x-20 && cpu->y > cpuPosition.y+20 && config == original,
+        const auto cpu = std::find_if(editor.blocks_.begin(),editor.blocks_.end(),[](const auto& b) { return b.id == "cpu"; });
+        check(cpu != editor.blocks_.end() && cpu->position.x < cpuPosition.x-20 && cpu->position.y > cpuPosition.y+20 && config == original,
             "Actual header dragging moves only presentation, without changing the circuit");
         const auto drag = [&](const std::string& a, int ab, const std::string& b, int bb) {
             const auto start = editor.anchor(*editor.pin(a),ab), end = editor.anchor(*editor.pin(b),bb);
@@ -198,6 +218,20 @@ end
         config.digital = {{"cpu.P1","covox.data",2,3,3}};
         auto session = Emu51PeripheralSession::create(config,12);
         check(session->config().digital[0].width == 3,"Graph edits support multi-bit port slices");
+        frame();
+        if (!editor.routes_.empty() && editor.routes_.front().size() >= 2) {
+            const auto& route = editor.routes_.front();
+            std::size_t longest = 1;
+            const auto length = [&](std::size_t i) {
+                return std::abs(route[i].x-route[i-1].x)+std::abs(route[i].y-route[i-1].y);
+            };
+            for (std::size_t i = 2; i < route.size(); ++i)
+                if (length(i) > length(longest)) longest = i;
+            const auto at = editor.screen({(route[longest-1].x+route[longest].x)/2,(route[longest-1].y+route[longest].y)/2});
+            io.AddMousePosEvent(at.x,at.y); frame();
+            io.AddMouseButtonEvent(0,true); frame(); io.AddMouseButtonEvent(0,false); frame();
+            check(editor.wire_.kind == 1 && editor.wire_.index == 0,"Clicking a routed segment selects its wire");
+        } else check(false,"A port slice has a visible route");
         const auto beforeZoom = editor.zoom_;
         const auto zoomAt = editor.screen({100,100});
         io.AddMousePosEvent(zoomAt.x,zoomAt.y); frame();
@@ -245,10 +279,22 @@ end
             check(config.devices.size() == deviceCount+1 && config.devices.back().kind == Emu51PeripheralKind::Voltage,
                 "Add submenu creates the selected device type");
             const auto id = config.devices.back().id;
-            const auto position = std::find_if(editor.positions_.begin(),editor.positions_.end(),[&](const auto& p) { return p.id == id; });
-            check(position != editor.positions_.end() && std::abs(position->x-at.x) < 0.01f && std::abs(position->y-at.y) < 0.01f,
+            const auto block = std::find_if(editor.blocks_.begin(),editor.blocks_.end(),[&](const auto& b) { return b.id == id; });
+            check(block != editor.blocks_.end() && std::abs(block->position.x-at.x) < 0.01f && std::abs(block->position.y-at.y) < 0.01f,
                 "New blocks use the original right-click world position");
             editor.removeDevice(config,id); frame();
+        }
+        if (auto* submenu = openSubmenu("Add")) {
+            ImGui::ActivateItemByID(submenu->GetID("Bit Inverter")); frame(); frame();
+            const auto& inverter = config.devices.back();
+            const auto id = inverter.id;
+            const auto* input = editor.pin(id+".IN");
+            const auto* output = editor.pin(id+".OUT");
+            check(config.devices.size() == deviceCount+1 && inverter.kind == Emu51PeripheralKind::Inverter &&
+                input && input->left && input->descriptor.width == 1 && output && !output->left && output->descriptor.width == 1,
+                "Graph adds an inverter with a one-bit input and a one-bit output");
+            if (config.devices.size() == deviceCount+1) editor.removeDevice(config,id);
+            frame();
         }
         if (auto* submenu = openSubmenu("Fit")) {
             ImGui::ActivateItemByID(submenu->GetID("Actual size (100%)")); frame(); frame();
@@ -293,11 +339,126 @@ end
 
         const auto namedPositions = editor.positions(config);
         if (auto* popup = openCanvasMenu()) { ImGui::ActivateItemByID(popup->GetID("Arrange blocks")); frame(); frame(); }
+        const auto arrangedBlock = [&](const char* id) -> const auto& {
+            return *std::find_if(editor.blocks_.begin(),editor.blocks_.end(),[&](const auto& block) { return block.id == id; });
+        };
+        check(arrangedBlock("cpu").position.x < arrangedBlock("covox").position.x &&
+            arrangedBlock("covox").position.x < arrangedBlock("audio").position.x,
+            "Arrange follows the connected CPU, DAC and audio inputs from left to right");
         for (const auto& old : namedPositions) {
             const auto current = std::find_if(editor.positions_.begin(),editor.positions_.end(),[&](const auto& p) { return p.id == old.id; });
             check(current != editor.positions_.end() && current->name == old.name,"Arranging blocks preserves user names");
         }
         editor.restore(namedPositions); frame();
+
+        Emu51PeripheralEditor routing;
+        auto circuit = emu51PeripheralPreset(1);
+        Emu51PeripheralDevice obstacle;
+        obstacle.id = "obstacle";
+        obstacle.kind = Emu51PeripheralKind::AddressDecoder;
+        for (int i = 0; i < 8; ++i) obstacle.decoderOutputs.push_back({"CS"+std::to_string(i)});
+        circuit.devices.push_back(obstacle);
+        routing.restore({{"cpu",0,0},{"obstacle",350,0},{"dac",700,0}});
+        routing.rebuild(circuit,Emu51Model::i8052);
+        const auto links = routing.connections(circuit);
+        if (links.size() == 1) {
+            auto& target = *std::find_if(routing.blocks_.begin(),routing.blocks_.end(),[](const auto& b) { return b.id == "dac"; });
+            auto& blocker = *std::find_if(routing.blocks_.begin(),routing.blocks_.end(),[](const auto& b) { return b.id == "obstacle"; });
+            const auto& link = links.front();
+            const float alignment = routing.routeEnd(*link.from,link.fromBit).edge.y-routing.routeEnd(*link.to,link.toBit).edge.y;
+            routing.moveBlock(target,{target.position.x,target.position.y+alignment});
+            routing.updateRoutes(links);
+            const auto& detour = routing.routes_.front();
+            const auto& curved = routing.roundedRoutes_.front();
+            bool clear = detour.size() >= 4;
+            for (std::size_t i = 1; i < detour.size(); ++i) {
+                const auto a = detour[i-1], b = detour[i];
+                clear &= a.x == b.x || a.y == b.y;
+                for (const auto& block : routing.blocks_) {
+                    const auto lo = block.position;
+                    const ImVec2 hi{lo.x+block.size.x,lo.y+block.size.y};
+                    clear &= std::max(a.x,b.x) <= lo.x || std::min(a.x,b.x) >= hi.x ||
+                        std::max(a.y,b.y) <= lo.y || std::min(a.y,b.y) >= hi.y;
+                }
+            }
+            check(clear,"An aligned wire detours around every obstructing block using orthogonal segments");
+            if (curved.size() >= 4) {
+                const auto a = curved.front(), next = curved[1], b = curved.back(), previous = curved[curved.size()-2];
+                check(next.y == a.y && next.x-a.x >= 54 && previous.y == b.y && b.x-previous.x >= 54,
+                    "Rounded wires keep long perpendicular leads at both box edges");
+                bool turns = false, outside = true;
+                for (std::size_t i = 1; i < curved.size(); ++i) {
+                    const auto p = curved[i-1], q = curved[i];
+                    turns |= p.x != q.x && p.y != q.y;
+                    for (const auto& block : routing.blocks_) {
+                        const auto lo = block.position;
+                        const ImVec2 hi{lo.x+block.size.x,lo.y+block.size.y};
+                        outside &= std::max(p.x,q.x) <= lo.x || std::min(p.x,q.x) >= hi.x ||
+                            std::max(p.y,q.y) <= lo.y || std::min(p.y,q.y) >= hi.y;
+                    }
+                }
+                check(turns && outside,"Rounded bends stay outside every box");
+            } else check(false,"The detour renders rounded corners");
+            routing.moveBlock(blocker,{blocker.position.x,1000});
+            routing.updateRoutes(links);
+            check(routing.routes_.front().size() == 2,"Moving an obstacle out of the way restores a straight route");
+
+            const auto originalTarget = target.position;
+            const auto source = routing.routeEnd(*link.from,link.fromBit).edge;
+            routing.moveBlock(target,{source.x+96,originalTarget.y+120});
+            routing.updateRoutes(links);
+            const auto& narrow = routing.roundedRoutes_.front();
+            check(narrow.size() >= 4 && narrow[1].y == narrow.front().y && narrow[1].x-narrow.front().x >= 30 &&
+                narrow[narrow.size()-2].y == narrow.back().y && narrow.back().x-narrow[narrow.size()-2].x >= 30,
+                "Facing connectors fit straight leads and rounded turns in a narrow channel");
+            routing.moveBlock(target,originalTarget);
+        } else check(false,"The routing fixture has its digital wire");
+
+        auto dac = circuit.devices.front();
+        dac.id = "second_dac";
+        circuit.devices.push_back(dac);
+        auto branch = circuit.digital.front();
+        branch.b = "second_dac.data";
+        circuit.digital.push_back(branch);
+        auto layout = routing.positions(circuit);
+        layout.push_back({"second_dac",700,220});
+        routing.restore(layout);
+        routing.rebuild(circuit,Emu51Model::i8052);
+        routing.updateRoutes(routing.connections(circuit));
+        if (routing.routes_.size() == 2 && routing.routes_[0].size() == 2 && routing.routes_[1].size() >= 3) {
+            const auto& straight = routing.routes_[0];
+            const auto& branchRoute = routing.routes_[1];
+            float shared = 0;
+            for (std::size_t i = 1; i < branchRoute.size(); ++i) {
+                const auto a = branchRoute[i-1], b = branchRoute[i];
+                if (a.y == straight[0].y && b.y == a.y)
+                    shared += std::max(0.0f,std::min(std::max(a.x,b.x),straight[1].x)-std::max(std::min(a.x,b.x),straight[0].x));
+            }
+            check(shared < (straight[1].x-straight[0].x)*0.1f,"Fan-out wires leave a shared port on separate tracks");
+        } else check(false,"The routing fixture shows both fan-out branches");
+
+        std::string boardError;
+        const auto board = emu51LoadProject(fs::path(EMU51_REPO_ROOT)/"progs/boards/avt2250/avt2250.emu51",boardError);
+        if (board) {
+            routing.restore(board->peripheralLayout);
+            routing.rebuild(board->peripherals,Emu51Model::i8051);
+            routing.arrange(board->peripherals);
+            bool bitsStayOnSide = true;
+            for (const auto& block : routing.blocks_) for (const auto& pin : block.pins) {
+                const float midpoint = block.position.x+block.size.x/2;
+                for (std::size_t i = 0; i < pin.bits.size(); ++i) {
+                    const auto end = routing.routeEnd(pin,static_cast<int>(i));
+                    const float edge = block.position.x+(pin.left ? 0 : block.size.x);
+                    bitsStayOnSide &= (pin.left ? end.port.x+12.5f < midpoint : end.port.x-12.5f > midpoint) &&
+                        end.edge.x == edge && end.edge.y > end.port.y+10.5f && end.edge.y < end.port.y+29;
+                }
+            }
+            check(bitsStayOnSide,"Bit buttons stay in their own half and leads drop below them before reaching the correct edge");
+            routing.updateRoutes(routing.connections(board->peripherals));
+            check(!routing.routes_.empty() && std::all_of(routing.routes_.begin(),routing.routes_.end(),
+                [](const auto& route) { return route.size() >= 2; }),"Every connection in the arranged AVT-2250 has a route");
+        } else check(false,("Load the public AVT-2250 circuit for routing: "+boardError).c_str());
+
         auto app = create();
         check(app->applyPeripheralConfig(config,12),"Canvas circuit applies through the normal transactional path");
         app->peripheralEditor_ = editor;
@@ -383,6 +544,33 @@ end
             check(tabs->SelectedTabId == tab.ID,"Title-bar tabs select their corresponding content");
         };
         const auto floatingPosition = window->Pos;
+        ImGuiWindow* inspector = nullptr;
+        for (auto* child : GImGui->Windows)
+            if (child->ParentWindow == window && std::strstr(child->Name,"circuit-inspector")) inspector = child;
+        check(inspector != nullptr,"Graph opens with an Inspector header");
+        if (inspector) {
+            const float canvasWidth = app->peripheralEditor_.canvasSize_.x;
+            const float font = ImGui::GetFontSize();
+            const auto& style = ImGui::GetStyle();
+            ImGui::SetWindowPos(window,{io.DisplaySize.x-window->Size.x+72,floatingPosition.y});
+            frame(); frame();
+            const float inspectorRight = std::min(inspector->WorkRect.Max.x,inspector->ClipRect.Max.x-style.FramePadding.x);
+            check(inspectorRight < inspector->WorkRect.Max.x,"The floating Inspector is partially clipped by the viewport");
+            app->layoutStateDirty_ = false;
+            click({inspectorRight-font/2,inspector->DC.CursorStartPos.y+font/2});
+            check(!app->peripheralEditor_.inspectorVisible() && app->peripheralEditor_.canvasSize_.x > canvasWidth &&
+                app->layoutStateDirty_,"The Inspector header close button expands the graph and saves the visibility change");
+            chooseTab(1);
+            const float inspectorEnd = std::min(window->OuterRectClipped.Max.x-style.FramePadding.x,
+                window->TitleBarRect().Max.x-font-ImGui::CalcTextSize("Apply").x-3*style.FramePadding.x-3*style.ItemInnerSpacing.x
+                -(style.WindowMenuButtonPosition == ImGuiDir_Right ? font+style.ItemInnerSpacing.x : 0));
+            const float inspectorWidth = ImGui::CalcTextSize("Inspector").x+2*style.FramePadding.x;
+            app->layoutStateDirty_ = false;
+            click({inspectorEnd-inspectorWidth/2,window->TitleBarRect().GetCenter().y});
+            check(app->peripheralEditor_.inspectorVisible() && tabs->SelectedTabId == tabs->Tabs[0].ID &&
+                app->layoutStateDirty_,"The title-bar Inspector button restores the pane and selects Graph");
+            ImGui::SetWindowPos(window,floatingPosition); frame(); frame();
+        }
         for (int tab : {1,2,3,0}) chooseTab(tab);
         check(window->Pos.x == floatingPosition.x && window->Pos.y == floatingPosition.y && !window->Collapsed && !app->dragSnapActive_,
             "Clicking title-bar tabs neither moves nor collapses or docks the window");
@@ -990,6 +1178,28 @@ end
     static void test_background_execution(const fs::path& root)
     {
         using Clock = Emu51CycleTiming::Clock;
+        {
+            Emu51ExecutionWorker worker;
+            std::atomic<unsigned> batches{0};
+            std::atomic<bool> requestUi{false};
+            worker.start([&] {
+                const unsigned batch = ++batches;
+                if (batch == 1) {
+                    requestUi.wait(false);
+                    // Give the UI time to queue access while this batch owns the model.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                } else std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                return batch < 32;
+            });
+            requestUi.store(true);
+            requestUi.notify_one();
+            while (!batches.load()) std::this_thread::yield();
+            {
+                const auto guard = worker.access(false);
+                check(batches.load() <= 2,"A busy worker hands the model to the waiting UI between batches");
+            }
+            worker.stop();
+        }
         auto app = create();
         openAudioExample(*app,4);
         auto config = emu51PeripheralPreset(4); config.devices.back().audioBufferMs = 32;
@@ -1513,6 +1723,50 @@ fi
         check(app->chooseProjectPath(false).empty() && read(script).find("default name") == std::string::npos &&
             read(script).find("default location") == std::string::npos,
             "A missing previous project folder falls back to a valid dialog instead of an invalid filename default");
+    }
+#endif
+#ifdef __linux__
+    static void test_linux_project_picker(const fs::path& root)
+    {
+        const auto directory = root/"project folder with spaces";
+        fs::create_directory(directory);
+        const auto projectPath = directory/"picker project.emu51";
+        Emu51Project project; project.editor.present = project.editor.open = project.editor.draft = true;
+        project.editor.text = "nop\nend\n";
+        std::string error;
+        check(emu51SaveProject(projectPath,project,error),"Write the Linux picker project fixture");
+        auto app = create();
+        app->projectPath_ = (root/"previous.emu51").string();
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1000,800}; io.DeltaTime = 1.f/60;
+        io.Fonts->Build();
+        const auto frame = [&] {
+            ImGui::NewFrame(); ImGui::Begin("Linux project picker test");
+            app->drawOpenProjectBrowser(); ImGui::End(); ImGui::Render();
+        };
+        app->requestOpenProject(); frame(); frame();
+        auto* popup = ImGui::FindWindowByName("Open Project");
+        check(popup && popup->Active && app->projectBrowser_.directory == root,
+            "Open Project displays the Linux browser in the previous project's folder");
+        if (!popup || !popup->Active) return;
+        const auto open = [&](const std::string& path) {
+            auto& input = app->projectBrowser_.path;
+            std::snprintf(input.data(),input.size(),"%s",path.c_str());
+            ImGui::ActivateItemByID(popup->GetID("Open")); frame();
+        };
+        open(directory.filename().string());
+        check(app->projectBrowser_.directory == directory && app->projectBrowser_.entries.size() == 1 &&
+            app->projectBrowser_.entries.front().name == projectPath.filename(),"Browse a directory with spaces and list its project");
+        open("missing.emu51");
+        check(!app->projectBrowser_.error.empty() && app->projectPath_ == (root/"previous.emu51").string(),
+            "A failed load keeps the picker open with an error and preserves the current project");
+        open(projectPath.filename().string()); frame();
+        check(app->projectPath_ == fs::weakly_canonical(projectPath).string() && GImGui->OpenPopupStack.empty(),
+            "Selecting a Linux project loads it and closes the browser");
+        app->requestOpenProject(); frame(); frame();
+        check(app->projectBrowser_.directory == directory,"Reopening starts in the selected project's folder");
+        app->cpu_.PC = 0x1234;
+        ImGui::ActivateItemByID(popup->GetID("Cancel")); frame(); frame();
+        check(GImGui->OpenPopupStack.empty() && app->cpu_.PC == 0x1234,"Cancel closes the Linux browser without resetting the machine");
     }
 #endif
     static void test_unsaved_changes(const fs::path& root)
@@ -2980,7 +3234,7 @@ fi
 int main(int argc, char** argv)
 {
     const bool workerOnly = argc == 2 && std::string(argv[1]) == "--worker-only";
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     const bool pickerOnly = argc == 2 && std::string(argv[1]) == "--project-picker-only";
 #endif
     ImGui::CreateContext();
@@ -2993,6 +3247,9 @@ int main(int argc, char** argv)
 #ifdef __APPLE__
     } else if (pickerOnly) {
         Emu51ImguiAppTestAccess::test_native_project_picker(root);
+#elif defined(__linux__)
+    } else if (pickerOnly) {
+        Emu51ImguiAppTestAccess::test_linux_project_picker(root);
 #endif
     } else {
     Emu51ImguiAppTestAccess::test_peripheral_editor(root);

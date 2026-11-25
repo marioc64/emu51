@@ -7,6 +7,8 @@
 #include "emu51_imgui_asm_editor.h"
 #include "portable-file-dialogs.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -59,10 +61,110 @@ fs::path Emu51ImguiApp::chooseProjectPath(bool save)
 
 void Emu51ImguiApp::requestOpenProject()
 {
+#ifdef __linux__
+    if (!projectPathPicker_) {
+        projectBrowser_.open = true;
+        return;
+    }
+#endif
     const auto path = chooseProjectPath(false);
     resetTimingAfterUiWork();
     if (!path.empty()) openProjectFromPath(path);
 }
+
+#ifdef __linux__
+void Emu51ImguiApp::browseProjectDirectory(const fs::path& path)
+{
+    auto& browser = projectBrowser_;
+    std::error_code error;
+    std::vector<ProjectBrowser::Entry> entries;
+    withoutExecutionLock([&] {
+        for (fs::directory_iterator it(path, fs::directory_options::none, error), end; !error && it != end; it.increment(error)) {
+            std::error_code typeError;
+            const bool directory = it->is_directory(typeError);
+            if (directory || (it->path().extension() == ".emu51" && it->is_regular_file(typeError)))
+                entries.push_back({it->path().filename(), directory});
+        }
+    });
+    if (error) {
+        browser.error = "Cannot list " + path.string() + ": " + error.message();
+        return;
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+        if (a.directory != b.directory) return a.directory;
+        return a.name < b.name;
+    });
+    browser.directory = path.lexically_normal();
+    browser.entries = std::move(entries);
+    browser.path[0] = '\0';
+    browser.error.clear();
+}
+
+void Emu51ImguiApp::drawOpenProjectBrowser()
+{
+    auto& browser = projectBrowser_;
+    if (std::exchange(browser.open, false)) {
+        browser = {};
+        browser.directory = "/";
+        std::error_code error;
+        auto initial = fs::path(projectPath_).parent_path();
+        if (!fs::is_directory(initial, error)) initial = fs::current_path(error);
+        browseProjectDirectory(error ? fs::path("/") : initial);
+        ImGui::OpenPopup("Open Project");
+    }
+
+    ImGui::SetNextWindowSize({640, 450}, ImGuiCond_FirstUseEver);
+    if (!ImGui::BeginPopupModal("Open Project", nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
+
+    std::optional<fs::path> directory;
+    ImGui::BeginDisabled(browser.directory == browser.directory.root_path());
+    if (ImGui::Button("Up")) directory = browser.directory.parent_path();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextWrapped("%s", browser.directory.c_str());
+
+    bool submit = false;
+    const float controlsHeight = 3 * ImGui::GetFrameHeightWithSpacing();
+    if (ImGui::BeginChild("projects", {0, std::max(80.0f, ImGui::GetContentRegionAvail().y - controlsHeight)}, ImGuiChildFlags_Borders)) {
+        for (const auto& entry : browser.entries) {
+            const auto label = entry.name.string() + (entry.directory ? "/" : "");
+            ImGui::PushID(label.c_str());
+            if (ImGui::Selectable(label.c_str(), !entry.directory && entry.name == browser.path.data(),
+                    ImGuiSelectableFlags_AllowDoubleClick)) {
+                if (entry.directory) directory = browser.directory / entry.name;
+                else {
+                    std::snprintf(browser.path.data(), browser.path.size(), "%s", entry.name.c_str());
+                    submit = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                }
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SetNextItemWidth(-1);
+    submit |= ImGui::InputTextWithHint("##project-path", "Project filename or path", browser.path.data(), browser.path.size(),
+        ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::Button("Open") || submit) {
+        if (browser.path[0] != '\0') {
+            const fs::path path = browser.directory / browser.path.data();
+            std::error_code error;
+            if (fs::is_directory(path, error)) directory = path;
+            else {
+                const bool opened = openProjectFromPath(path);
+                resetTimingAfterUiWork();
+                if (opened) ImGui::CloseCurrentPopup();
+                else browser.error = statusMessage_;
+            }
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    if (directory) browseProjectDirectory(*directory);
+    if (!browser.error.empty()) ImGui::TextWrapped("%s", browser.error.c_str());
+    ImGui::EndPopup();
+}
+#endif
 
 void Emu51ImguiApp::saveProject()
 {
@@ -191,7 +293,7 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
     for (const auto& unit : projectUnits_) savedProjectUnits_.insert(unit.id);
     for (auto& [id,buffer] : unitEditors_) {
         if (!id.empty()) buffer.savedInProject = buffer.observed;
-        if (buffer.recovery) withoutExecutionLock([&] { buffer.recovery->clear(); });
+        if (auto* recovery = buffer.recovery.get()) withoutExecutionLock([recovery] { recovery->clear(); });
     }
     clearEditorRecovery();
     rememberRecentProjectPath(projectPath_);
@@ -304,7 +406,10 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     }
     if (!project->units.empty()) installProjectSources(preparedBuild);
     projectPrograms_ = project->programs;
-    for (auto& [id,buffer] : unitEditors_) { (void)id; if (buffer.recovery) withoutExecutionLock([&] { buffer.recovery->clear(); }); }
+    for (auto& [id,buffer] : unitEditors_) {
+        (void)id;
+        if (auto* recovery = buffer.recovery.get()) withoutExecutionLock([recovery] { recovery->clear(); });
+    }
     unitEditors_ = std::move(candidateEditors); activeProjectUnit_.clear(); savedProjectUnits_.clear();
     lastUnitBuilds_.clear(); for (const auto& unit : preparedBuild.units) lastUnitBuilds_.emplace(unit.id,unit);
     projectUnits_ = project->units; projectMappings_ = project->mappings;

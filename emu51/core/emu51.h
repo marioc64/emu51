@@ -357,7 +357,7 @@ public:
 
 	void init();
 	// Execute one instruction and return machine cycles, including interrupt entry.
-	int process();
+	int process(std::uint8_t* executedOpcode = nullptr);
 	int process_table();
 	std::uint16_t DPTR() {
 		return static_cast<std::uint16_t>(DPL | (DPH << 8));

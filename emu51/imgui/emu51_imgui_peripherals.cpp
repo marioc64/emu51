@@ -13,7 +13,7 @@
 #include "portable-file-dialogs.h"
 
 namespace {
-int peripheralTitleTabs(bool pending, bool& apply, bool valid = true)
+int peripheralTitleTabs(bool pending, bool valid, bool inspectorVisible, bool& apply, bool& showInspector)
 {
     auto* window = ImGui::GetCurrentWindow();
     auto& dc = window->DC;
@@ -27,7 +27,11 @@ int peripheralTitleTabs(bool pending, bool& apply, bool valid = true)
     const float buttonEnd = title.Max.x-style.FramePadding.x-font-2*style.ItemInnerSpacing.x-collapseRight;
     const float buttonWidth = ImGui::CalcTextSize("Apply").x+2*style.FramePadding.x;
     const float buttonStart = buttonEnd-buttonWidth;
-    const float end = buttonStart-style.ItemInnerSpacing.x;
+    const float tabsEnd = buttonStart-style.ItemInnerSpacing.x;
+    const float inspectorEnd = std::min(tabsEnd,window->OuterRectClipped.Max.x-style.FramePadding.x);
+    const float inspectorStart = inspectorEnd-ImGui::CalcTextSize("Inspector").x-2*style.FramePadding.x;
+    const bool showInspectorButton = !inspectorVisible && inspectorStart >= start;
+    const float end = showInspectorButton ? inspectorStart-style.ItemInnerSpacing.x : tabsEnd;
     const ImGuiID id = window->GetID("peripheral-tabs");
     auto* tabs = GImGui->TabBars.GetOrAddByKey(id);
     tabs->ID = id;
@@ -51,6 +55,18 @@ int peripheralTitleTabs(bool pending, bool& apply, bool valid = true)
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip(pending ? "Apply graph and device settings; reset and pause the CPU." : "No pending graph or device settings. Names and positions are saved with the project.");
     ImGui::PopClipRect();
+    if (showInspectorButton) {
+        const ImRect bounds({inspectorStart,title.Min.y},{inspectorEnd,title.Max.y});
+        auto clip = bounds; clip.ClipWith(window->OuterRectClipped);
+        ImGui::PushClipRect(clip.Min,clip.Max,false);
+        dc.CursorPos = bounds.Min;
+        showInspector = ImGui::Button("Inspector##show-peripheral-inspector",bounds.GetSize());
+        ImGui::PopClipRect();
+        if (showInspector) {
+            tabs->NextSelectedTabId = ImHashStr("Graph",0,id);
+            selected = 0;
+        }
+    }
     // Prioritize Apply and the native close/collapse controls in narrow docks.
     // Retain the selected tab until there is room to draw its headers again.
     if (end > start) {
@@ -269,12 +285,15 @@ void Emu51ImguiApp::drawPeripherals()
     notePaneActivity(pane, ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
         ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
     bool graphVisible = false;
-    bool apply = false;
+    bool apply = false, showInspector = false;
+    const bool inspectorVisible = peripheralEditor_.inspectorVisible();
     std::string draftError = peripheralEditor_.validationError();
     try { emu51ValidatePeripheralConfig(peripheralDraft_); }
     catch (const std::exception& e) { draftError = e.what(); }
     const int selectedTab = peripheralTitleTabs(
-        peripheralDraft_ != (peripherals_ ? peripherals_->config() : Emu51PeripheralConfig{}),apply,draftError.empty());
+        peripheralDraft_ != (peripherals_ ? peripherals_->config() : Emu51PeripheralConfig{}),
+        draftError.empty(),inspectorVisible,apply,showInspector);
+    if (showInspector) peripheralEditor_.setInspectorVisible(true);
     if (!draftError.empty()) ImGui::TextWrapped("%s",draftError.c_str());
     if (apply) {
         if (!applyPeripheralConfig(peripheralDraft_,crystalMHz_)) ImGui::OpenPopup("Cannot apply peripherals");
@@ -294,7 +313,6 @@ void Emu51ImguiApp::drawPeripherals()
         if (selectedTab == 0) {
             graphVisible = true;
             const auto model = cpu_.model();
-            const bool inspectorVisible = peripheralEditor_.inspectorVisible();
             const auto previousMessage = peripheralMessage_;
             std::string message = previousMessage;
             std::vector<std::string> activeMemory;
@@ -329,7 +347,10 @@ void Emu51ImguiApp::drawPeripherals()
                 } catch (const std::exception& e) { peripheralMessage_ = statusMessage_ = e.what(); }
             }
             if (message != previousMessage) peripheralMessage_ = std::move(message);
-            if (inspectorVisible != peripheralEditor_.inspectorVisible()) markLayoutStateDirty();
+            if (inspectorVisible != peripheralEditor_.inspectorVisible()) {
+                markLayoutStateDirty();
+                executionRedrawPending_.store(true,std::memory_order_release);
+            }
         }
         if (selectedTab == 1) {
             ImGui::TextWrapped("Connections are bidirectional. Bit numbers start at 0. Use several rows for permutations or groups across ports.");

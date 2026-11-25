@@ -12,7 +12,7 @@ Open one of these projects with **File → Open project**, then Step or Run:
 
 | Project | Result |
 | --- | --- |
-| [banked_rom.emu51](progs/asm/demo/banked_rom.emu51) | A 512 KiB ROM uses CPU A0–A14 and four P1 selector bits. Reset selects region 15. Boot changes P1 to select region 14, executes its application and writes 42h to external RAM. Three independent sources program boot, application and RAM tables. |
+| [banked_rom.emu51](progs/asm/demo/banked_rom.emu51) | A 512 KiB ROM uses CPU A0–A14 and four P1 selector bits. A15 drives ROM select directly and reaches RAM select through a Bit Inverter. Reset selects region 15. Boot changes P1 to select region 14, executes its application and writes 42h to external RAM. Three independent sources program boot, application and RAM tables. |
 | [shared_ram.emu51](progs/asm/demo/shared_ram.emu51) | One RAM serves CODE and XDATA. MOVX writes 55h at 0100h and MOVC reads the same byte. A second source supplies a table in the same chip. |
 | [decoder_bus.emu51](progs/asm/demo/decoder_bus.emu51) | A lookup decoder selects program ROM, external RAM and an 8255. The 8255 uses CPU A0/A1 for its registers and drives an LED. Its registers alias throughout the selected region. |
 
@@ -67,6 +67,10 @@ decoders also operate as ordinary combinational devices. Multiplexed P0/ALE
 timing, oscillator edges and access-time delays are outside this model.
 
 ## Define decoder outputs
+
+For single-bit negation, choose **Add → Bit Inverter** in the Graph. Wire one
+digital bit to `IN` and connect `OUT` to its destination. The inverter also
+works on functional CPU address and control lines during bus accesses.
 
 Add **Address Decoder**, set 1–32 input bits, and connect signals to `IN`.
 `IN[0]` is the least significant bit. Add named output lines, choose each

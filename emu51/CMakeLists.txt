@@ -245,7 +245,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.h")
     add_test(NAME emu51_execution_worker_tests COMMAND emu51_ui_tests --worker-only)
     # This check measures real-time audio delivery during simulated UI stalls.
     set_tests_properties(emu51_execution_worker_tests PROPERTIES RUN_SERIAL TRUE)
-    if (APPLE)
+    if (APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME emu51_project_picker_tests COMMAND emu51_ui_tests --project-picker-only)
         set_tests_properties(emu51_project_picker_tests PROPERTIES TIMEOUT 30)
     endif()

@@ -33,32 +33,41 @@ bool emu51MigrateProject(Emu51Project& project, std::string& error)
             Emu51PeripheralDevice data; data.id = unique("system_data"); data.kind = Emu51PeripheralKind::Ram;
             dataId = data.id; c.devices.push_back(data);
         }
-        Emu51PeripheralDevice decode; decode.id = unique("system_select"); decode.kind = Emu51PeripheralKind::AddressDecoder;
-        decode.decoderBits = static_cast<int>(17-shift);
-        decode.decoderOutputs.push_back({"CODE",next.unified ? "/CS_MEMORY" : "/CS_CODE",true,{}});
-        if (!next.unified) decode.decoderOutputs.push_back({"DATA","/CS_DATA",true,{}});
-        const auto memoryOutputs = decode.decoderOutputs.size();
-        for (std::size_t i = 0; i < io.size(); ++i) decode.decoderOutputs.push_back({"IO"+std::to_string(i),"/CS_"+io[i].first,true,{}});
-        const unsigned addressValues = 1u << (16-shift);
-        for (unsigned value = 0; value < 2*addressValues; ++value) {
-            const bool xdata = value >= addressValues;
-            const unsigned address = (value % addressValues) << shift;
-            std::size_t output = !next.unified && xdata ? 1 : 0;
-            if (xdata) for (std::size_t i = 0; i < io.size(); ++i) {
-                const auto device = std::find_if(c.devices.begin(),c.devices.end(),[&](const auto& d) { return d.id == io[i].first; });
-                if (address >= static_cast<unsigned>(io[i].second) && address < static_cast<unsigned>(io[i].second+emu51PeripheralBusSize(device->kind)))
-                    output = memoryOutputs+i;
-            }
-            decode.decoderOutputs[output].values.push_back(value);
-        }
-        const auto decodeId = decode.id;
-        c.devices.push_back(std::move(decode));
         const auto wire = [&](const std::string& a, const std::string& b, int aBit = 0, int bBit = 0, int width = 1) {
             c.digital.push_back({a,b,aBit,bBit,width});
         };
-        if (shift < 16) wire("cpu.ADDR",decodeId+".IN",static_cast<int>(shift),0,static_cast<int>(16-shift));
-        wire("cpu.PSEN",decodeId+".IN",0,static_cast<int>(16-shift));
-        wire(decodeId+".CODE",code.id+".CS");
+        const auto selectId = unique("system_select");
+        const bool splitWithoutIo = !next.unified && io.empty();
+        if (splitWithoutIo) {
+            c.devices.push_back({selectId,Emu51PeripheralKind::Inverter});
+            wire("cpu.PSEN",code.id+".CS");
+            wire("cpu.PSEN",selectId+".IN");
+            wire(selectId+".OUT",dataId+".CS");
+        } else {
+            Emu51PeripheralDevice decode{selectId,Emu51PeripheralKind::AddressDecoder};
+            decode.decoderBits = static_cast<int>(17-shift);
+            decode.decoderOutputs.push_back({"CODE",next.unified ? "/CS_MEMORY" : "/CS_CODE",true,{}});
+            if (!next.unified) decode.decoderOutputs.push_back({"DATA","/CS_DATA",true,{}});
+            const auto memoryOutputs = decode.decoderOutputs.size();
+            for (std::size_t i = 0; i < io.size(); ++i) decode.decoderOutputs.push_back({"IO"+std::to_string(i),"/CS_"+io[i].first,true,{}});
+            const unsigned addressValues = 1u << (16-shift);
+            for (unsigned value = 0; value < 2*addressValues; ++value) {
+                const bool xdata = value >= addressValues;
+                const unsigned address = (value % addressValues) << shift;
+                std::size_t output = !next.unified && xdata ? 1 : 0;
+                if (xdata) for (std::size_t i = 0; i < io.size(); ++i) {
+                    const auto device = std::find_if(c.devices.begin(),c.devices.end(),[&](const auto& d) { return d.id == io[i].first; });
+                    if (address >= static_cast<unsigned>(io[i].second) && address < static_cast<unsigned>(io[i].second+emu51PeripheralBusSize(device->kind)))
+                        output = memoryOutputs+i;
+                }
+                decode.decoderOutputs[output].values.push_back(value);
+            }
+            c.devices.push_back(std::move(decode));
+            if (shift < 16) wire("cpu.ADDR",selectId+".IN",static_cast<int>(shift),0,static_cast<int>(16-shift));
+            wire("cpu.PSEN",selectId+".IN",0,static_cast<int>(16-shift));
+            wire(selectId+".CODE",code.id+".CS");
+            if (!next.unified) wire(selectId+".DATA",dataId+".CS");
+        }
         wire("cpu.ADDR",code.id+".ADDR",0,0,16); wire("cpu.DATA",code.id+".DATA",0,0,8);
         if (next.unified) {
             Emu51PeripheralDevice read; read.id = unique("system_read"); read.kind = Emu51PeripheralKind::AddressDecoder;
@@ -68,13 +77,13 @@ bool emu51MigrateProject(Emu51Project& project, std::string& error)
             c.devices.push_back(std::move(read));
         } else {
             wire("cpu.PSEN",code.id+".OE");
-            wire(decodeId+".DATA",dataId+".CS"); wire("cpu.RD",dataId+".OE"); wire("cpu.WR",dataId+".WE");
+            wire("cpu.RD",dataId+".OE"); wire("cpu.WR",dataId+".WE");
             wire("cpu.ADDR",dataId+".ADDR",0,0,16); wire("cpu.DATA",dataId+".DATA",0,0,8);
         }
         for (std::size_t i = 0; i < io.size(); ++i) {
             const auto& id = io[i].first;
             const auto d = std::find_if(c.devices.begin(),c.devices.end(),[&](const auto& device) { return device.id == id; });
-            wire(decodeId+".IO"+std::to_string(i),id+".CS"); wire("cpu.RD",id+".OE"); wire("cpu.WR",id+".WE");
+            wire(selectId+".IO"+std::to_string(i),id+".CS"); wire("cpu.RD",id+".OE"); wire("cpu.WR",id+".WE");
             wire("cpu.DATA",id+".DATA",0,0,8); wire("cpu.ADDR",id+".ADDR",0,0,emu51PeripheralBusSize(d->kind) == 4 ? 2 : 1);
         }
         Emu51PeripheralDevice clock; clock.id = unique("system_clock"); clock.kind = Emu51PeripheralKind::Clock;

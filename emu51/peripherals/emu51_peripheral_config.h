@@ -7,7 +7,7 @@
 enum class Emu51PeripheralKind { I8255, Adc0804, Dac, Voltage, Digital, Audio,
     Led, Switch, Button, Lcd, Keypad, Shift595, Shift165, Eeprom, Ay38910,
     Display7, Display14, Display16, Bargraph, Cd4511, Ls47, Max7219, Max7221, Ht16k33, Tm1637,
-    Ram, Rom, Clock, AddressDecoder, BusLatch, BusBuffer, KeyMatrix };
+    Ram, Rom, Clock, AddressDecoder, BusLatch, BusBuffer, KeyMatrix, Inverter };
 struct Emu51MemoryImage {
     std::string path;
     std::uint64_t offset = 0, length = 0;

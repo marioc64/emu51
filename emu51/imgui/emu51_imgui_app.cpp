@@ -1299,6 +1299,9 @@ void Emu51ImguiApp::draw()
 	updateSnappedPaneLayout();
 	drawExecutionSettingsDialog();
 	drawBinaryLoadDialog();
+#ifdef __linux__
+	drawOpenProjectBrowser();
+#endif
 	drawRegisters();
 	drawDebugger();
 	drawSerialTerminal();
@@ -2375,7 +2378,6 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
 {
 	serviceSerialFileSend();
 	const auto pc = cpu_.PC;
-	const std::uint8_t opcode = cpu_.readProg(pc);
 	TraceEntry entry;
 	if (traceEnabled_) {
 		entry.instruction = instructionCount_;
@@ -2392,7 +2394,8 @@ std::uint8_t Emu51ImguiApp::executeInstruction()
     }
 	pendingWatchpointStop_.clear();
 	instructionExecuting_ = true;
-	const auto cycles = static_cast<std::uint8_t>(cpu_.process());
+	std::uint8_t opcode = 0;
+	const auto cycles = static_cast<std::uint8_t>(cpu_.process(&opcode));
 	instructionExecuting_ = false;
 	if (hardware_ && hardware_->enabled()) hardware_->advance(cycles, crystalMHz_);
 	collectSerialOutput();

@@ -34,6 +34,8 @@ struct Emu51ImguiAppTestAccess {
         for (unsigned i = 0; i < 10; ++i) app->executeInstruction();
         uint8_t byte = 0; e51p_memory_read(app->peripherals_->memory("work_ram"),0,&byte);
         check(byte == 0x42,"MOVX writes wired external RAM");
+        check(app->peripherals_->readData(0x8000,byte,true) && byte == 0x42 &&
+            app->peripherals_->readData(0,byte,true) && byte == 255,"Inverted A15 selects RAM only in the upper XDATA half");
         const auto selector = app->cpu_.readLatch(0x90);
         const auto ticks = app->peripherals_->ticks();
         const auto snapshot = app->peripherals_->snapshotMemory("program_rom",15*32768,3);
@@ -70,7 +72,9 @@ struct Emu51ImguiAppTestAccess {
         e51p_memory_read(app->peripherals_->memory("work_ram"),0,&byte); check(byte == 0x42,"Clock Apply preserves RAM contents");
         check(app->cpu_.PC == 0 && !app->running_ && app->cpu_.readLatch(0x90) == 255,"Apply resets/pauses CPU and resets selector ports without clearing memory");
         auto invalid = config;
-        for (auto& d : invalid.devices) if (d.kind == Emu51PeripheralKind::AddressDecoder) { d.decoderOutputs[1].values.push_back(0); break; }
+        Emu51PeripheralDevice collision{"collision",Emu51PeripheralKind::AddressDecoder};
+        collision.decoderOutputs = {{"A","",true,{0}},{"B","",true,{0}}};
+        invalid.devices.push_back(collision);
         auto* active = app->peripherals_.get(); app->cpu_.PC = 0x1234;
         check(!app->applyPeripheralConfig(invalid,24) && app->peripherals_.get() == active && app->cpu_.PC == 0x1234,"Decoder collision cannot replace a live machine");
         std::string error; auto bad = emu51LoadProject(root/"edited.emu51",error); check(bool(bad),error);
@@ -112,6 +116,9 @@ struct Emu51ImguiAppTestAccess {
         check(!app->running_ && app->statusMessage_.find("address") != std::string::npos,"P0 without pull-ups reports a runtime bus fault");
 
         auto bus = create(); check(bus->openProjectFromPath(demos/"decoder_bus.emu51"),"Open shared bus example");
+        bus->peripheralsOpen_ = true;
+        bus->peripheralEditor_.selected_ = "select";
+        ImGui::NewFrame(); bus->drawPeripherals(); ImGui::Render();
         for (unsigned i = 0; i < 20; ++i) bus->executeInstruction();
         bool defined = false; check(bus->peripherals_->ledState("led",defined) && defined,"Decoder-selected 8255 drives real LED peripheral");
         auto shared = create(); check(shared->openProjectFromPath(demos/"shared_ram.emu51"),"Open shared CODE/XDATA example");

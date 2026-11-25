@@ -12,7 +12,7 @@ Emu51ExecutionWorker::Access::Access(Emu51ExecutionWorker& owner, bool notify)
     : owner_(owner), notify_(notify)
 {
     assert(std::this_thread::get_id() == owner_.uiThread_);
-    owner_.mutex_.lock();
+    owner_.lockForUi();
     ++owner_.uiDepth_;
 }
 Emu51ExecutionWorker::Access::~Access()
@@ -39,8 +39,17 @@ Emu51ExecutionWorker::UiRelease::~UiRelease()
     // Native modal loops may have reentered the UI while this access was
     // released. Their nested guards have ended before the original call resumes.
     assert(owner_.uiDepth_ == 0);
-    for (unsigned i = 0; i < depth_; ++i) owner_.mutex_.lock();
+    for (unsigned i = 0; i < depth_; ++i) owner_.lockForUi();
     owner_.uiDepth_ = depth_;
+}
+
+void Emu51ExecutionWorker::lockForUi()
+{
+    if (mutex_.try_lock()) return;
+    uiWaiting_.store(true, std::memory_order_release);
+    mutex_.lock();
+    uiWaiting_.store(false, std::memory_order_release);
+    condition_.notify_one();
 }
 Emu51ExecutionWorker::~Emu51ExecutionWorker() { stop(); }
 void Emu51ExecutionWorker::start(std::function<bool()> service)
@@ -57,6 +66,14 @@ void Emu51ExecutionWorker::start(std::function<bool()> service)
 #endif
         std::unique_lock lock(mutex_);
         while (!stop_.load(std::memory_order_acquire)) {
+            // Yield at a batch boundary whenever the UI is waiting. An
+            // ordinary mutex unlock/relock can let the worker win for seconds.
+            if (uiWaiting_.load(std::memory_order_acquire)) {
+                condition_.wait(lock, [this] {
+                    return !uiWaiting_.load(std::memory_order_acquire) || stop_.load(std::memory_order_acquire);
+                });
+                continue;
+            }
             wake_ = false;
             const auto started = std::chrono::steady_clock::now();
             const bool active = service();
@@ -64,7 +81,6 @@ void Emu51ExecutionWorker::start(std::function<bool()> service)
             if (active) {
                 const auto next = started + std::chrono::milliseconds(1);
                 if (std::chrono::steady_clock::now() < next) condition_.wait_until(lock, next, wake);
-                else { lock.unlock(); std::this_thread::yield(); lock.lock(); }
             } else condition_.wait(lock, wake);
         }
     });
@@ -72,9 +88,7 @@ void Emu51ExecutionWorker::start(std::function<bool()> service)
 }
 void Emu51ExecutionWorker::notify()
 {
-    std::lock_guard lock(mutex_);
-    wake_ = true;
-    condition_.notify_one();
+    const auto guard = access();
 }
 void Emu51ExecutionWorker::stop()
 {

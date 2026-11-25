@@ -18,6 +18,32 @@ set_target_properties(emu51_peripheral_sdk PROPERTIES
 target_include_directories(emu51_peripheral_sdk PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include(CheckCXXSourceCompiles)
+    include(CMakePushCheckState)
+    set(emu51_atomic_probe [[
+        #include <atomic>
+        #include <cstdint>
+        int main() {
+            std::atomic<std::uint64_t> wide{0};
+            std::atomic<std::uint32_t> narrow{0};
+            return wide.is_lock_free() && narrow.is_lock_free() ? 0 : 1;
+        }
+    ]])
+    cmake_push_check_state(RESET)
+    check_cxx_source_compiles("${emu51_atomic_probe}" EMU51_ATOMICS_LINK_WITHOUT_LIBRARY)
+    if(NOT EMU51_ATOMICS_LINK_WITHOUT_LIBRARY)
+        set(CMAKE_REQUIRED_LIBRARIES atomic)
+        check_cxx_source_compiles("${emu51_atomic_probe}" EMU51_ATOMICS_LINK_WITH_LIBATOMIC)
+        if(NOT EMU51_ATOMICS_LINK_WITH_LIBATOMIC)
+            message(FATAL_ERROR "The peripheral SDK needs working std::atomic operations. Install libatomic or use a toolchain that provides them.")
+        endif()
+        target_link_libraries(emu51_peripheral_sdk PRIVATE atomic)
+    endif()
+    cmake_pop_check_state()
+endif()
+
 if(TARGET emu51_warnings)
     target_link_libraries(emu51_peripheral_sdk PRIVATE "$<BUILD_INTERFACE:emu51_warnings>")
     if(EMU51_ASAN AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")

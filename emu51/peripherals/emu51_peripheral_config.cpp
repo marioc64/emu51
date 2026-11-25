@@ -39,6 +39,7 @@ const char* emu51PeripheralKindName(Emu51PeripheralKind kind)
     case Emu51PeripheralKind::BusLatch: return "8-bit bus output latch";
     case Emu51PeripheralKind::BusBuffer: return "8-bit bus input buffer";
     case Emu51PeripheralKind::KeyMatrix: return "Configurable key matrix";
+    case Emu51PeripheralKind::Inverter: return "Bit Inverter";
     default: break;
     }
     return "Unknown";
@@ -58,7 +59,7 @@ void emu51ValidatePeripheralConfig(const Emu51PeripheralConfig& c)
                     (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
             }) || !ids.insert(d.id).second)
             throw std::runtime_error("Device IDs must be unique letters, digits, '_' or '-' (cpu is reserved)");
-        if (d.kind < Emu51PeripheralKind::I8255 || d.kind > Emu51PeripheralKind::KeyMatrix ||
+        if (d.kind < Emu51PeripheralKind::I8255 || d.kind > Emu51PeripheralKind::Inverter ||
             !std::isfinite(d.referenceVolts) || d.referenceVolts <= 0 || d.referenceVolts > 1000 ||
             !std::isfinite(d.voltage) || std::abs(d.voltage) > 1000 || d.conversionTicks < 1 ||
             d.digitalValue < 0 || d.digitalValue > 255 || d.audioDirections < 1 || d.audioDirections > 3 ||

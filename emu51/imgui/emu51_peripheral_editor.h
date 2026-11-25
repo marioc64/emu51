@@ -3,6 +3,7 @@
 #include "emu51_peripheral_session.h"
 #include "emu51_model.h"
 #include "imgui.h"
+#include <array>
 #include <string>
 #include <vector>
 #include <map>
@@ -30,6 +31,7 @@ private:
     friend struct Emu51ImguiAppTestAccess;
     struct Pin {
         Emu51PeripheralPin descriptor;
+        std::string label;
         ImVec2 position;
         bool left = false;
         std::vector<ImVec2> bits;
@@ -37,19 +39,31 @@ private:
     struct Block {
         std::string id, title, subtitle;
         ImVec2 position, size;
+        std::array<float,2> pinWidths{};
         std::vector<Pin> pins;
     };
     struct Connector { std::string name; int bit = -1; };
     struct WireSelection { int kind = 0, index = -1; }; // 1=digital, 2=analog, 3=bus
+    struct Connection {
+        const Pin *from, *to;
+        int fromBit, toBit;
+        WireSelection selection;
+    };
+    struct RouteEnd {
+        ImVec2 port, edge;
+        bool left;
+    };
     std::vector<Emu51PeripheralBlockPosition> positions_;
     std::vector<Block> blocks_;
+    std::vector<float> routeGeometry_;
+    std::vector<std::vector<ImVec2>> routes_, roundedRoutes_;
     std::string selected_, draggingBlock_;
     WireSelection wire_;
     Connector draggingPin_;
     ImVec2 pan_{24, 24}, origin_{}, canvasSize_{}, blockDragOffset_{};
     ImVec2 popupPosition_{};
     float zoom_ = 0.85f;
-    bool fit_ = true, interacting_ = false;
+    bool fit_ = true, readableFit_ = true, interacting_ = false;
     bool inspectorVisible_ = true;
     bool rightGesture_ = false, rightPanned_ = false;
     std::string fitBlock_;
@@ -61,6 +75,11 @@ private:
     std::vector<std::string> activeMemories_;
     std::optional<MemoryRequest> memoryRequest_;
     void rebuild(const Emu51PeripheralConfig&, Emu51Model);
+    void moveBlock(Block&, ImVec2);
+    void arrange(const Emu51PeripheralConfig&);
+    std::vector<Connection> connections(const Emu51PeripheralConfig&) const;
+    RouteEnd routeEnd(const Pin&, int bit) const;
+    void updateRoutes(const std::vector<Connection>&);
     void canvas(Emu51PeripheralConfig&, std::string&);
     void inspector(Emu51PeripheralConfig&);
     void keypadInspector(Emu51PeripheralDevice&);

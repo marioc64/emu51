@@ -26,6 +26,7 @@ struct e51p_wired_bus {
         std::unique_ptr<e51p_decoder, decltype(&e51p_decoder_destroy)> model{nullptr, e51p_decoder_destroy};
         e51p_endpoint input;
         std::vector<e51p_endpoint> outputs;
+        std::vector<uint8_t> active_low;
     };
     std::vector<Target> targets;
     std::vector<Decoder> decoders;
@@ -104,10 +105,12 @@ e51p_status capture(e51p_wired_bus& b, uint32_t kind, uint32_t address, uint32_t
         const auto& d = b.decoders[index];
         e51p_digital_state input{};
         e51p_snapshot_sample(b.snapshot,d.input,&input);
+        uint32_t selected;
+        const auto selection = e51p_decoder_select(d.model.get(),input,&selected);
+        const bool resolved = selection == E51P_OK || selection == E51P_NOT_FOUND;
         for (uint32_t i = 0; i < d.outputs.size(); ++i) {
-            e51p_digital_state level{};
-            const auto result = e51p_decoder_level(d.model.get(),i,input,&level);
-            e51p_snapshot_drive(b.snapshot,d.outputs[i],level.value,1,0,result == E51P_OK ? 0 : 1);
+            const bool level = resolved && ((selected == i) != (d.active_low[i] != 0));
+            e51p_snapshot_drive(b.snapshot,d.outputs[i],level,1,0,resolved ? 0 : 1);
         }
     }
     return E51P_OK;
@@ -154,6 +157,9 @@ e51p_status e51p_wired_bus_add_decoder(e51p_wired_bus* b, const char* id, uint32
         auto status = e51p_decoder_create(bits,outputs,count,&model);
         if (status != E51P_OK) return status;
         d.model.reset(model); d.outputs.resize(count);
+        d.active_low.reserve(count);
+        for (uint32_t i = 0; i < count; ++i)
+            d.active_low.push_back(static_cast<uint8_t>(outputs[i].active_low));
         status = e51p_decoder_attach(b->api,b->context,id,model,&d.input,d.outputs.data(),count);
         if (status != E51P_OK) return status;
         *input = d.input;

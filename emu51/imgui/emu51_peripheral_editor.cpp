@@ -1,14 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_peripheral_editor.h"
+#include "imgui_internal.h"
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <queue>
 #include <utility>
 
 namespace {
-constexpr float blockWidth = 320, headerHeight = 58, rowHeight = 52;
+constexpr float titleSize = 34, pinFontSize = 24;
+constexpr float headerPadding = 8, subtitleTop = 38, headerHeight = subtitleTop+pinFontSize+2;
+constexpr float pinPadding = 9, rowHeight = pinFontSize+4, pinColumnGap = 8;
+constexpr ImVec2 bitHalf{12.5f,10.5f};
+constexpr unsigned bitsPerRow = 8;
+constexpr float bitStep = 27, bitInset = bitHalf.x+5, bitLaneGap = 2, bitLeadGap = 3;
+constexpr float bitRowHeight = 2*bitHalf.y+bitLeadGap+(bitsPerRow-1)*bitLaneGap+3;
+// Project layout coordinates keep their original units.
+constexpr float layoutScale = 4;
+constexpr float columnGap = 184, blockGap = 64;
+constexpr float leadLength = 72, clearance = 24, cornerRadius = 16, laneGap = 20;
 constexpr ImU32 digitalColor = IM_COL32(94, 198, 241, 255);
 constexpr ImU32 analogColor = IM_COL32(245, 188, 91, 255);
 constexpr ImU32 busColor = IM_COL32(185, 151, 246, 255);
@@ -24,17 +37,234 @@ float segmentDistance(ImVec2 p, ImVec2 a, ImVec2 b)
     const float t = length > 0 ? std::clamp((q.x*d.x + q.y*d.y) / length, 0.0f, 1.0f) : 0;
     return std::sqrt(distanceSquared(p, plus(a, scale(d, t))));
 }
-ImVec2 bezier(ImVec2 a, ImVec2 c, ImVec2 d, ImVec2 b, float t)
+struct Bounds { ImVec2 lo, hi; };
+bool intersects(Bounds a, Bounds b)
 {
-    const float u = 1-t;
-    return plus(plus(scale(a,u*u*u), scale(c,3*u*u*t)), plus(scale(d,3*u*t*t),scale(b,t*t*t)));
+    return a.lo.x < b.hi.x && a.hi.x > b.lo.x && a.lo.y < b.hi.y && a.hi.y > b.lo.y;
 }
+bool samePoint(ImVec2 a, ImVec2 b) { return a.x == b.x && a.y == b.y; }
+void appendPoint(std::vector<ImVec2>& path, ImVec2 p)
+{
+    if (!path.empty() && samePoint(path.back(),p)) return;
+    if (path.size() >= 2) {
+        const auto a = minus(path.back(),path[path.size()-2]), b = minus(p,path.back());
+        if ((a.x == 0 && b.x == 0 && a.y*b.y > 0) || (a.y == 0 && b.y == 0 && a.x*b.x > 0)) {
+            path.back() = p;
+            return;
+        }
+    }
+    path.push_back(p);
+}
+float manhattan(ImVec2 a, ImVec2 b) { return std::abs(a.x-b.x)+std::abs(a.y-b.y); }
+
+struct Terminal {
+    ImVec2 edge, lead;
+    int outward; // -1 for left, +1 for right, 0 for a free cursor
+};
+using TerminalPair = std::pair<std::optional<Terminal>,std::optional<Terminal>>;
+
+std::optional<Terminal> terminal(ImVec2 edge, bool left, const std::vector<Bounds>& boxes, float maxLength = leadLength)
+{
+    const int outward = left ? -1 : 1;
+    float available = maxLength;
+    for (const auto& box : boxes) {
+        if (edge.y <= box.lo.y-clearance || edge.y >= box.hi.y+clearance) continue;
+        const float near = left ? edge.x-box.hi.x : box.lo.x-edge.x;
+        const float far = left ? edge.x-box.lo.x : box.hi.x-edge.x;
+        if (far <= 0) continue; // Includes the box that owns this connector.
+        available = std::min(available,near-clearance);
+    }
+    if (available < clearance) return std::nullopt;
+    return Terminal{edge,plus(edge,{outward*available,0}),outward};
+}
+
+std::vector<ImVec2> roundCorners(const std::vector<ImVec2>& route)
+{
+    if (route.size() < 3) return route;
+    std::vector<ImVec2> curve{route.front()};
+    for (std::size_t i = 1; i+1 < route.size(); ++i) {
+        const auto before = route[i-1], corner = route[i], after = route[i+1];
+        const float incoming = manhattan(before,corner), outgoing = manhattan(corner,after);
+        // The entire quadratic stays within its control triangle. Limiting
+        // that triangle to less than the obstacle clearance keeps it outside boxes.
+        const float radius = std::min({cornerRadius,incoming/3,outgoing/3});
+        const auto a = plus(corner,scale(minus(before,corner),radius/incoming));
+        const auto b = plus(corner,scale(minus(after,corner),radius/outgoing));
+        curve.push_back(a);
+        for (int step = 1; step <= 5; ++step) {
+            const float t = step/5.0f, u = 1-t;
+            curve.push_back(plus(plus(scale(a,u*u),scale(corner,2*u*t)),scale(b,t*t)));
+        }
+    }
+    curve.push_back(route.back());
+    return curve;
+}
+
+TerminalPair routedTerminals(ImVec2 a, bool aLeft, ImVec2 b, bool bLeft, const std::vector<Bounds>& boxes)
+{
+    const float gap = (b.x-a.x)*(aLeft ? -1 : 1);
+    const float length = aLeft != bLeft && gap >= 2*clearance ? std::min(leadLength,gap/2) : leadLength;
+    return std::pair{terminal(a,aLeft,boxes,length),terminal(b,bLeft,boxes,length)};
+}
+
+ImVec2 pointAlong(const std::vector<ImVec2>& path, float fraction)
+{
+    float length = 0;
+    for (std::size_t i = 1; i < path.size(); ++i) length += manhattan(path[i-1],path[i]);
+    float at = length*fraction;
+    for (std::size_t i = 1; i < path.size(); ++i) {
+        const float segment = manhattan(path[i-1],path[i]);
+        if (at <= segment) return plus(path[i-1],scale(minus(path[i],path[i-1]),at/segment));
+        at -= segment;
+    }
+    return path.back();
+}
+
+// An orthogonal grid whose rails follow box edges and connector positions.
+// Subdividing common rails lets later wires pay for exactly the distance shared.
+class WireRouter {
+public:
+    WireRouter(const std::vector<Bounds>& boxes, const std::vector<ImVec2>& ports)
+    {
+        for (const auto p : ports) { xs_.push_back(p.x); ys_.push_back(p.y); }
+        for (const auto& box : boxes) {
+            const auto lo = minus(box.lo,{clearance,clearance});
+            const auto hi = plus(box.hi,{clearance,clearance});
+            xs_.insert(xs_.end(),{lo.x,box.lo.x-leadLength-laneGap,box.lo.x-leadLength-2*laneGap,
+                hi.x,box.hi.x+leadLength+laneGap,box.hi.x+leadLength+2*laneGap});
+            ys_.insert(ys_.end(),{lo.y-2*laneGap,lo.y-laneGap,lo.y,hi.y,hi.y+laneGap,hi.y+2*laneGap});
+        }
+        for (auto* axis : {&xs_,&ys_}) {
+            std::sort(axis->begin(),axis->end());
+            axis->erase(std::unique(axis->begin(),axis->end()),axis->end());
+        }
+        columns_ = static_cast<int>(xs_.size());
+        rows_ = static_cast<int>(ys_.size());
+        edges_.resize(columns_*rows_);
+        for (const auto& box : boxes) {
+            const auto lo = minus(box.lo,{clearance,clearance});
+            const auto hi = plus(box.hi,{clearance,clearance});
+            const int l = index(xs_,lo.x), r = index(xs_,hi.x), t = index(ys_,lo.y), b = index(ys_,hi.y);
+            for (int y = t+1; y < b; ++y)
+                for (int x = l; x < r; ++x) edges_[y*columns_+x][0] = -1;
+            for (int y = t; y < b; ++y)
+                for (int x = l+1; x < r; ++x) edges_[y*columns_+x][1] = -1;
+        }
+    }
+
+    std::vector<ImVec2> route(const Terminal& from, const Terminal& to)
+    {
+        const int start = vertex(from.lead), finish = vertex(to.lead);
+        if (start == finish && from.outward == to.outward) return {};
+        struct Candidate {
+            float estimate, cost;
+            int state;
+            bool operator<(const Candidate& other) const
+            {
+                if (estimate != other.estimate) return estimate > other.estimate;
+                if (cost != other.cost) return cost < other.cost;
+                return state > other.state;
+            }
+        };
+        constexpr float bendCost = 24;
+        std::priority_queue<Candidate> open;
+        costs_.assign(edges_.size()*2,FLT_MAX);
+        previous_.resize(costs_.size());
+        costs_[start*2] = 0;
+        previous_[start*2] = -1;
+        open.push({manhattan(from.lead,to.lead),0,start*2});
+        int last = -1;
+        while (!open.empty()) {
+            const auto current = open.top();
+            open.pop();
+            if (current.cost != costs_[current.state]) continue;
+            const int here = current.state/2;
+            if (here == finish) { last = current.state; break; }
+            const int x = here%columns_, y = here/columns_;
+            const int neighbors[] = {x > 0 ? here-1 : -1, x+1 < columns_ ? here+1 : -1,
+                y > 0 ? here-columns_ : -1, y+1 < rows_ ? here+columns_ : -1};
+            for (int i = 0; i < 4; ++i) {
+                const int next = neighbors[i], axis = i/2;
+                if (next < 0) continue;
+                const int horizontal = axis == 0 ? (i == 0 ? -1 : 1) : 0;
+                if (here == start && horizontal == -from.outward) continue;
+                if (next == finish && to.outward && horizontal == to.outward) continue;
+                const int usage = edges_[std::min(here,next)][axis];
+                if (usage < 0) continue;
+                const auto point = coordinates(next);
+                const float length = manhattan(coordinates(here),point);
+                float cost = current.cost + length*(1+3*usage);
+                if (axis != current.state%2) cost += bendCost;
+                const int perpendicular = axis == 0 ? columns_ : 1;
+                if ((axis == 0 ? next/columns_ > 0 : next%columns_ > 0) &&
+                    edges_[next-perpendicular][1-axis] > 0 && edges_[next][1-axis] > 0) cost += 12;
+                if (to.outward && next == finish && axis == 1) cost += bendCost;
+                const int state = next*2+axis;
+                if (cost >= costs_[state]) continue;
+                costs_[state] = cost;
+                previous_[state] = current.state;
+                open.push({cost+manhattan(point,to.lead),cost,state});
+            }
+        }
+        std::vector<ImVec2> result;
+        for (int state = last; state >= 0; state = previous_[state]) {
+            const int here = state/2, prior = previous_[state];
+            if (prior >= 0) ++edges_[std::min(here,prior/2)][state%2];
+            appendPoint(result,coordinates(here));
+        }
+        if (result.empty()) return {};
+        std::vector<ImVec2> path{from.edge};
+        for (auto it = result.rbegin(); it != result.rend(); ++it) appendPoint(path,*it);
+        appendPoint(path,to.edge);
+        return path;
+    }
+
+private:
+    static int index(const std::vector<float>& axis, float at)
+    {
+        return static_cast<int>(std::lower_bound(axis.begin(),axis.end(),at)-axis.begin());
+    }
+    int vertex(ImVec2 p) const { return index(ys_,p.y)*columns_+index(xs_,p.x); }
+    ImVec2 coordinates(int vertex) const { return {xs_[vertex%columns_],ys_[vertex/columns_]}; }
+    std::vector<float> xs_, ys_, costs_;
+    std::vector<int> previous_;
+    std::vector<std::array<int,2>> edges_;
+    int columns_, rows_;
+};
+
 ImU32 color(unsigned kind) { return kind == E51P_DIGITAL ? digitalColor : kind == E51P_ANALOG ? analogColor : busColor; }
 const char* direction(const Emu51PeripheralPin& p)
 {
     if (p.kind == E51P_BUS_INITIATOR || p.kind == E51P_BUS_TARGET) return "BUS";
     return p.direction == (E51P_INPUT|E51P_OUTPUT) ? "I/O" : p.direction & E51P_OUTPUT ? "OUT" : "IN";
 }
+std::string pinLabel(const Emu51PeripheralPin& pin, const Emu51PeripheralDevice* device)
+{
+    auto name = pin.name.substr(pin.name.find('.')+1);
+    if (!device && (name == "PSEN" || name == "RD" || name == "WR")) name = "/"+name;
+    if (device && device->kind == Emu51PeripheralKind::AddressDecoder) {
+        const auto output = std::find_if(device->decoderOutputs.begin(),device->decoderOutputs.end(),[&](const auto& o) { return o.id == name; });
+        if (output != device->decoderOutputs.end()) name = output->name.empty() ? (output->activeLow ? "/" : "")+output->id : output->name;
+    } else if (device && ((name == "CS" && device->csLow) || (name == "OE" && device->oeLow) || (name == "WE" && device->weLow))) {
+        name = "/"+name;
+    }
+    if (pin.width > 1 && pin.kind == E51P_DIGITAL) name += " ["+std::to_string(pin.width-1)+":0]";
+    return name + "  " + direction(pin);
+}
+
+float layoutTextWidth(ImFont* font, float size, const std::string& text)
+{
+    // Keep world geometry independent of the zoom and use the font's base
+    // metrics so a layout calculation does not create a new atlas size.
+    const float base = font->LegacySize;
+    return font->CalcTextSizeA(base,FLT_MAX,0,text.c_str()).x*(size/base);
+}
+
+unsigned bitsInRow(unsigned width, unsigned bit)
+{
+    return std::min(bitsPerRow,width-bit/bitsPerRow*bitsPerRow);
+}
+
 std::string range(const std::string& name, int bit, int width)
 {
     return name + "[" + (width > 1 ? std::to_string(bit+width-1) + ":" : "") + std::to_string(bit) + "]";
@@ -47,7 +277,7 @@ void Emu51PeripheralEditor::restore(const std::vector<Emu51PeripheralBlockPositi
     decoderText_.clear(); decoderErrors_.clear(); decoderNewValues_.clear(); memoryRequest_.reset();
     selected_.clear(); wire_ = {}; draggingBlock_.clear(); draggingPin_ = {};
     fitBlock_.clear(); rightGesture_ = rightPanned_ = false;
-    pan_ = {24,24}; fit_ = true;
+    pan_ = {24,24}; fit_ = readableFit_ = true;
 }
 std::vector<Emu51PeripheralBlockPosition> Emu51PeripheralEditor::positions(const Emu51PeripheralConfig& c) const
 {
@@ -60,45 +290,275 @@ std::vector<Emu51PeripheralBlockPosition> Emu51PeripheralEditor::positions(const
 void Emu51PeripheralEditor::rebuild(const Emu51PeripheralConfig& config, Emu51Model model)
 {
     blocks_.clear();
+    const bool unplaced = positions_.empty();
+    std::vector<std::size_t> added;
     const auto descriptors = Emu51PeripheralSession::describe(config, true);
-    const auto add = [&](const std::string& id, const std::string& title, const std::string& subtitle) {
+    auto* font = ImGui::GetFont();
+    const auto add = [&](const std::string& id, const std::string& title, const std::string& subtitle,
+        const Emu51PeripheralDevice* device) {
         auto found = std::find_if(positions_.begin(), positions_.end(), [&](const auto& p) { return p.id == id; });
         if (found == positions_.end()) {
-            const auto i = blocks_.size();
-            positions_.push_back({id, static_cast<double>(i % 3) * 400, static_cast<double>(i / 3) * 420 + (i % 3) * 28});
-            found = positions_.end()-1;
+            added.push_back(blocks_.size());
+            positions_.push_back({id});
+            found = std::prev(positions_.end());
         }
         Block b; b.id = id; b.title = found->name.empty() ? title : found->name; b.subtitle = subtitle;
-        b.position = {static_cast<float>(found->x), static_cast<float>(found->y)};
-        float left = 0, right = 0;
+        b.position = {static_cast<float>(found->x)*layoutScale, static_cast<float>(found->y)*layoutScale};
+        std::array<float,2> heights{};
+        float halfWidthForBits = 0;
         for (const auto& d : descriptors) {
             if (!d.name.starts_with(id + ".")) continue;
             Pin p; p.descriptor = d;
+            p.label = pinLabel(d,device);
             p.left = d.kind == E51P_BUS_TARGET || (d.kind != E51P_BUS_INITIATOR && !(d.direction & E51P_OUTPUT));
-            auto& column = p.left ? left : right;
-            const float row=column;
-            const unsigned bitRows=d.kind==E51P_DIGITAL && d.width>1 ? (d.width+7)/8 : 1;
-            column+=rowHeight+18*(bitRows-1);
-            p.position = plus(b.position, {p.left ? 0 : blockWidth, headerHeight + row + 14});
-            if (d.kind == E51P_DIGITAL && d.width > 1)
-                for (unsigned bit = 0; bit < d.width; ++bit)
-                    p.bits.push_back(plus(b.position, {(p.left ? 19.0f : 198.0f) + 14*(bit%8), headerHeight + row + 35 + 18*(bit/8)}));
+            const int side = p.left ? 0 : 1;
+            const float row = headerHeight+heights[side];
+            const unsigned bitRows = d.kind == E51P_DIGITAL && d.width > 1 ? (d.width+bitsPerRow-1)/bitsPerRow : 0;
+            heights[side] += rowHeight+bitRowHeight*bitRows;
+            p.position = {0,row+rowHeight/2};
+            const float labelWidth = std::min(235.0f,pinPadding+layoutTextWidth(font,pinFontSize,p.label)+4);
+            auto& width = b.pinWidths[side];
+            width = std::max(width,labelWidth);
+            if (bitRows) {
+                const float bitWidth = bitInset+(bitsInRow(d.width,0)-1)*bitStep+bitHalf.x;
+                halfWidthForBits = std::max(halfWidthForBits,bitWidth);
+                for (unsigned bit = 0; bit < d.width; ++bit) {
+                    const unsigned index = bit%bitsPerRow;
+                    const unsigned column = p.left ? index : bitsInRow(d.width,bit)-1-index;
+                    const float x = (p.left ? 1 : -1)*(bitInset+bitStep*column);
+                    p.bits.push_back({x,row+rowHeight+bitHalf.y+bitRowHeight*(bit/bitsPerRow)});
+                }
+            }
             b.pins.push_back(std::move(p));
         }
-        b.size = {blockWidth, headerHeight + std::max(left,right) + 10};
+        const float heading = std::min(384.0f,std::max(layoutTextWidth(font,titleSize,b.title),layoutTextWidth(font,pinFontSize,b.subtitle)));
+        const float labels = b.pinWidths[0] && b.pinWidths[1] ? 2*std::max(b.pinWidths[0],b.pinWidths[1]) :
+            b.pinWidths[0]+b.pinWidths[1];
+        b.size = {std::max(heading+2*headerPadding,std::max(labels,2*halfWidthForBits)+pinColumnGap),
+            headerHeight+std::max(heights[0],heights[1])+3};
+        for (auto& p : b.pins) {
+            const auto edge = plus(b.position,{p.left ? 0 : b.size.x,0});
+            p.position = plus(edge,p.position);
+            for (auto& bit : p.bits) bit = plus(edge,bit);
+        }
         blocks_.push_back(std::move(b));
     };
-    add("cpu", std::string("Intel ") + emu51ModelInfo(model).id,
-        std::string("CPU ") + emu51ModelInfo(model).id + "  /  P0-P3  /  CODE / XDATA");
+    add("cpu",std::string("Intel ")+emu51ModelInfo(model).id,"CPU / CODE / XDATA",nullptr);
     for (const auto& d : config.devices) {
         if (const int size = emu51PeripheralBusSize(d.kind); size && !d.wiredBus) {
             char subtitle[96]; std::snprintf(subtitle,sizeof(subtitle),"%s / XDATA %04X-%04X",emu51PeripheralKindName(d.kind),d.address,d.address+size-1);
-            add(d.id,d.id,subtitle);
-        } else add(d.id,d.id,emu51PeripheralKindName(d.kind));
+            add(d.id,d.id,subtitle,&d);
+        } else add(d.id,d.id,emu51PeripheralKindName(d.kind),&d);
     }
     std::erase_if(positions_, [&](const auto& p) { return std::none_of(blocks_.begin(), blocks_.end(), [&](const auto& b) { return b.id == p.id; }); });
+    if (unplaced) {
+        arrange(config);
+    } else if (!added.empty()) {
+        ImVec2 edge{-FLT_MAX,FLT_MAX};
+        for (std::size_t i = 0; i < blocks_.size(); ++i) {
+            if (std::find(added.begin(),added.end(),i) != added.end()) continue;
+            edge.x = std::max(edge.x,blocks_[i].position.x+blocks_[i].size.x);
+            edge.y = std::min(edge.y,blocks_[i].position.y);
+        }
+        if (edge.x == -FLT_MAX) edge = {-columnGap,0};
+        for (const auto i : added) {
+            moveBlock(blocks_[i],{edge.x+columnGap,edge.y});
+            edge.y += blocks_[i].size.y+blockGap;
+        }
+    }
     // Selected blocks stay above intersecting blocks and their connectors.
     std::stable_sort(blocks_.begin(), blocks_.end(), [&](const auto& a, const auto& b) { return (a.id == selected_) < (b.id == selected_); });
+}
+
+void Emu51PeripheralEditor::moveBlock(Block& block, ImVec2 at)
+{
+    const auto saved = std::find_if(positions_.begin(),positions_.end(),[&](const auto& p) { return p.id == block.id; });
+    const float limit = 100000*layoutScale;
+    at = {std::clamp(at.x,-limit,limit),std::clamp(at.y,-limit,limit)};
+    saved->x = at.x/layoutScale;
+    saved->y = at.y/layoutScale;
+    for (auto& pin : block.pins) {
+        pin.position = {at.x+(pin.left ? 0 : block.size.x),at.y+(pin.position.y-block.position.y)};
+        for (auto& bit : pin.bits) bit = plus(at,minus(bit,block.position));
+    }
+    block.position = at;
+}
+
+std::vector<Emu51PeripheralEditor::Connection> Emu51PeripheralEditor::connections(const Emu51PeripheralConfig& config) const
+{
+    std::vector<Connection> result;
+    const auto add = [&](const Pin* a, int ab, const Pin* b, int bb, int kind, std::size_t i) {
+        if (a && b) result.push_back({a,b,ab,bb,{kind,static_cast<int>(i)}});
+    };
+    for (std::size_t i = 0; i < config.digital.size(); ++i) {
+        const auto& wire = config.digital[i];
+        const auto* a = pin(wire.a);
+        const auto* b = pin(wire.b);
+        const bool whole = a && b && wire.aBit == 0 && wire.bBit == 0 &&
+            wire.width == static_cast<int>(a->descriptor.width) && wire.width == static_cast<int>(b->descriptor.width);
+        add(a,whole ? -1 : wire.aBit,b,whole ? -1 : wire.bBit,1,i);
+    }
+    for (std::size_t i = 0; i < config.analog.size(); ++i) {
+        const auto& wire = config.analog[i];
+        add(pin(wire.from),-1,pin(wire.to),-1,2,i);
+    }
+    for (std::size_t i = 0; i < config.devices.size(); ++i) {
+        const auto& device = config.devices[i];
+        if (emu51PeripheralBusSize(device.kind) && !device.wiredBus)
+            add(pin("cpu.xdata"),-1,pin(device.id+".bus"),-1,3,i);
+    }
+    return result;
+}
+
+Emu51PeripheralEditor::RouteEnd Emu51PeripheralEditor::routeEnd(const Pin& pin, int bit) const
+{
+    if (bit < 0 || bit >= static_cast<int>(pin.bits.size())) return {pin.position,pin.position,pin.left};
+    const auto port = pin.bits[bit];
+    const unsigned index = bit%bitsPerRow;
+    const unsigned lane = pin.left ? index : bitsInRow(pin.bits.size(),bit)-1-index;
+    const ImVec2 edge{pin.position.x,port.y+bitHalf.y+bitLeadGap+lane*bitLaneGap};
+    return {port,edge,pin.left};
+}
+
+void Emu51PeripheralEditor::arrange(const Emu51PeripheralConfig& config)
+{
+    if (blocks_.empty()) return;
+    // Stable IDs keep selection and draw order from changing the arrangement.
+    std::sort(blocks_.begin(),blocks_.end(),[](const auto& a, const auto& b) {
+        if ((a.id == "cpu") != (b.id == "cpu")) return a.id == "cpu";
+        return a.id < b.id;
+    });
+    const int count = static_cast<int>(blocks_.size());
+    struct Neighbor { int node, offset; float pinDelta; };
+    std::map<const Pin*,int> owners;
+    std::vector<std::vector<Neighbor>> neighbors(count);
+    for (int i = 0; i < count; ++i)
+        for (const auto& pin : blocks_[i].pins) owners.emplace(&pin,i);
+    for (const auto& wire : connections(config)) {
+        const int a = owners.at(wire.from), b = owners.at(wire.to);
+        if (a == b) continue;
+        const int offset = wire.from->left == wire.to->left ? 0 : wire.from->left ? -1 : 1;
+        const float delta = (routeEnd(*wire.from,wire.fromBit).edge.y-blocks_[a].position.y)-
+            (routeEnd(*wire.to,wire.toBit).edge.y-blocks_[b].position.y);
+        neighbors[a].push_back({b,offset,delta});
+        neighbors[b].push_back({a,-offset,-delta});
+    }
+    const bool hasThroughBlock = std::any_of(neighbors.begin(),neighbors.end(),[](const auto& links) {
+        return std::any_of(links.begin(),links.end(),[](const auto& link) { return link.offset < 0; }) &&
+            std::any_of(links.begin(),links.end(),[](const auto& link) { return link.offset > 0; });
+    });
+    const int columnCount = std::min({count,5,std::max(hasThroughBlock ? 3 : 1,static_cast<int>(std::ceil(std::sqrt(count))))});
+    std::vector<std::vector<int>> columns(columnCount);
+    std::vector<int> column(count,-1), placedNeighbors(count);
+    std::vector<float> heights(columnCount), tops(count), desired(count);
+    for (int placed = 0; placed < count; ++placed) {
+        int next = -1;
+        for (int i = 0; i < count; ++i)
+            if (column[i] < 0 && (next < 0 || placedNeighbors[i] > placedNeighbors[next] ||
+                (placedNeighbors[i] == placedNeighbors[next] && neighbors[i].size() > neighbors[next].size()))) next = i;
+        int best = 0;
+        float bestCost = FLT_MAX;
+        for (int col = 0; col < columnCount; ++col) {
+            float cost = heights[col]*0.12f;
+            for (const auto& neighbor : neighbors[next]) {
+                const int other = column[neighbor.node];
+                if (other < 0) {
+                    if (col+neighbor.offset < 0 || col+neighbor.offset >= columnCount) cost += 50;
+                    continue;
+                }
+                const int distance = other-col;
+                cost += 140*std::abs(distance-neighbor.offset);
+                if (neighbor.offset && distance*neighbor.offset <= 0) cost += 180;
+            }
+            if (cost < bestCost) { bestCost = cost; best = col; }
+        }
+        column[next] = best;
+        columns[best].push_back(next);
+        tops[next] = heights[best];
+        heights[best] += blocks_[next].size.y+blockGap;
+        for (const auto& neighbor : neighbors[next]) ++placedNeighbors[neighbor.node];
+    }
+
+    // Use connected pin heights to order and align each column, with a fixed
+    // height budget so alignment cannot make the whole drawing grow on each pass.
+    const float heightLimit = *std::max_element(heights.begin(),heights.end())+blockGap;
+    for (int pass = 0; pass < 4; ++pass) {
+        for (int i = 0; i < columnCount; ++i) {
+            const int col = pass%2 ? columnCount-1-i : i;
+            auto& nodes = columns[col];
+            for (const int node : nodes) {
+                std::vector<float> aligned;
+                for (const auto& neighbor : neighbors[node])
+                    if (column[neighbor.node] != col) aligned.push_back(tops[neighbor.node]-neighbor.pinDelta);
+                if (aligned.empty()) { desired[node] = tops[node]; continue; }
+                const auto middle = aligned.begin()+aligned.size()/2;
+                std::nth_element(aligned.begin(),middle,aligned.end());
+                desired[node] = *middle;
+            }
+            std::stable_sort(nodes.begin(),nodes.end(),[&](int a, int b) { return desired[a] < desired[b]; });
+            float top = 0, remaining = heights[col];
+            for (const int node : nodes) {
+                tops[node] = std::clamp(desired[node],top,std::max(top,heightLimit-remaining));
+                const float advance = blocks_[node].size.y+blockGap;
+                top = tops[node]+advance;
+                remaining -= advance;
+            }
+        }
+    }
+    float x = 0;
+    for (const auto& nodes : columns) {
+        if (nodes.empty()) continue;
+        float width = 0;
+        for (const int node : nodes) {
+            moveBlock(blocks_[node],{x,tops[node]});
+            width = std::max(width,blocks_[node].size.x);
+        }
+        x += width+columnGap;
+    }
+}
+
+void Emu51PeripheralEditor::updateRoutes(const std::vector<Connection>& wires)
+{
+    std::vector<float> geometry{static_cast<float>(blocks_.size())};
+    std::vector<Bounds> boxes;
+    for (const auto& block : blocks_) {
+        const auto hi = plus(block.position,block.size);
+        boxes.push_back({block.position,hi});
+    }
+    std::sort(boxes.begin(),boxes.end(),[](const auto& a, const auto& b) {
+        return std::array{a.lo.x,a.lo.y,a.hi.x,a.hi.y} < std::array{b.lo.x,b.lo.y,b.hi.x,b.hi.y};
+    });
+    for (const auto& box : boxes) geometry.insert(geometry.end(),{box.lo.x,box.lo.y,box.hi.x,box.hi.y});
+    for (const auto& wire : wires) {
+        for (const auto end : {routeEnd(*wire.from,wire.fromBit),routeEnd(*wire.to,wire.toBit)}) {
+            geometry.insert(geometry.end(),{end.edge.x,end.edge.y,end.left ? -1.0f : 1.0f});
+        }
+    }
+    if (geometry == routeGeometry_) return;
+    routeGeometry_ = std::move(geometry);
+    routes_.clear();
+    routes_.resize(wires.size());
+    roundedRoutes_.clear();
+    roundedRoutes_.resize(wires.size());
+    if (wires.empty()) return;
+    std::vector<TerminalPair> terminals;
+    std::vector<ImVec2> ports;
+    for (const auto& wire : wires) {
+        const auto a = routeEnd(*wire.from,wire.fromBit), b = routeEnd(*wire.to,wire.toBit);
+        const auto ends = routedTerminals(a.edge,a.left,b.edge,b.left,boxes);
+        terminals.push_back(ends);
+        if (!ends.first || !ends.second) continue;
+        ports.push_back(ends.first->lead);
+        ports.push_back(ends.second->lead);
+    }
+    if (ports.empty()) return;
+    WireRouter router(boxes,ports);
+    for (std::size_t i = 0; i < wires.size(); ++i) {
+        const auto& [a,b] = terminals[i];
+        if (!a || !b) continue;
+        routes_[i] = router.route(*a,*b);
+        roundedRoutes_[i] = roundCorners(routes_[i]);
+    }
 }
 const Emu51PeripheralEditor::Pin* Emu51PeripheralEditor::pin(const std::string& name) const
 {
@@ -117,12 +577,30 @@ void Emu51PeripheralEditor::fitView()
     ImVec2 lo = blocks_[0].position, hi = plus(lo, blocks_[0].size);
     const auto focus = std::find_if(blocks_.begin(),blocks_.end(),[&](const auto& b) { return b.id == fitBlock_; });
     if (focus != blocks_.end()) { lo = focus->position; hi = plus(lo,focus->size); }
-    else for (const auto& b : blocks_) {
-        lo.x = std::min(lo.x,b.position.x); lo.y = std::min(lo.y,b.position.y);
-        hi.x = std::max(hi.x,b.position.x+b.size.x); hi.y = std::max(hi.y,b.position.y+b.size.y);
+    else {
+        const auto include = [&](ImVec2 p) {
+            lo.x = std::min(lo.x,p.x); lo.y = std::min(lo.y,p.y);
+            hi.x = std::max(hi.x,p.x); hi.y = std::max(hi.y,p.y);
+        };
+        for (const auto& b : blocks_) { include(b.position); include(plus(b.position,b.size)); }
+        for (const auto& route : routes_) for (const auto p : route) include(p);
     }
-    zoom_ = std::clamp(std::min((canvasSize_.x-64)/(hi.x-lo.x), (canvasSize_.y-64)/(hi.y-lo.y)),0.25f,1.25f);
-    pan_ = { (canvasSize_.x-(hi.x-lo.x)*zoom_)/2-lo.x*zoom_, (canvasSize_.y-(hi.y-lo.y)*zoom_)/2-lo.y*zoom_ };
+    const auto margin = ImVec2(std::min(64.0f,canvasSize_.x*0.2f),std::min(64.0f,canvasSize_.y*0.2f));
+    zoom_ = std::min({(canvasSize_.x-margin.x)/(hi.x-lo.x),(canvasSize_.y-margin.y)/(hi.y-lo.y),1.25f});
+    constexpr float readableZoom = 0.5f;
+    if (readableFit_) {
+        zoom_ = readableZoom;
+        const auto cpu = std::find_if(blocks_.begin(),blocks_.end(),[](const auto& block) { return block.id == "cpu"; });
+        const auto reference = cpu != blocks_.end() ? cpu->position : lo;
+        const auto frameAxis = [&](float start, float end, float view, float padding, float near) {
+            const float first = padding/2-start*zoom_, last = view-padding/2-end*zoom_;
+            return last < first ? std::clamp(padding/2-near*zoom_,last,first) : (first+last)/2;
+        };
+        pan_ = {frameAxis(lo.x,hi.x,canvasSize_.x,margin.x,reference.x),
+            frameAxis(lo.y,hi.y,canvasSize_.y,margin.y,reference.y)};
+    } else {
+        pan_ = { (canvasSize_.x-(hi.x-lo.x)*zoom_)/2-lo.x*zoom_, (canvasSize_.y-(hi.y-lo.y)*zoom_)/2-lo.y*zoom_ };
+    }
     fit_ = false;
     fitBlock_.clear();
 }
@@ -205,7 +683,7 @@ void Emu51PeripheralEditor::draw(Emu51PeripheralConfig& config, Emu51Model model
         ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     canvas(config,message);
     ImGui::EndChild();
-    if (showInspector) {
+    if (showInspector && inspectorVisible_) {
         if (sideBySide) ImGui::SameLine();
         ImGui::BeginChild("circuit-inspector",ImVec2(0,sideBySide ? canvasHeight : std::max(80.0f,ImGui::GetContentRegionAvail().y)),ImGuiChildFlags_Borders);
         inspector(config);
@@ -219,6 +697,8 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     auto& io = ImGui::GetIO();
     origin_ = ImGui::GetCursorScreenPos(); canvasSize_ = ImGui::GetContentRegionAvail();
     canvasSize_.x = std::max(1.0f,canvasSize_.x); canvasSize_.y = std::max(1.0f,canvasSize_.y);
+    const auto wires = connections(config);
+    updateRoutes(wires);
     if (fit_) fitView();
     ImGui::InvisibleButton("##circuit",canvasSize_,ImGuiButtonFlags_MouseButtonLeft|ImGuiButtonFlags_MouseButtonMiddle|ImGuiButtonFlags_MouseButtonRight);
     const bool hovered = ImGui::IsItemHovered();
@@ -227,7 +707,8 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     }
     if (hovered && io.MouseWheel != 0) {
         const auto at = world(io.MousePos);
-        zoom_ = std::clamp(zoom_*std::pow(1.15f,io.MouseWheel),0.25f,2.0f);
+        const float minimum = std::min(0.25f,zoom_);
+        zoom_ = std::clamp(zoom_*std::pow(1.15f,io.MouseWheel),minimum,2.0f);
         pan_ = minus(minus(io.MousePos,origin_),scale(at,zoom_)); interacting_ = true;
     }
     if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle,0) || ImGui::IsMouseDragging(ImGuiMouseButton_Right,3))) {
@@ -236,22 +717,17 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { draggingBlock_.clear(); draggingPin_ = {}; }
     if (!draggingBlock_.empty() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        const auto p = minus(world(io.MousePos),blockDragOffset_);
-        for (auto& saved : positions_) if (saved.id == draggingBlock_) {
-            const auto clamped = ImVec2(std::clamp(p.x,-100000.0f,100000.0f),std::clamp(p.y,-100000.0f,100000.0f));
-            const auto old = std::find_if(blocks_.begin(),blocks_.end(),[&](const auto& b) { return b.id == draggingBlock_; });
-            if (old != blocks_.end()) {
-                const auto delta = minus(clamped,old->position); old->position = clamped;
-                for (auto& pin : old->pins) { pin.position = plus(pin.position,delta); for (auto& bit : pin.bits) bit = plus(bit,delta); }
-            }
-            saved.x = clamped.x; saved.y = clamped.y;
+        const auto block = std::find_if(blocks_.begin(),blocks_.end(),[&](const auto& b) { return b.id == draggingBlock_; });
+        if (block != blocks_.end()) {
+            moveBlock(*block,minus(world(io.MousePos),blockDragOffset_));
+            updateRoutes(wires);
         }
         interacting_ = true;
     }
     auto* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(origin_,plus(origin_,canvasSize_),true);
     dl->AddRectFilled(origin_,plus(origin_,canvasSize_),IM_COL32(21,26,35,255));
-    const float grid = 32*zoom_;
+    const float grid = std::max(8.0f,32*zoom_);
     for (float x = std::fmod(pan_.x,grid); x < canvasSize_.x; x+=grid)
         dl->AddLine(plus(origin_,{x,0}),plus(origin_,{x,canvasSize_.y}),IM_COL32(36,43,54,255));
     for (float y = std::fmod(pan_.y,grid); y < canvasSize_.y; y+=grid)
@@ -259,11 +735,19 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     Connector hoverPin; std::string hoverBlock; bool header = false;
     if (hovered) for (auto it = blocks_.rbegin(); it != blocks_.rend(); ++it) {
         const auto& b = *it;
+        float closestPin = FLT_MAX;
         for (const auto& p : b.pins) {
+            const auto hit = [&](ImVec2 center, ImVec2 half, int bit) {
+                const float distance = distanceSquared(io.MousePos,center);
+                if (distance < closestPin && contains(io.MousePos,minus(center,half),plus(center,half))) {
+                    hoverPin = {p.descriptor.name,bit};
+                    closestPin = distance;
+                }
+            };
             const float radius = std::max(6.0f,7*zoom_);
-            if (distanceSquared(io.MousePos,anchor(p)) <= radius*radius) hoverPin = {p.descriptor.name,-1};
+            hit(anchor(p),{radius,radius},-1);
             for (std::size_t bit = 0; bit < p.bits.size(); ++bit)
-                if (distanceSquared(io.MousePos,screen(p.bits[bit])) <= radius*radius) hoverPin = {p.descriptor.name,static_cast<int>(bit)};
+                hit(screen(p.bits[bit]),{std::max(6.0f,bitHalf.x*zoom_),std::max(6.0f,bitHalf.y*zoom_)},static_cast<int>(bit));
         }
         if (!hoverPin.name.empty() || contains(io.MousePos,screen(b.position),screen(plus(b.position,b.size)))) {
             hoverBlock = b.id; header = io.MousePos.y < screen(plus(b.position,{0,headerHeight})).y; break;
@@ -271,67 +755,94 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     }
     WireSelection hoverWire;
     float closest = 7;
-    const auto text = [&](ImVec2 p, const std::string& s, ImU32 c, float size = 13.0f) {
+    const auto text = [&](ImVec2 p, const std::string& s, ImU32 c, float size) {
         dl->AddText(ImGui::GetFont(),size*zoom_,screen(p),c,s.c_str());
     };
-    const auto link = [&](const Pin* a, int ab, const Pin* b, int bb, ImU32 c, const std::string& label, WireSelection selection) {
-        if (!a || !b) return;
-        const auto start = anchor(*a,ab), end = anchor(*b,bb);
-        // Bound backward loops so Fit all keeps return paths inside the canvas.
-        const float bend = std::clamp(std::abs(end.x-start.x)*0.45f,50.0f*zoom_,100.0f*zoom_);
-        const auto c1 = plus(start,{a->left ? -bend : bend,0}), c2 = plus(end,{b->left ? -bend : bend,0});
-        const bool selected = wire_.kind == selection.kind && wire_.index == selection.index;
-        dl->AddBezierCubic(start,c1,c2,end,selected ? IM_COL32(250,250,255,255) : c,selected ? 3.5f : 2.0f);
-        if (selection.kind != 1) {
-            const auto tip = bezier(start,c1,c2,end,0.73f), behind = bezier(start,c1,c2,end,0.70f);
-            const auto v = minus(tip,behind);
-            const float length = std::sqrt(v.x*v.x+v.y*v.y);
-            if (length > 0) {
-                const auto unit = scale(v,1/length), base = minus(tip,scale(unit,8*zoom_));
-                const ImVec2 side{-unit.y*4*zoom_,unit.x*4*zoom_};
-                dl->AddTriangleFilled(tip,plus(base,side),minus(base,side),c);
+    const auto stroke = [&](const std::vector<ImVec2>& route, ImU32 c, float thickness) {
+        if (route.size() < 2) return;
+        dl->PathClear();
+        for (const auto p : route) dl->PathLineTo(screen(p));
+        dl->PathStroke(c,0,thickness);
+    };
+    const auto drawBitTail = [&](const RouteEnd& end, ImU32 c, float thickness) {
+        if (samePoint(end.port,end.edge)) return;
+        dl->PathLineTo(screen({end.port.x,end.port.y+bitHalf.y}));
+        dl->PathLineTo(screen({end.port.x,end.edge.y}));
+        dl->PathLineTo(screen(end.edge));
+        dl->PathStroke(c,0,std::min(thickness,bitLaneGap*zoom_));
+    };
+    struct BitTail { RouteEnd end; ImU32 color; float thickness; };
+    std::map<const Pin*,std::vector<BitTail>> bitTails;
+    const auto wireColor = [](int kind) { return kind == 1 ? digitalColor : kind == 2 ? analogColor : busColor; };
+    for (std::size_t i = 0; i < wires.size(); ++i) {
+        const auto& route = routes_[i];
+        if (route.size() < 2) continue;
+        const auto& wire = wires[i];
+        const auto c = wireColor(wire.selection.kind);
+        const bool selected = wire_.kind == wire.selection.kind && wire_.index == wire.selection.index;
+        const auto lineColor = selected ? IM_COL32(250,250,255,255) : c;
+        const float thickness = selected ? 3.5f : std::clamp(4*zoom_,1.0f,2.0f);
+        const auto& rounded = roundedRoutes_[i];
+        stroke(rounded,lineColor,thickness);
+        for (const auto& [pin,bit] : {std::pair{wire.from,wire.fromBit},std::pair{wire.to,wire.toBit}}) {
+            const auto end = routeEnd(*pin,bit);
+            if (!samePoint(end.port,end.edge)) bitTails[pin].push_back({end,lineColor,thickness});
+        }
+        if (wire.selection.kind != 1) {
+            const auto tip = pointAlong(route,0.76f);
+            // Keep the arrow on a straight leg, even when the nominal tip is near a bend.
+            for (std::size_t j = 1; j < route.size(); ++j) {
+                if (manhattan(route[j-1],tip)+manhattan(tip,route[j]) > manhattan(route[j-1],route[j])+0.001f) continue;
+                const auto delta = minus(route[j],route[j-1]);
+                const float length = manhattan(route[j-1],route[j]);
+                const auto unit = scale(delta,1/length);
+                const float arrowSize = std::min(20.0f,length/3);
+                const float trim = std::min(cornerRadius,length/4);
+                const auto head = plus(route[j-1],scale(unit,std::clamp(manhattan(route[j-1],tip),trim+arrowSize,length-trim)));
+                const auto base = minus(head,scale(unit,arrowSize));
+                const ImVec2 side{-unit.y*arrowSize/2,unit.x*arrowSize/2};
+                dl->AddTriangleFilled(screen(head),screen(plus(base,side)),screen(minus(base,side)),lineColor);
+                break;
             }
         }
         if (hovered && hoverBlock.empty()) {
-            auto previous = start;
-            for (int i = 1; i <= 32; ++i) {
-                const auto current = bezier(start,c1,c2,end,static_cast<float>(i)/32);
-                const float dist = segmentDistance(io.MousePos,previous,current);
-                if (dist < closest) { closest = dist; hoverWire = selection; }
-                previous = current;
+            for (std::size_t j = 1; j < rounded.size(); ++j) {
+                const float dist = segmentDistance(io.MousePos,screen(rounded[j-1]),screen(rounded[j]));
+                if (dist < closest) { closest = dist; hoverWire = wire.selection; }
             }
         }
-        const float fontSize = 11*zoom_;
+    }
+    std::vector<Bounds> labelBounds;
+    for (std::size_t i = 0; i < wires.size(); ++i) {
+        if (routes_[i].size() < 2) continue;
+        const auto [kind,index] = wires[i].selection;
+        std::string label = "analog";
+        if (kind == 1) {
+            const int width = config.digital[index].width;
+            label = std::to_string(width) + (width == 1 ? " bit" : " bits");
+        } else if (kind == 3) {
+            const auto& device = config.devices[index];
+            char range[64];
+            std::snprintf(range,sizeof(range),"XDATA %04X-%04X",device.address,device.address+emu51PeripheralBusSize(device.kind)-1);
+            label = range;
+        }
+        const bool selected = wire_.kind == kind && wire_.index == index;
+        if (!selected && 18*zoom_ < 8) continue;
+        const float fontSize = selected ? std::max(10.0f,18*zoom_) : 18*zoom_;
         const auto extent = ImGui::GetFont()->CalcTextSizeA(fontSize,FLT_MAX,0,label.c_str());
-        for (const float t : {0.5f,0.3f,0.7f}) {
-            const auto mid = bezier(start,c1,c2,end,t);
-            const auto lo = minus(mid,{extent.x/2+4,extent.y/2+3}), hi = plus(lo,{extent.x+8,extent.y+6});
-            const bool overlaps = std::any_of(blocks_.begin(),blocks_.end(),[&](const auto& block) {
-                const auto a = screen(block.position), b = screen(plus(block.position,block.size));
-                return lo.x < b.x+4 && hi.x > a.x-4 && lo.y < b.y+4 && hi.y > a.y-4;
-            });
-            if (overlaps) continue;
-            dl->AddRectFilled(lo,hi,IM_COL32(21,26,35,235),3);
-            dl->AddText(ImGui::GetFont(),fontSize,plus(lo,{4,3}),c,label.c_str());
+        const ImVec2 half{extent.x/2+4,extent.y/2+3};
+        for (const float fraction : {0.5f,0.34f,0.66f,0.2f,0.8f}) {
+            const auto middle = screen(pointAlong(roundedRoutes_[i],fraction));
+            const Bounds bounds{minus(middle,half),plus(middle,half)};
+            if (std::any_of(blocks_.begin(),blocks_.end(),[&](const auto& block) {
+                const ImVec2 margin{4,4};
+                return intersects(bounds,{minus(screen(block.position),margin),plus(screen(plus(block.position,block.size)),margin)});
+            }) || std::any_of(labelBounds.begin(),labelBounds.end(),[&](const auto& b) { return intersects(bounds,b); })) continue;
+            labelBounds.push_back(bounds);
+            dl->AddRectFilled(bounds.lo,bounds.hi,IM_COL32(21,26,35,235),3);
+            dl->AddText(ImGui::GetFont(),fontSize,plus(bounds.lo,{4,3}),wireColor(kind),label.c_str());
             break;
         }
-    };
-    for (std::size_t i = 0; i < config.digital.size(); ++i) {
-        const auto& w = config.digital[i];
-        const auto* a = pin(w.a); const auto* b = pin(w.b);
-        const bool whole = a && b && w.aBit == 0 && w.bBit == 0 && w.width == static_cast<int>(a->descriptor.width) && w.width == static_cast<int>(b->descriptor.width);
-        link(a,whole ? -1 : w.aBit,b,whole ? -1 : w.bBit,digitalColor,
-            std::to_string(w.width) + (w.width == 1 ? " bit" : " bits"),{1,static_cast<int>(i)});
-    }
-    for (std::size_t i = 0; i < config.analog.size(); ++i) {
-        const auto& w = config.analog[i]; link(pin(w.from),-1,pin(w.to),-1,analogColor,"analog",{2,static_cast<int>(i)});
-    }
-    for (std::size_t i = 0; i < config.devices.size(); ++i) {
-        const auto& d = config.devices[i];
-        const int size = emu51PeripheralBusSize(d.kind);
-        if (!size || d.wiredBus) continue;
-        char label[64]; std::snprintf(label,sizeof(label),"XDATA %04X-%04X",d.address,d.address+size-1);
-        link(pin("cpu.xdata"),-1,pin(d.id+".bus"),-1,busColor,label,{3,static_cast<int>(i)});
     }
     for (const auto& b : blocks_) {
         const auto lo = screen(b.position), hi = screen(plus(b.position,b.size));
@@ -340,40 +851,59 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
         dl->AddRectFilled(lo,screen(plus(b.position,{b.size.x,headerHeight})),b.id == "cpu" ? IM_COL32(43,65,87,255) : IM_COL32(52,64,83,255),6*zoom_);
         dl->AddRect(lo,hi,b.id == selected_ ? IM_COL32(239,243,255,255) : IM_COL32(83,102,126,255),6*zoom_,0,b.id == selected_ ? 2 : 1);
         // Keep long IDs inside the block title instead of covering neighbours.
-        dl->PushClipRect(plus(lo,{8*zoom_,0}),minus(hi,{8*zoom_,0}),true);
-        text(plus(b.position,{13,9}),b.title,IM_COL32(242,245,250,255),17);
-        text(plus(b.position,{13,34}),b.subtitle,IM_COL32(179,194,213,255),12);
+        const float headerInset = headerPadding*zoom_;
+        dl->PushClipRect(plus(lo,{headerInset,0}),minus(hi,{headerInset,0}),true);
+        text(plus(b.position,{headerPadding,2}),b.title,IM_COL32(242,245,250,255),titleSize);
+        text(plus(b.position,{headerPadding,subtitleTop}),b.subtitle,IM_COL32(179,194,213,255),pinFontSize);
         dl->PopClipRect();
-        for (const auto& p : b.pins) {
-            const auto c = color(p.descriptor.kind);
-            auto shortName = p.descriptor.name.substr(p.descriptor.name.find('.')+1);
-            if (b.id == "cpu" && (shortName == "PSEN" || shortName == "RD" || shortName == "WR")) shortName = "/"+shortName;
-            const auto device = std::find_if(config.devices.begin(),config.devices.end(),[&](const auto& d) { return d.id == b.id; });
-            if (device != config.devices.end()) {
-                if (device->kind == Emu51PeripheralKind::AddressDecoder) {
-                    const auto output = std::find_if(device->decoderOutputs.begin(),device->decoderOutputs.end(),[&](const auto& o) { return o.id == shortName; });
-                    if (output != device->decoderOutputs.end()) shortName = output->name.empty() ? (output->activeLow ? "/" : "")+output->id : output->name;
-                } else if ((shortName == "CS" && device->csLow) || (shortName == "OE" && device->oeLow) || (shortName == "WE" && device->weLow)) shortName = "/"+shortName;
+        if (header && hoverBlock == b.id) {
+            const float available = b.size.x-2*headerPadding;
+            auto* font = ImGui::GetFont();
+            if (layoutTextWidth(font,titleSize,b.title) > available || layoutTextWidth(font,pinFontSize,b.subtitle) > available) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(b.title.c_str());
+                ImGui::TextUnformatted(b.subtitle.c_str());
+                ImGui::EndTooltip();
             }
-            const auto label = shortName + (p.descriptor.width > 1 && p.descriptor.kind == E51P_DIGITAL ? " ["+std::to_string(p.descriptor.width-1)+":0]" : "") + "  " + direction(p.descriptor);
-            const auto extent = ImGui::GetFont()->CalcTextSizeA(12*zoom_,FLT_MAX,0,label.c_str());
-            const auto at = plus(p.position,{p.left ? 14.0f : -14.0f-extent.x/zoom_,-7});
-            text(at,label,c,12);
-            if (p.descriptor.kind == E51P_ANALOG) dl->AddRectFilled(minus(anchor(p),{5*zoom_,5*zoom_}),plus(anchor(p),{5*zoom_,5*zoom_}),c,2);
-            else dl->AddCircleFilled(anchor(p),5*zoom_,c);
+        }
+        for (const auto& p : b.pins) {
+            if (const auto tails = bitTails.find(&p); tails != bitTails.end()) {
+                for (const auto& tail : tails->second) drawBitTail(tail.end,tail.color,tail.thickness);
+            }
+            const auto c = color(p.descriptor.kind);
+            const auto extent = ImGui::GetFont()->CalcTextSizeA(pinFontSize*zoom_,FLT_MAX,0,p.label.c_str());
+            const auto at = plus(p.position,{p.left ? pinPadding : -pinPadding-extent.x/zoom_,-pinFontSize/2});
+            dl->PushClipRect({p.left ? lo.x : hi.x-b.pinWidths[1]*zoom_,lo.y},
+                {p.left ? lo.x+b.pinWidths[0]*zoom_ : hi.x,hi.y},true);
+            text(at,p.label,c,pinFontSize);
+            dl->PopClipRect();
+            const auto center = anchor(p);
+            const auto connectorHalf = ImVec2(6*zoom_,6*zoom_);
+            if (p.descriptor.kind == E51P_ANALOG) dl->AddRectFilled(minus(center,connectorHalf),plus(center,connectorHalf),c,2);
+            else dl->AddCircleFilled(center,connectorHalf.x,c);
             for (std::size_t bit = 0; bit < p.bits.size(); ++bit) {
+                const auto number = std::to_string(bit);
+                const float size = bit < 10 ? 20 : 18;
+                const auto extent = ImGui::GetFont()->CalcTextSizeA(size*zoom_,FLT_MAX,0,number.c_str());
                 const auto center = screen(p.bits[bit]);
-                dl->AddRectFilled(minus(center,{6*zoom_,7*zoom_}),plus(center,{6*zoom_,7*zoom_}),IM_COL32(27,35,46,255),2);
-                dl->AddRect(minus(center,{6*zoom_,7*zoom_}),plus(center,{6*zoom_,7*zoom_}),c,2);
-                text(plus(p.bits[bit],{bit<10 ? -3.0f : -5.0f,-6}),std::to_string(bit),c,bit<10 ? 10 : 9);
+                const auto half = scale(bitHalf,zoom_);
+                dl->AddRectFilled(minus(center,half),plus(center,half),IM_COL32(27,35,46,255),2);
+                dl->AddRect(minus(center,half),plus(center,half),c,2);
+                dl->AddText(ImGui::GetFont(),size*zoom_,minus(center,scale(extent,0.5f)),c,number.c_str());
             }
         }
     }
     if (!hoverPin.name.empty()) {
         const auto* p = pin(hoverPin.name);
-        dl->AddCircle(anchor(*p,hoverPin.bit),9*zoom_,IM_COL32(255,255,255,255),0,2);
+        const auto center = anchor(*p,hoverPin.bit);
+        if (hoverPin.bit < 0) dl->AddCircle(center,9*zoom_,IM_COL32(255,255,255,255),0,2);
+        else {
+            const auto half = scale(bitHalf,zoom_);
+            dl->AddRect(minus(center,half),plus(center,half),IM_COL32(255,255,255,255),2,0,2);
+        }
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(hoverPin.name.c_str());
+        ImGui::TextUnformatted(p->label.c_str());
         ImGui::Text("%s | %s | %u bit%s",p->descriptor.kind == E51P_ANALOG ? "Analog" : p->descriptor.kind == E51P_DIGITAL ? "Digital" : "XDATA bus",direction(p->descriptor),p->descriptor.width,p->descriptor.width == 1 ? "" : "s");
         if (hoverPin.bit >= 0) ImGui::Text("Bit %d",hoverPin.bit);
         ImGui::EndTooltip(); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -390,10 +920,25 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
         } else { wire_ = hoverWire; selected_.clear(); }
     }
     if (!draggingPin_.name.empty()) {
-        if (const auto* p = pin(draggingPin_.name)) {
-            const auto start = anchor(*p,draggingPin_.bit);
-            const auto end = io.MousePos;
-            dl->AddBezierCubic(start,plus(start,{p->left ? -70.0f : 70.0f,0}),minus(end,{70,0}),end,color(p->descriptor.kind),2.5f);
+        if (const auto* p = hovered ? pin(draggingPin_.name) : nullptr) {
+            const auto a = routeEnd(*p,draggingPin_.bit);
+            const auto* target = pin(hoverPin.name);
+            const auto cursor = world(io.MousePos);
+            const RouteEnd b = target ? routeEnd(*target,hoverPin.bit) : RouteEnd{cursor,cursor,false};
+            std::vector<Bounds> boxes;
+            for (const auto& block : blocks_) boxes.push_back({block.position,plus(block.position,block.size)});
+            if (target != p && (target || hoverBlock.empty())) {
+                const auto [start,end] = target ? routedTerminals(a.edge,a.left,b.edge,b.left,boxes) :
+                    std::pair{terminal(a.edge,a.left,boxes),std::optional{Terminal{cursor,cursor,0}}};
+                const auto route = start && end ?
+                    WireRouter(boxes,{start->lead,end->lead}).route(*start,*end) : std::vector<ImVec2>{};
+                if (!route.empty()) {
+                    const auto c = color(p->descriptor.kind);
+                    stroke(roundCorners(route),c,2.5f);
+                    drawBitTail(a,c,2.5f);
+                    drawBitTail(b,c,2.5f);
+                }
+            }
         }
         interacting_ = true;
     }
@@ -423,9 +968,10 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
         const char* kinds[] = {"8255", "ADC0804", "Covox / DAC", "Voltage source", "Digital source", "Host audio",
             "LED", "Switch", "Pushbutton", "HD44780 LCD", "4x4 matrix keypad", "74HC595", "74HC165", "24C02 EEPROM", "AY-3-8910", "7-segment LED display", "14-segment LED display", "16-segment LED display", "LED bar graph",
             "CD4511 BCD decoder", "74LS47 BCD decoder", "MAX7219", "MAX7221", "HT16K33", "TM1637",
-            "RAM", "ROM", "Clock", "Address Decoder", "8-bit bus output latch", "8-bit bus input buffer", "Configurable key matrix"};
+            "RAM", "ROM", "Clock", "Address Decoder", "8-bit bus output latch", "8-bit bus input buffer", "Configurable key matrix",
+            "Bit Inverter"};
         const bool hasAudio = std::any_of(config.devices.begin(),config.devices.end(),[](const auto& d) { return d.kind == Emu51PeripheralKind::Audio; });
-        for (int kind = 0; kind <= static_cast<int>(Emu51PeripheralKind::KeyMatrix); ++kind) {
+        for (int kind = 0; kind <= static_cast<int>(Emu51PeripheralKind::Inverter); ++kind) {
             if (!ImGui::MenuItem(kinds[kind],nullptr,false,kind != static_cast<int>(Emu51PeripheralKind::Audio) || !hasAudio)) continue;
             int suffix = 1; std::string id;
             do { id = "device" + std::to_string(suffix++); } while (std::any_of(config.devices.begin(),config.devices.end(),[&](const auto& d) { return d.id == id; }));
@@ -445,14 +991,17 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
             if (device.kind==Emu51PeripheralKind::Ht16k33 || device.kind==Emu51PeripheralKind::Display14) device.displayStyle=14;
             if (device.kind==Emu51PeripheralKind::Display16) device.displayStyle=16;
             config.devices.push_back(device);
-            positions_.push_back({id,std::clamp(popupPosition_.x,-100000.0f,100000.0f),std::clamp(popupPosition_.y,-100000.0f,100000.0f)});
+            positions_.push_back({id,std::clamp(popupPosition_.x/layoutScale,-100000.0f,100000.0f),
+                std::clamp(popupPosition_.y/layoutScale,-100000.0f,100000.0f)});
             selected_ = id; wire_ = {};
         }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Fit")) {
-        if (ImGui::MenuItem("All blocks")) { fitBlock_.clear(); fit_ = true; }
-        if (ImGui::MenuItem("Selected block",nullptr,false,!selected_.empty())) { fitBlock_ = selected_; fit_ = true; }
+        if (ImGui::MenuItem("All blocks")) { fitBlock_.clear(); fit_ = true; readableFit_ = false; }
+        if (ImGui::MenuItem("Selected block",nullptr,false,!selected_.empty())) {
+            fitBlock_ = selected_; fit_ = true; readableFit_ = false;
+        }
         if (ImGui::MenuItem("Actual size (100%)")) {
             const auto center = scale(canvasSize_,0.5f), at = world(plus(origin_,center));
             zoom_ = 1; pan_ = minus(center,at); fit_ = false; fitBlock_.clear();
@@ -461,15 +1010,8 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem("Arrange blocks")) {
-        // Rearrangement preserves user labels and stable endpoint IDs.
-        for (std::size_t i = 0; i <= config.devices.size(); ++i) {
-            const std::string id = i ? config.devices[i-1].id : "cpu";
-            const auto position = std::find_if(positions_.begin(),positions_.end(),[&](const auto& p) { return p.id == id; });
-            if (position == positions_.end()) continue;
-            position->x = static_cast<double>(i%3)*400;
-            position->y = static_cast<double>(i/3)*420+(i%3)*28;
-        }
-        fitBlock_.clear(); fit_ = true;
+        arrange(config);
+        fitBlock_.clear(); fit_ = readableFit_ = true;
     }
     ImGui::Separator();
     ImGui::MenuItem("Inspector",nullptr,&inspectorVisible_);
@@ -488,7 +1030,20 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
 
 void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
 {
-    ImGui::TextUnformatted("Inspector"); ImGui::Separator();
+    const auto header = ImGui::GetCursorScreenPos();
+    const float closeSize = ImGui::GetFontSize();
+    const float right = std::min(header.x+ImGui::GetContentRegionAvail().x,
+        ImGui::GetCurrentWindowRead()->ClipRect.Max.x-ImGui::GetStyle().FramePadding.x);
+    ImGui::TextUnformatted("Inspector");
+    if (right >= header.x+closeSize) {
+        if (ImGui::CloseButton(ImGui::GetID("##close-inspector"),{right-closeSize,header.y})) {
+            inspectorVisible_ = false;
+            interacting_ = true;
+            return;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide Inspector");
+    }
+    ImGui::Separator();
     if (wire_.kind == 1 && wire_.index >= 0 && wire_.index < static_cast<int>(config.digital.size())) {
         auto& w = config.digital[wire_.index];
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(digitalColor),"Digital wire");
@@ -590,6 +1145,8 @@ void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
                     ImGui::InputDouble("Oscillator (Hz)",&d.clockHz,1000000,12000000,"%.0f");
                     ImGui::TextWrapped("Connect OUT to cpu.CLK. Apply resets and pauses the CPU, preserving unchanged external memory.");
                 }
+                if (d.kind == Emu51PeripheralKind::Inverter)
+                    ImGui::TextWrapped("OUT is the inverse of the single digital bit at IN.");
                 if (d.kind == Emu51PeripheralKind::AddressDecoder) {
                     ImGui::InputInt("Input bits (1..32)",&d.decoderBits,0);
                     ImGui::TextWrapped("IN bit 0 is the least significant bit. Each input value may activate exactly one output.");

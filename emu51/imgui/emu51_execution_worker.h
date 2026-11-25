@@ -43,11 +43,13 @@ public:
     bool started() const { return started_.load(std::memory_order_acquire); }
     bool onWorkerThread() const { return started() && std::this_thread::get_id() == thread_.get_id(); }
 private:
+    void lockForUi();
     std::recursive_mutex mutex_;
     std::condition_variable_any condition_;
     std::thread thread_;
     const std::thread::id uiThread_ = std::this_thread::get_id();
     unsigned uiDepth_ = 0; // UI thread only, including reentrant native dialogs
     bool wake_ = false;  // mutex_
+    std::atomic<bool> uiWaiting_{false};
     std::atomic<bool> stop_{false}, started_{false};
 };

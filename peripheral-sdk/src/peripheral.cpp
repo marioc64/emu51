@@ -3,12 +3,17 @@
 #include "emu51/peripheral.h"
 #include "emu51/snapshot.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <new>
 #include <string>
 #include <utility>
 #include <vector>
+
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 namespace {
 struct Device { std::string id; e51p_device_desc desc; };
@@ -39,6 +44,15 @@ struct Mapping {
 uint32_t mask(uint32_t width) {
     return width == 32 ? UINT32_MAX : (UINT32_C(1) << width) - 1;
 }
+uint32_t first_set_bit(uint32_t bits) {
+#if defined(_MSC_VER)
+    unsigned long index;
+    _BitScanForward(&index, bits);
+    return static_cast<uint32_t>(index);
+#else
+    return static_cast<uint32_t>(__builtin_ctz(bits));
+#endif
+}
 bool equal(e51p_digital_state a, e51p_digital_state b) {
     return a.value == b.value && a.floating == b.floating && a.contention == b.contention;
 }
@@ -46,6 +60,7 @@ bool equal(e51p_digital_state a, e51p_digital_state b) {
 
 struct e51p_context {
     uint64_t tick_hz = 0, time = 0;
+    uint64_t settled_revision = 0;
     bool started = false, busy = false, dirty = false, fault = false, peek = false;
     std::vector<Device> devices;
     std::vector<Endpoint> endpoints;
@@ -61,6 +76,9 @@ struct e51p_snapshot {
     std::vector<uint32_t> roots;
     std::vector<Net> nets;
     std::vector<Drive> drives;
+    std::vector<Net> live_nets;
+    std::vector<Drive> live_drives;
+    uint64_t live_revision = 0;
 };
 
 namespace {
@@ -100,6 +118,7 @@ e51p_status settle(e51p_context& c) {
     for (unsigned round = 0; c.dirty; ++round) {
         if (round == 1024) { c.fault = true; return E51P_OSCILLATION; }
         c.dirty = false;
+        ++c.settled_revision;
         for (auto& p : c.pins) {
             p.high = p.low = p.up = p.down = false;
             p.high_count = p.low_count = 0;
@@ -408,6 +427,8 @@ e51p_status e51p_snapshot_create(const e51p_context* c, e51p_snapshot** result) 
             s->roots.resize(c->pins.size());
             s->nets.resize(c->pins.size());
             s->drives.resize(c->endpoints.size());
+            s->live_nets.resize(c->pins.size());
+            s->live_drives.resize(c->endpoints.size());
             for (uint32_t i = 0; i < c->pins.size(); ++i) {
                 auto r = i;
                 while (c->pins[r].parent != r) r = c->pins[r].parent;
@@ -425,14 +446,21 @@ void e51p_snapshot_destroy(e51p_snapshot* s) { delete s; }
 e51p_status e51p_snapshot_begin(e51p_snapshot* s) {
     if (!s || !live(s->context) || s->context->busy) return E51P_INVALID_STATE;
     const auto& c = *s->context;
-    for (size_t i = 0; i < c.pins.size(); ++i) {
-        const auto& p = c.pins[i];
-        s->nets[i] = {p.high_count, p.low_count, 0, p.up, p.down};
+    // Most bus transactions run between changes to the live circuit.
+    // Restore the working snapshot from contiguous copies in that case.
+    if (s->live_revision != c.settled_revision) {
+        for (size_t i = 0; i < c.pins.size(); ++i) {
+            const auto& p = c.pins[i];
+            s->live_nets[i] = {p.high_count, p.low_count, 0, p.up, p.down};
+        }
+        for (size_t i = 0; i < c.endpoints.size(); ++i) {
+            const auto& e = c.endpoints[i];
+            s->live_drives[i] = {e.value, e.enable, e.open_drain, 0};
+        }
+        s->live_revision = c.settled_revision;
     }
-    for (size_t i = 0; i < c.endpoints.size(); ++i) {
-        const auto& e = c.endpoints[i];
-        s->drives[i] = {e.value, e.enable, e.open_drain, 0};
-    }
+    std::copy(s->live_nets.begin(), s->live_nets.end(), s->nets.begin());
+    std::copy(s->live_drives.begin(), s->live_drives.end(), s->drives.begin());
     return E51P_OK;
 }
 e51p_status e51p_snapshot_drive(e51p_snapshot* s, e51p_endpoint id,
@@ -442,8 +470,12 @@ e51p_status e51p_snapshot_drive(e51p_snapshot* s, e51p_endpoint id,
     if (!(e.desc.direction & E51P_OUTPUT) || ((value | enable | drain | undefined) & ~mask(e.desc.width)))
         return E51P_INVALID_ARGUMENT;
     auto& previous = s->drives[id];
-    for (uint32_t bit = 0; bit < e.desc.width; ++bit) {
+    uint32_t changed = (previous.value ^ value) | (previous.enable ^ enable) |
+        (previous.drain ^ drain) | (previous.undefined ^ undefined);
+    while (changed) {
+        const auto bit = first_set_bit(changed);
         const auto flag = UINT32_C(1) << bit;
+        changed &= changed - 1;
         auto& net = s->nets[s->roots[e.first_pin + bit]];
         const auto adjust = [&](uint32_t v, uint32_t en, uint32_t od, uint32_t un, bool add) {
             if (un & flag) { if (add) ++net.undefined; else --net.undefined; }

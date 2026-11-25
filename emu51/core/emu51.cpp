@@ -301,10 +301,12 @@ void emu51::sample_external_interrupts(std::uint8_t pins)
 	}
 }
 
-int emu51::process()
+int emu51::process(std::uint8_t* executedOpcode)
 {
 	sync_port_latches(); // Include legacy host edits through raw SFR references.
 	const std::uint8_t code = readProg(PC);
+	if (executedOpcode)
+		*executedOpcode = code;
 	const std::uint8_t cycles = asm51[code].cycles;
 	exec_opcode_switch(code);
 	return finalize_instruction(cycles);

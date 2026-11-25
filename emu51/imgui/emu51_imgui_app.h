@@ -433,6 +433,18 @@ private:
 	std::vector<Emu51ProjectProgram> projectPrograms_;
 	std::function<std::filesystem::path(bool save)> projectPathPicker_;
 	std::filesystem::path chooseProjectPath(bool save);
+#ifdef __linux__
+	struct ProjectBrowser {
+		struct Entry { std::filesystem::path name; bool directory; };
+		bool open = false;
+		std::filesystem::path directory;
+		std::vector<Entry> entries;
+		std::array<char, 4096> path{};
+		std::string error;
+	} projectBrowser_;
+	void browseProjectDirectory(const std::filesystem::path& path);
+	void drawOpenProjectBrowser();
+#endif
 	bool saveProjectToPath(const std::filesystem::path& path);
 	bool openProjectFromPath(const std::filesystem::path& path);
 	bool confirmAssemblyEditorChanges();

@@ -22,8 +22,7 @@
     },
     {
       "id": "select",
-      "kind": 28,
-      "decoder_bits": 1
+      "kind": 32
     },
     {
       "id": "clock",
@@ -40,14 +39,14 @@
       "width": 1
     },
     {
-      "a": "select.CS_ROM",
+      "a": "cpu.ADDR",
       "b": "program_rom.CS",
-      "a_bit": 0,
+      "a_bit": 15,
       "b_bit": 0,
       "width": 1
     },
     {
-      "a": "select.CS_RAM",
+      "a": "select.OUT",
       "b": "work_ram.CS",
       "a_bit": 0,
       "b_bit": 0,
@@ -214,31 +213,5 @@
       "overlay": false
     }
   ],
-  "active_unit": "boot",
-  "decoder_outputs": [
-    {
-      "device": "select",
-      "id": "CS_ROM",
-      "name": "/CS_ROM",
-      "active_low": true
-    },
-    {
-      "device": "select",
-      "id": "CS_RAM",
-      "name": "/CS_RAM",
-      "active_low": true
-    }
-  ],
-  "decoder_values": [
-    {
-      "device": "select",
-      "output": "CS_ROM",
-      "value": 0
-    },
-    {
-      "device": "select",
-      "output": "CS_RAM",
-      "value": 1
-    }
-  ]
+  "active_unit": "boot"
 }
