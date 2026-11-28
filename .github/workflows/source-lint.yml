@@ -28,3 +28,19 @@ jobs:
         run: |
           clang-tidy --verify-config --config-file=.clang-tidy
           run-clang-tidy -p build-lint -config-file=.clang-tidy -j 2 -quiet "^$GITHUB_WORKSPACE/(emu51|peripheral-sdk)/"
+
+  msvc-warnings:
+    name: MSVC peripheral warnings
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure a strict MSVC build
+        env:
+          CC: cl
+          CXX: cl
+        run: cmake -S . -B build-lint-msvc -DEMU51_WERROR=ON
+
+      - name: Check peripheral code for MSVC warnings
+        # MSVC diagnoses some enum conversions and comparisons that Clang accepts.
+        run: cmake --build build-lint-msvc --config Release --parallel --target emu51_peripheral_host_lib emu51_peripheral_component_tests

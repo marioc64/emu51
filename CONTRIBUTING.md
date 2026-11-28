@@ -110,6 +110,14 @@ MSVC diagnostics such as `C4244` from `std::fill_n` assigning an `int` template
 argument to a byte. Use a byte-typed fill value such as `uint8_t{0xFF}` when the
 destination stores bytes.
 
+The [source lint workflow](.github/workflows/source-lint.yml) also builds the
+peripheral host library and SDK component tests with MSVC in Release mode and
+warnings treated as errors. That job checks for MSVC diagnostics such as
+`C4389` when comparing an SDK enum conditional with a `uint32_t` and `C4838`
+when using one to initialize an unsigned field. Use an explicitly typed
+`uint32_t` value at those boundaries. The full compiler matrix still checks
+all targets.
+
 ## Source layout and targets
 
 | Location | Responsibility |

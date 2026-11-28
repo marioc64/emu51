@@ -19,7 +19,8 @@ struct Graph {
     ~Graph() { api->destroy(c); }
     e51p_endpoint pin(unsigned width=1, bool bus=false) {
         const auto name="p"+std::to_string(counter++);
-        e51p_endpoint_desc d{sizeof(d),name.c_str(),bus ? E51P_BUS_INITIATOR : E51P_DIGITAL,
+        const auto kind = static_cast<uint32_t>(bus ? E51P_BUS_INITIATOR : E51P_DIGITAL);
+        e51p_endpoint_desc d{sizeof(d),name.c_str(),kind,
             bus ? 0u : uint32_t(E51P_INPUT|E51P_OUTPUT),width,bus ? 16u : 0u,0,0};
         e51p_endpoint p; ok(api->add_endpoint(c,host,&d,&p)); return p;
     }

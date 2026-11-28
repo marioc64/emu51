@@ -211,12 +211,13 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, c
     for (const auto& d : c.devices) {
         const auto pin = [&](const char* name, e51p_endpoint ep) { endpoints_.emplace_back(d.id + "." + name, ep); };
         if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) {
+            const auto memoryKind = static_cast<std::uint32_t>(d.kind == Emu51PeripheralKind::Rom ? E51P_ROM : E51P_RAM);
             std::shared_ptr<e51p_memory> storage;
             if (previous) for (const auto& old : previous->memories_)
                 if (old.id == d.id && e51p_memory_capacity(old.storage.get()) == d.memoryCapacity &&
-                    e51p_memory_kind(old.storage.get()) == (d.kind == Emu51PeripheralKind::Rom ? E51P_ROM : E51P_RAM)) storage = old.storage;
+                    e51p_memory_kind(old.storage.get()) == memoryKind) storage = old.storage;
             if (!storage) {
-                const e51p_memory_config settings{sizeof(settings),d.kind == Emu51PeripheralKind::Rom ? E51P_ROM : E51P_RAM,
+                const e51p_memory_config settings{sizeof(settings),memoryKind,
                     d.memoryCapacity,static_cast<std::uint8_t>(d.memoryFill)};
                 e51p_memory* raw = nullptr;
                 require(e51p_memory_create(&settings,&raw),"Create memory " + d.id);
@@ -368,7 +369,8 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, c
             e51p_device device;
             require(api_->add_device(context_, &desc, &device), "Add source");
             auto* state = source.release(); // context owns it from here
-            e51p_endpoint_desc p{sizeof(p), "out", state->analog ? E51P_ANALOG : E51P_DIGITAL,
+            const auto endpointKind = static_cast<std::uint32_t>(state->analog ? E51P_ANALOG : E51P_DIGITAL);
+            e51p_endpoint_desc p{sizeof(p), "out", endpointKind,
                 E51P_OUTPUT, state->analog ? 1u : state->width, 0, 0, 0};
             require(api_->add_endpoint(context_, device, &p, &state->pin), "Add source pin");
             pin(d.kind == Emu51PeripheralKind::Clock ? "OUT" : "out", state->pin);
