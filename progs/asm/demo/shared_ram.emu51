@@ -208,5 +208,37 @@
       "output": "READ",
       "value": 2
     }
+  ],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 77.096,
+      "y": 8.0,
+      "name": ""
+    },
+    {
+      "id": "shared_ram",
+      "x": 234.98,
+      "y": 50.0,
+      "name": ""
+    },
+    {
+      "id": "select",
+      "x": 234.98,
+      "y": 175.25,
+      "name": ""
+    },
+    {
+      "id": "read_enable",
+      "x": 234.98,
+      "y": 133.25,
+      "name": ""
+    },
+    {
+      "id": "clock",
+      "x": 0.0,
+      "y": 0.0,
+      "name": ""
+    }
   ]
 }

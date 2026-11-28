@@ -213,5 +213,37 @@
       "overlay": false
     }
   ],
-  "active_unit": "boot"
+  "active_unit": "boot",
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 77.096,
+      "y": 0.0,
+      "name": ""
+    },
+    {
+      "id": "program_rom",
+      "x": 234.98,
+      "y": 46.0,
+      "name": ""
+    },
+    {
+      "id": "work_ram",
+      "x": 234.98,
+      "y": 148.5,
+      "name": ""
+    },
+    {
+      "id": "select",
+      "x": 234.98,
+      "y": 223.75,
+      "name": ""
+    },
+    {
+      "id": "clock",
+      "x": 0.0,
+      "y": 4.0,
+      "name": ""
+    }
+  ]
 }

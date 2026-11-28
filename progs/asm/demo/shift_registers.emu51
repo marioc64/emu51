@@ -227,81 +227,162 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 18.75,
       "name": "Intel 8051"
     },
     {
       "id": "shift_out",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 40.0,
       "name": "shift out"
     },
     {
       "id": "chained_out",
-      "x": 850,
-      "y": 0,
+      "x": 315.38,
+      "y": 0.0,
       "name": "chained out"
     },
     {
       "id": "shift_in",
-      "x": 1280,
-      "y": 0,
+      "x": 157.88,
+      "y": 408.25,
       "name": "shift in"
     },
     {
       "id": "led",
-      "x": 420,
-      "y": 400,
+      "x": 315.38,
+      "y": 58.75,
       "name": "led"
     },
     {
       "id": "switch_0",
-      "x": 850,
-      "y": 400,
+      "x": 0.0,
+      "y": 223.25,
       "name": "switch 0"
     },
     {
       "id": "switch_1",
-      "x": 1280,
-      "y": 400,
+      "x": 0.0,
+      "y": 257.0,
       "name": "switch 1"
     },
     {
       "id": "switch_2",
-      "x": 420,
-      "y": 800,
+      "x": 0.0,
+      "y": 290.75,
       "name": "switch 2"
     },
     {
       "id": "switch_3",
-      "x": 850,
-      "y": 800,
+      "x": 0.0,
+      "y": 330.5,
       "name": "switch 3"
     },
     {
       "id": "switch_4",
-      "x": 1280,
-      "y": 800,
+      "x": 0.0,
+      "y": 364.25,
       "name": "switch 4"
     },
     {
       "id": "switch_5",
-      "x": 420,
-      "y": 1200,
+      "x": 0.0,
+      "y": 396.0,
       "name": "switch 5"
     },
     {
       "id": "switch_6",
-      "x": 850,
-      "y": 1200,
+      "x": 0.0,
+      "y": 500.75,
       "name": "switch 6"
     },
     {
       "id": "switch_7",
-      "x": 1280,
-      "y": 1200,
+      "x": 0.0,
+      "y": 435.5,
       "name": "switch 7"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "switch_0",
+      "x": 12,
+      "y": 46,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_1",
+      "x": 144,
+      "y": 46,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_2",
+      "x": 276,
+      "y": 46,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_3",
+      "x": 408,
+      "y": 46,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_4",
+      "x": 12,
+      "y": 122,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_5",
+      "x": 144,
+      "y": 122,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_6",
+      "x": 276,
+      "y": 122,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch_7",
+      "x": 408,
+      "y": 122,
+      "width": 120,
+      "height": 64,
+      "momentary_keys": false
+    },
+    {
+      "id": "led",
+      "x": 12,
+      "y": 198,
+      "width": 120,
+      "height": 72,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Toggle the switches. The LED mirrors bit 0 of their byte.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

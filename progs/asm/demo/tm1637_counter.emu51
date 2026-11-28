@@ -65,15 +65,32 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 0.0,
       "name": "Intel 8051"
     },
     {
       "id": "tm1637",
-      "x": 420,
-      "y": 0,
+      "x": 158.0,
+      "y": 0.0,
       "name": "tm1637"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "tm1637",
+      "x": 12,
+      "y": 46,
+      "width": 308,
+      "height": 188,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Expand Keys to send a key code. IRAM 21h holds the result.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

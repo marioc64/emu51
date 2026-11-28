@@ -242,5 +242,66 @@
       "output": "CS_PPI",
       "value": 3
     }
+  ],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 77.096,
+      "y": 0.0,
+      "name": ""
+    },
+    {
+      "id": "boot_rom",
+      "x": 234.98,
+      "y": 151.25,
+      "name": ""
+    },
+    {
+      "id": "work_ram",
+      "x": 234.98,
+      "y": 76.0,
+      "name": ""
+    },
+    {
+      "id": "ppi",
+      "x": 234.98,
+      "y": 225.5,
+      "name": ""
+    },
+    {
+      "id": "led",
+      "x": 234.98,
+      "y": 325.25,
+      "name": ""
+    },
+    {
+      "id": "select",
+      "x": 77.096,
+      "y": 164.75,
+      "name": ""
+    },
+    {
+      "id": "clock",
+      "x": 0.0,
+      "y": 5.0,
+      "name": ""
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "led",
+      "x": 12,
+      "y": 46,
+      "width": 164,
+      "height": 72,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "The 8255 drives this LED through the decoded bus.",
+      "x": 12,
+      "y": 12
+    }
   ]
 }

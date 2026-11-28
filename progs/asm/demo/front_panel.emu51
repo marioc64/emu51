@@ -133,45 +133,94 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 0.0,
       "name": "Intel 8051"
     },
     {
       "id": "lcd",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 119.75,
       "name": "lcd"
     },
     {
       "id": "keypad",
-      "x": 850,
-      "y": 0,
+      "x": 157.88,
+      "y": 50.0,
       "name": "keypad"
     },
     {
       "id": "button",
-      "x": 1280,
-      "y": 0,
+      "x": 0.0,
+      "y": 201.5,
       "name": "button"
     },
     {
       "id": "switch",
-      "x": 420,
-      "y": 400,
+      "x": 0.0,
+      "y": 311.25,
       "name": "switch"
     },
     {
       "id": "led",
-      "x": 850,
-      "y": 400,
+      "x": 157.88,
+      "y": 90.0,
       "name": "led"
     },
     {
       "id": "ground",
-      "x": 1280,
-      "y": 400,
+      "x": 0.0,
+      "y": 158.5,
       "name": "ground"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "lcd",
+      "x": 12,
+      "y": 46,
+      "width": 416,
+      "height": 96,
+      "momentary_keys": false
+    },
+    {
+      "id": "keypad",
+      "x": 12,
+      "y": 154,
+      "width": 228,
+      "height": 236,
+      "momentary_keys": false
+    },
+    {
+      "id": "button",
+      "x": 252,
+      "y": 154,
+      "width": 176,
+      "height": 72,
+      "momentary_keys": false
+    },
+    {
+      "id": "switch",
+      "x": 252,
+      "y": 238,
+      "width": 176,
+      "height": 70,
+      "momentary_keys": false
+    },
+    {
+      "id": "led",
+      "x": 252,
+      "y": 320,
+      "width": 176,
+      "height": 70,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Press a hex key and watch the LCD.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

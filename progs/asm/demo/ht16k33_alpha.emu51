@@ -93,21 +93,46 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 0.0,
       "name": "Intel 8051"
     },
     {
       "id": "ht16k33",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 31.0,
       "name": "ht16k33"
     },
     {
       "id": "alpha",
-      "x": 850,
-      "y": 0,
+      "x": 323.38,
+      "y": 37.0,
       "name": "alpha"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "alpha",
+      "x": 12,
+      "y": 46,
+      "width": 448,
+      "height": 124,
+      "momentary_keys": false
+    },
+    {
+      "id": "ht16k33",
+      "x": 12,
+      "y": 182,
+      "width": 448,
+      "height": 230,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Expand Keys to send a key code. IRAM 20h–25h holds the scan.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

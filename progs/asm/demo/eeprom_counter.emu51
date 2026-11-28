@@ -82,21 +82,38 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 0.0,
       "name": "Intel 8051"
     },
     {
       "id": "eeprom",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 17.25,
       "name": "eeprom"
     },
     {
       "id": "led",
-      "x": 850,
-      "y": 0,
+      "x": 157.88,
+      "y": 65.0,
       "name": "led"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "led",
+      "x": 12,
+      "y": 46,
+      "width": 164,
+      "height": 72,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Reset increments the counter. The LED shows bit 0.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

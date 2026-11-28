@@ -59,21 +59,38 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 0.0,
       "name": "Intel 8051"
     },
     {
       "id": "ay",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 69.0,
       "name": "ay"
     },
     {
       "id": "audio",
-      "x": 850,
-      "y": 0,
+      "x": 315.38,
+      "y": 120.75,
       "name": "audio"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "audio",
+      "x": 12,
+      "y": 46,
+      "width": 448,
+      "height": 304,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Open playback in Live, then Run.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

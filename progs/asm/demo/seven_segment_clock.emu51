@@ -72,15 +72,32 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 0.0,
       "name": "Intel 8051"
     },
     {
       "id": "clock",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 20.75,
       "name": "clock"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "clock",
+      "x": 12,
+      "y": 46,
+      "width": 304,
+      "height": 132,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "The firmware scans the digits and counts minutes and seconds.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

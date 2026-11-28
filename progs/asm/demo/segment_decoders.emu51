@@ -173,45 +173,70 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 73.5,
       "name": "Intel 8051"
     },
     {
       "id": "cd4511",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 121.0,
       "name": "cd4511"
     },
     {
       "id": "ls47",
-      "x": 850,
-      "y": 0,
+      "x": 157.88,
+      "y": 56.0,
       "name": "ls47"
     },
     {
       "id": "cathode",
-      "x": 1280,
-      "y": 0,
+      "x": 323.38,
+      "y": 169.5,
       "name": "cathode"
     },
     {
       "id": "anode",
-      "x": 420,
-      "y": 500,
+      "x": 323.38,
+      "y": 0.0,
       "name": "anode"
     },
     {
       "id": "ground",
-      "x": 850,
-      "y": 500,
+      "x": 157.88,
+      "y": 186.0,
       "name": "ground"
     },
     {
       "id": "high",
-      "x": 1280,
-      "y": 500,
+      "x": 157.88,
+      "y": 0.0,
       "name": "high"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "cathode",
+      "x": 12,
+      "y": 46,
+      "width": 208,
+      "height": 132,
+      "momentary_keys": false
+    },
+    {
+      "id": "anode",
+      "x": 232,
+      "y": 46,
+      "width": 208,
+      "height": 132,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Compare common-cathode and common-anode displays.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

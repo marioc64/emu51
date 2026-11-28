@@ -687,99 +687,106 @@
     {
       "id": "display",
       "x": 12,
-      "y": 12,
-      "width": 600,
-      "height": 150,
+      "y": 46,
+      "width": 552,
+      "height": 132,
       "momentary_keys": false
     },
     {
       "id": "keypad",
       "x": 12,
-      "y": 172,
-      "width": 600,
-      "height": 330,
+      "y": 190,
+      "width": 552,
+      "height": 320,
       "momentary_keys": false
     }
   ],
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 105.0,
+      "y": 63.0,
       "name": "AVT-2250 / 8051"
     },
     {
       "id": "monitor_rom",
-      "x": 340,
-      "y": 0,
+      "x": 445.0,
+      "y": 0.0,
       "name": "27C64 monitor ROM"
     },
     {
       "id": "program_ram",
-      "x": 680,
-      "y": 0,
+      "x": 445.0,
+      "y": 90.0,
       "name": "62256 shared program/data RAM"
     },
     {
       "id": "clock",
-      "x": 1020,
-      "y": 0,
+      "x": 0.0,
+      "y": 62.0,
       "name": "11.0592 MHz"
     },
     {
       "id": "address_decode",
-      "x": 0,
-      "y": 280,
+      "x": 284.0,
+      "y": 71.0,
       "name": "address_decode"
     },
     {
       "id": "latch_decode",
-      "x": 340,
-      "y": 280,
+      "x": 284.0,
+      "y": 187.0,
       "name": "latch_decode"
     },
     {
       "id": "ram_read",
-      "x": 680,
-      "y": 280,
+      "x": 284.0,
+      "y": 230.0,
       "name": "ram_read"
     },
     {
       "id": "segments",
-      "x": 1020,
-      "y": 280,
+      "x": 445.0,
+      "y": 185.0,
       "name": "Segment latch / scan watchdog"
     },
     {
       "id": "scan",
-      "x": 0,
-      "y": 560,
+      "x": 445.0,
+      "y": 283.0,
       "name": "Digit scan latch"
     },
     {
       "id": "keyboard_input",
-      "x": 340,
-      "y": 560,
+      "x": 445.0,
+      "y": 385.0,
       "name": "Keyboard input buffer"
     },
     {
       "id": "keypad",
-      "x": 680,
-      "y": 560,
+      "x": 797.0,
+      "y": 350.0,
       "name": "AVT-2250 keypad"
     },
     {
       "id": "digit_decode",
-      "x": 340,
-      "y": 840,
+      "x": 622.0,
+      "y": 354.0,
       "name": "digit_decode"
     },
     {
       "id": "display",
-      "x": 680,
-      "y": 840,
+      "x": 797.0,
+      "y": 276.0,
       "name": "AVT-2250 display"
     }
   ],
-  "load_mappings": []
+  "load_mappings": [],
+  "peripheral_live_labels": [
+    {
+      "text": "M opens the monitor. OK confirms an entry.",
+      "x": 12,
+      "y": 12
+    }
+  ]
 }

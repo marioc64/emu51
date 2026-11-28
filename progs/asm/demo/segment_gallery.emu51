@@ -151,39 +151,80 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 107.25,
       "name": "Intel 8051"
     },
     {
       "id": "seven",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 242.0,
       "name": "seven"
     },
     {
       "id": "fourteen",
-      "x": 850,
-      "y": 0,
+      "x": 157.88,
+      "y": 0.0,
       "name": "fourteen"
     },
     {
       "id": "sixteen",
-      "x": 1280,
-      "y": 0,
+      "x": 157.88,
+      "y": 142.0,
       "name": "sixteen"
     },
     {
       "id": "bar",
-      "x": 420,
-      "y": 500,
+      "x": 157.88,
+      "y": 89.75,
       "name": "bar"
     },
     {
       "id": "ground",
-      "x": 850,
-      "y": 500,
+      "x": 0.0,
+      "y": 267.75,
       "name": "ground"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "seven",
+      "x": 12,
+      "y": 46,
+      "width": 210,
+      "height": 124,
+      "momentary_keys": false
+    },
+    {
+      "id": "fourteen",
+      "x": 234,
+      "y": 46,
+      "width": 210,
+      "height": 124,
+      "momentary_keys": false
+    },
+    {
+      "id": "sixteen",
+      "x": 12,
+      "y": 182,
+      "width": 210,
+      "height": 124,
+      "momentary_keys": false
+    },
+    {
+      "id": "bar",
+      "x": 234,
+      "y": 182,
+      "width": 210,
+      "height": 124,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "A walking bit lights each segment in turn.",
+      "x": 12,
+      "y": 12
     }
   ]
 }

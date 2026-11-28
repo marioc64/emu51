@@ -117,27 +117,60 @@
   "peripheral_layout": [
     {
       "id": "cpu",
-      "x": 0,
-      "y": 0,
+      "x": 0.0,
+      "y": 10.75,
       "name": "Intel 8051"
     },
     {
       "id": "max7219",
-      "x": 420,
-      "y": 0,
+      "x": 157.88,
+      "y": 33.0,
       "name": "max7219"
     },
     {
       "id": "max7221",
-      "x": 850,
-      "y": 0,
+      "x": 323.38,
+      "y": 0.0,
       "name": "max7221"
     },
     {
       "id": "wired_digits",
-      "x": 1280,
-      "y": 0,
+      "x": 323.38,
+      "y": 64.25,
       "name": "wired digits"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "max7219",
+      "x": 12,
+      "y": 46,
+      "width": 240,
+      "height": 116,
+      "momentary_keys": false
+    },
+    {
+      "id": "max7221",
+      "x": 264,
+      "y": 46,
+      "width": 240,
+      "height": 116,
+      "momentary_keys": false
+    },
+    {
+      "id": "wired_digits",
+      "x": 12,
+      "y": 174,
+      "width": 492,
+      "height": 132,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Two daisy-chained drivers count at separate intensities.",
+      "x": 12,
+      "y": 12
     }
   ]
 }
