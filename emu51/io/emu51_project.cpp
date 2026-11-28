@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_project.h"
+#include "emu51_ui_layout_schema.h"
 #include "emu51_editor_files.h"
 #include "kason_schema.h"
 
@@ -46,6 +47,7 @@ struct StoredPeripheralDevice {
     int directKeys, keyLayoutColumns, keyLayoutRows;
     int keyLayout[64]; std::size_t keyLayoutCount;
     char keyLegends[32][64]; std::size_t keyLegendCount;
+    int serialAddress, rtcDay, rtcSecond;
 };
 struct StoredMemoryImage { char device[49], path[4096]; std::uint64_t offset, length; };
 struct StoredDecoderOutput { char device[49], id[49], name[129]; int activeLow; };
@@ -65,6 +67,7 @@ struct StoredMapping {
 struct StoredPeripheralWire { char a[65], b[65]; int aBit, bBit, width; };
 struct StoredAnalogWire { char from[65], to[65]; };
 struct StoredPeripheralPosition { char id[49]; double x, y; char name[129]; };
+struct StoredLiveLabel { char text[Emu51PeripheralLiveLabel::textCapacity]; double x, y; };
 struct StoredLiveBox { char id[49]; double x, y, width, height; int momentaryKeys; };
 struct StoredProject {
     int version, unified, debuggerOpen, traceEnabled, cycleExact, stepsPerFrame;
@@ -83,6 +86,7 @@ struct StoredProject {
     StoredAnalogWire analog[64]; std::size_t analogCount;
     StoredPeripheralPosition positions[33]; std::size_t positionCount;
     StoredLiveBox liveBoxes[33]; std::size_t liveBoxCount;
+    StoredLiveLabel liveLabels[Emu51PeripheralLiveLabel::maxCount]; std::size_t liveLabelCount;
     StoredProgram programs[32];
     std::size_t programCount;
     char reloadPath[4096];
@@ -94,10 +98,14 @@ struct StoredProject {
     std::size_t watchpointCount;
     char watches[1024][128];
     std::size_t watchCount;
+    emu51_ui_layout::StoredLayout workspace;
 };
+
+constexpr emu51_ui_layout::StoredLayout kNoWorkspace{.leftWidth = -1};
 
 const kason_schema* projectSchema()
 {
+    const auto* workspaceSchema = emu51_ui_layout::schema();
     static const kason_schema_field programFields[] = {
         KaSON_FIELD_STRING(StoredProgram, path, "path", KaSON_REQUIRED),
         KaSON_FIELD_INT(StoredProgram, binaryAddress, "binary_address", KaSON_DEFAULT_INT(0)),
@@ -142,6 +150,9 @@ const kason_schema* projectSchema()
         KaSON_FIELD_INT(StoredPeripheralDevice, columns, "columns", KaSON_DEFAULT_INT(16)),
         KaSON_FIELD_INT(StoredPeripheralDevice, rows, "rows", KaSON_DEFAULT_INT(2)),
         KaSON_FIELD_INT(StoredPeripheralDevice, i2cAddress, "i2c_address", KaSON_DEFAULT_INT(80)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, serialAddress, "serial_address", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, rtcDay, "rtc_day", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPeripheralDevice, rtcSecond, "rtc_second", KaSON_DEFAULT_INT(0)),
         KaSON_FIELD_DOUBLE(StoredPeripheralDevice, clockHz, "clock_hz", KaSON_DEFAULT_DOUBLE(2000000)),
         KaSON_FIELD_STRING(StoredPeripheralDevice, storagePath, "storage_path", KaSON_DEFAULT_STRING("")),
         KaSON_FIELD_INT(StoredPeripheralDevice, displayDigits, "display_digits", KaSON_DEFAULT_INT(4)),
@@ -197,6 +208,12 @@ const kason_schema* projectSchema()
         KaSON_FIELD_BOOL(StoredLiveBox, momentaryKeys, "momentary_keys", KaSON_DEFAULT_BOOL(false)),
     };
     KaSON_SCHEMA_DEFINE(liveBoxSchema, StoredLiveBox, liveBoxFields, 8);
+    static const kason_schema_field liveLabelFields[] = {
+        KaSON_FIELD_STRING(StoredLiveLabel, text, "text", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredLiveLabel, x, "x", KaSON_REQUIRED),
+        KaSON_FIELD_DOUBLE(StoredLiveLabel, y, "y", KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(liveLabelSchema, StoredLiveLabel, liveLabelFields, 8);
     static const kason_schema_field imageFields[] = {
         KaSON_FIELD_STRING(StoredMemoryImage, device, "device", KaSON_REQUIRED),
         KaSON_FIELD_STRING(StoredMemoryImage, path, "path", KaSON_REQUIRED),
@@ -263,6 +280,7 @@ const kason_schema* projectSchema()
         KaSON_FIELD_STRUCT_ARRAY(StoredProject, analog, analogCount, "peripheral_analog_wires", &analogSchema, KaSON_DEFAULT_EMPTY_ARRAY),
         KaSON_FIELD_STRUCT_ARRAY(StoredProject, positions, positionCount, "peripheral_layout", &positionSchema, KaSON_DEFAULT_EMPTY_ARRAY),
         KaSON_FIELD_STRUCT_ARRAY(StoredProject, liveBoxes, liveBoxCount, "peripheral_live_layout", &liveBoxSchema, KaSON_DEFAULT_EMPTY_ARRAY),
+        KaSON_FIELD_STRUCT_ARRAY(StoredProject, liveLabels, liveLabelCount, "peripheral_live_labels", &liveLabelSchema, KaSON_DEFAULT_EMPTY_ARRAY),
         KaSON_FIELD_BOOL(StoredProject, cycleExact, "cycle_exact", KaSON_REQUIRED),
         KaSON_FIELD_DOUBLE(StoredProject, crystalMHz, "crystal_mhz", KaSON_REQUIRED),
         KaSON_FIELD_INT(StoredProject, stepsPerFrame, "instructions_per_frame", KaSON_REQUIRED),
@@ -273,9 +291,10 @@ const kason_schema* projectSchema()
         KaSON_FIELD_INT_ARRAY(StoredProject, breakpoints, breakpointCount, "breakpoints", KaSON_REQUIRED),
         KaSON_FIELD_STRUCT_ARRAY(StoredProject, watchpoints, watchpointCount, "watchpoints", &watchSchema, KaSON_REQUIRED),
         KaSON_FIELD_STRING_ARRAY(StoredProject, watches, watchCount, "watches", KaSON_REQUIRED),
+        KaSON_FIELD_STRUCT(StoredProject, workspace, "workspace", workspaceSchema, KaSON_DEFAULT_STRUCT(kNoWorkspace)),
     };
     KaSON_SCHEMA_DEFINE(schema, StoredProject, fields, 64);
-    static const bool initialized = kason_schema_init(&imageSchema) == KaSON_SCHEMA_SUCCESS &&
+    static const bool initialized = workspaceSchema && kason_schema_init(&imageSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&outputSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&valueSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&mappingSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&programSchema) == KaSON_SCHEMA_SUCCESS &&
@@ -286,7 +305,8 @@ const kason_schema* projectSchema()
         kason_schema_init(&digitalSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&analogSchema) == KaSON_SCHEMA_SUCCESS &&
         kason_schema_init(&positionSchema) == KaSON_SCHEMA_SUCCESS &&
-        kason_schema_init(&liveBoxSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&schema) == KaSON_SCHEMA_SUCCESS;
+        kason_schema_init(&liveBoxSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&liveLabelSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&schema) == KaSON_SCHEMA_SUCCESS;
     return initialized ? &schema : nullptr;
 }
 
@@ -324,6 +344,11 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
         s.serialFileLineDelayMs < 0 || s.serialFileLineDelayMs > 10000)
         throw std::runtime_error("invalid serial transfer settings");
     Emu51Project p;
+    if (s.workspace.leftWidth != kNoWorkspace.leftWidth || s.workspace.rightWidth != 0) {
+        p.workspace.emplace();
+        if (!emu51_ui_layout::decode(s.workspace,*p.workspace))
+            throw std::runtime_error("Invalid project workspace layout");
+    }
     p.formatVersion = s.version;
     p.peripherals.circuitBus = s.circuitBus != 0;
     p.cpuModel = *model;
@@ -341,6 +366,7 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
             d.displayDigits, d.barSegments, d.commonAnode != 0, d.displayColon != 0, d.persistenceMs,
             d.displayColor, d.displayStyle, d.displayAddress});
         auto& device = p.peripherals.devices.back();
+        device.serialAddress = d.serialAddress; device.rtcDay = d.rtcDay; device.rtcSecond = d.rtcSecond;
         device.memoryCapacity = d.memoryCapacity; device.memoryFill = d.memoryFill;
         device.csLow = d.csLow; device.oeLow = d.oeLow; device.weLow = d.weLow;
         device.decoderBits = d.decoderBits; device.wiredBus = d.wiredBus;
@@ -425,6 +451,12 @@ Emu51Project decode(const StoredProject& s, const fs::path& base)
             throw std::runtime_error("Invalid peripheral Live box layout");
         p.peripheralLiveLayout.push_back({b.id,b.x,b.y,b.width,b.height,b.momentaryKeys != 0});
     }
+    for (std::size_t i = 0; i < s.liveLabelCount; ++i) {
+        const auto& n = s.liveLabels[i];
+        Emu51PeripheralLiveLabel label{n.text,n.x,n.y};
+        if (!emu51ValidLiveLabel(label)) throw std::runtime_error("Invalid peripheral Live label");
+        p.peripheralLiveLabels.push_back(std::move(label));
+    }
     if (!p.hardwareModule.empty() && !p.peripherals.devices.empty())
         throw std::runtime_error("A project cannot enable both a hardware module and a peripheral graph");
     p.execution = {s.cycleExact != 0, s.crystalMHz, s.stepsPerFrame};
@@ -495,10 +527,15 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
     try {
         if (path.empty()) throw std::runtime_error("project path is empty");
         auto s = std::make_unique<StoredProject>();
+        s->workspace = kNoWorkspace;
+        if (p.workspace && !emu51_ui_layout::encode(*p.workspace,s->workspace))
+            throw std::runtime_error("Invalid project workspace layout");
         if (p.programs.size() > std::size(s->programs) || p.watchpoints.size() > std::size(s->watchpoints) ||
             p.watches.size() > std::size(s->watches) || p.peripheralLayout.size() > std::size(s->positions) ||
             p.peripheralLiveLayout.size() > std::size(s->liveBoxes))
             throw std::runtime_error("project has too many program loads, watches, or peripheral block positions");
+        if (p.peripheralLiveLabels.size() > std::size(s->liveLabels))
+            throw std::runtime_error("Too many peripheral Live labels");
         const auto base = projectBase(path);
         copyText(s->cpuModel, emu51ModelInfo(p.cpuModel).id);
         s->version = 2; s->unified = p.unified; s->debuggerOpen = p.debuggerOpen; s->traceEnabled = p.traceEnabled;
@@ -537,6 +574,7 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
             to.displayDigits=d.displayDigits; to.barSegments=d.barSegments; to.commonAnode=d.commonAnode;
             to.displayColon=d.displayColon; to.persistenceMs=d.persistenceMs; to.displayColor=d.displayColor;
             to.displayStyle=d.displayStyle; to.displayAddress=d.displayAddress;
+            to.serialAddress=d.serialAddress; to.rtcDay=d.rtcDay; to.rtcSecond=d.rtcSecond;
             to.memoryCapacity=d.memoryCapacity; to.memoryFill=d.memoryFill; to.csLow=d.csLow; to.oeLow=d.oeLow; to.weLow=d.weLow;
             to.decoderBits=d.decoderBits; to.wiredBus=d.wiredBus;
             for (const auto& label : d.keyLabels) copyText(to.keyLabels[to.keyLabelCount++],label);
@@ -573,6 +611,11 @@ bool emu51SaveProject(const fs::path& path, const Emu51Project& p, std::string& 
             auto& to = s->liveBoxes[s->liveBoxCount++]; copyText(to.id,b.id);
             to.x = b.x; to.y = b.y; to.width = b.width; to.height = b.height;
             to.momentaryKeys = b.momentaryKeys;
+        }
+        for (const auto& label : p.peripheralLiveLabels) {
+            if (!emu51ValidLiveLabel(label)) throw std::runtime_error("Invalid peripheral Live label");
+            auto& to = s->liveLabels[s->liveLabelCount++];
+            copyText(to.text,label.text); to.x = label.x; to.y = label.y;
         }
         s->cycleExact = p.execution.cycleExact; s->crystalMHz = p.execution.crystalMHz; s->stepsPerFrame = p.execution.stepsPerFrame;
         copyText(s->reloadPath, portablePath(p.reloadPath, base)); s->reloadBinaryAddress = p.reloadBinaryAddress;

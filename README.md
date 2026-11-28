@@ -26,7 +26,7 @@ with a reusable emulation engine and a Dear ImGui interface. See
 - Saved layouts, Follow PC settings, and execution preferences.
 - Crystal-paced execution using the classic 12-clock 8051 timing model.
 - Serial modes 0–3, Timer 1/SMOD and 8052 Timer 2 baud clocks, serial interrupts, and a byte-oriented terminal.
-- Configurable peripheral graphs: 8255, ADC0804, Covox, LCD, keypad, switches/LEDs, shift registers, I²C EEPROM, AY-3-8910, and optional host audio.
+- Configurable peripheral graphs: 8255, ADC0804, Covox, LCD, keypad, switches/LEDs, shift registers, I²C EEPROM, OLED, RTC, GPIO expander, SPI flash, logic analyzer, AY-3-8910, and optional host audio.
 - Generic bus output latches, input buffers and configurable key matrices;
   the [AVT-2250 circuit](progs/boards/avt2250/README.md) uses these with a user-supplied ROM.
 - A standalone assembler, bounded console runner, and dispatch benchmark.
@@ -208,9 +208,11 @@ GPL reSID integration; SID is not yet an implemented device.
 
 Use **File → Save project** to create a `.emu51` project, **Save project as...**
 to save a separate copy, and **Open project...** to restore it. These commands
-are available in the native macOS menu and the Linux/Windows ImGui menu. Save
-and Save As keep their existing assembly-source shortcuts. The window title
-shows the selected project's filename.
+are available in the native macOS menu and the Linux/Windows ImGui menu.
+Press **Cmd+S** on macOS or **Ctrl+S** on Linux and Windows to save the project.
+Press **Cmd+Shift+S** or **Ctrl+Shift+S** to save only the current source.
+Use **Save source as...** to write the current source to a new path.
+The window title shows the selected project's filename.
 
 **File → Open Recent Projects** lists the ten most recently opened or saved
 projects, with the newest first. **Clear Menu** clears this list independently
@@ -220,11 +222,17 @@ recent project uses the same validation and unsaved-source guard as Open project
 Projects retain the program load sequence, binary load addresses, reload target,
 unified/separate memory mode, execution settings, numeric breakpoints,
 watchpoints, named watches, debugger visibility, and the trace-recording choice. They also
-retain the editor's file, cursor, visibility, and unsaved text. Saving a project
-does not save over source files or clear the editor's modified flag relative to
-the `.asm` file. Text already stored in the project closes without a save prompt.
-Further edits use the normal save/discard/cancel protection until saved to the
-source file or project.
+retain editor files and cursors, open and collapsed tool windows, floating
+positions and sizes, snap assignments and proportions, and disassembly and
+memory monitor views, including which edge docks are collapsed. Save Project
+and Save Project As write modified source and include files and pending peripheral storage changes
+before writing the project file. If a file write fails, the project file stays
+as it was. Untitled and embedded sources are saved inside the project.
+
+The five icons at the right of the top toolbar toggle the left, top, right
+and bottom docks and all four together. The last button collapses all four
+if any are expanded, then expands them on the next click. Collapsing all
+four gives the center dock the full workspace.
 
 Custom local builds may also retain a hardware-module requirement. Opening such
 a project requires the matching local build; an unavailable module is reported
@@ -326,7 +334,11 @@ for batching and main-thread limitations.
 
 ## Serial terminal
 
-Open **Execution → Serial terminal** on any platform. The firmware configures
+Open **Execution → Serial terminal** on any platform. Drag its title bar to a
+snap zone or right-click the title bar to choose a dock position or **Float**.
+Saving the project remembers the terminal's placement.
+
+The firmware configures
 SCON, PCON, and Timer 1; the terminal displays that configuration and sends bytes
 at its simulated baud rate. Mode 0 uses eight shift clocks; modes 1 and 3 use
 Timer 1 overflows; mode 2 uses the fixed oscillator-derived baud rate. Serial
@@ -398,8 +410,8 @@ menu/shortcut path. Menu-only actions are marked with an em dash.
 | Open program | Cmd+O | — |
 | Load program | Cmd+L | — |
 | Reload program | Cmd+Option+R | — |
-| Save source | Cmd+S | Ctrl+S |
-| Save source as | Cmd+Shift+S | Ctrl+Shift+S |
+| Save project | Cmd+S | Ctrl+S |
+| Save current source | Cmd+Shift+S | Ctrl+Shift+S |
 | Compile | Cmd+B | Ctrl+B |
 | Load compiled image | Cmd+Shift+L | Ctrl+Shift+L |
 | Compile and Load | Cmd+Shift+B | Ctrl+Shift+B |

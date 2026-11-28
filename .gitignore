@@ -4,6 +4,9 @@
 /dist/
 /.vscode
 
+# Persistent storage created when running the SPI flash demo.
+/progs/asm/demo/w25q64_flash.bin
+
 # Local working notes.
 /.local/
 

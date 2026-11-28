@@ -3,6 +3,7 @@
 
 #include "emu51_execution_settings.h"
 #include "emu51_peripheral_config.h"
+#include "emu51_ui_state.h"
 #include "../core/emu51_model.h"
 
 #include <cstdint>
@@ -56,6 +57,7 @@ struct Emu51Project {
     Emu51PeripheralConfig peripherals;
     std::vector<Emu51PeripheralBlockPosition> peripheralLayout;
     std::vector<Emu51PeripheralLiveBox> peripheralLiveLayout;
+    std::vector<Emu51PeripheralLiveLabel> peripheralLiveLabels;
     Emu51ExecutionSettings execution;
     std::vector<Emu51ProjectProgram> programs;
     std::string reloadPath;
@@ -67,6 +69,7 @@ struct Emu51Project {
     std::vector<Emu51AssemblyUnit> units = {};
     std::vector<Emu51ProgramMapping> mappings = {};
     std::string activeUnit = {};
+    std::optional<Emu51UiLayout> workspace = {};
 };
 
 // Decode/validate before applying anything. Paths returned by load are absolute;

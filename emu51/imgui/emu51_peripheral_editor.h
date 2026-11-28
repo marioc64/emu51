@@ -35,6 +35,7 @@ private:
         ImVec2 position;
         bool left = false;
         std::vector<ImVec2> bits;
+        float leadCenterOffset = 0, leadHalfSpan = 0;
     };
     struct Block {
         std::string id, title, subtitle;
@@ -52,6 +53,7 @@ private:
     struct RouteEnd {
         ImVec2 port, edge;
         bool left;
+        float leadLength = 0;
     };
     std::vector<Emu51PeripheralBlockPosition> positions_;
     std::vector<Block> blocks_;

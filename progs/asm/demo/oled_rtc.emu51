@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "oled",
+      "kind": 33
+    },
+    {
+      "id": "rtc",
+      "kind": 34,
+      "rtc_day": 59,
+      "rtc_second": 86398
+    },
+    {
+      "id": "capture",
+      "kind": 37
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "oled.SDA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "oled.SCL",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "rtc.SDA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "rtc.SCL",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "capture.IN",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "capture.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "oled_rtc.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "oled_rtc.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "oled_rtc.asm",
+    "name": "oled_rtc.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0.0,
+      "y": 42.75,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "oled",
+      "x": 157.88,
+      "y": 42.0,
+      "name": "OLED"
+    },
+    {
+      "id": "rtc",
+      "x": 157.88,
+      "y": 81.75,
+      "name": "RTC"
+    },
+    {
+      "id": "capture",
+      "x": 157.88,
+      "y": 0.0,
+      "name": "Logic analyzer"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "oled",
+      "x": 12,
+      "y": 46,
+      "width": 274,
+      "height": 162,
+      "momentary_keys": false
+    },
+    {
+      "id": "rtc",
+      "x": 298,
+      "y": 46,
+      "width": 178,
+      "height": 162,
+      "momentary_keys": false
+    },
+    {
+      "id": "capture",
+      "x": 12,
+      "y": 220,
+      "width": 464,
+      "height": 298,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "The OLED scrolls while the RTC advances in emulated time.",
+      "x": 12,
+      "y": 12
+    }
+  ]
+}

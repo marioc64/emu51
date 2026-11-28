@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "gpio",
+      "kind": 35,
+      "serial_address": 32
+    },
+    {
+      "id": "keypad",
+      "kind": 10
+    },
+    {
+      "id": "led",
+      "kind": 6,
+      "active_low": false
+    },
+    {
+      "id": "capture",
+      "kind": 37
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "gpio.SDA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "gpio.SCL",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "gpio.A",
+      "b": "keypad.rows",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "gpio.B",
+      "b": "keypad.columns",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "gpio.B",
+      "b": "led.in",
+      "a_bit": 4,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "gpio.INTB",
+      "b": "cpu.P3",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "capture.IN",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "capture.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "gpio.INTB",
+      "b": "capture.IN",
+      "a_bit": 0,
+      "b_bit": 2,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "mcp23017_keypad.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "mcp23017_keypad.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "mcp23017_keypad.asm",
+    "name": "mcp23017_keypad.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0.0,
+      "y": 21.75,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "gpio",
+      "x": 157.88,
+      "y": 42.0,
+      "name": "GPIO"
+    },
+    {
+      "id": "keypad",
+      "x": 315.38,
+      "y": 54.0,
+      "name": "KEYPAD"
+    },
+    {
+      "id": "led",
+      "x": 315.38,
+      "y": 104.0,
+      "name": "LED"
+    },
+    {
+      "id": "capture",
+      "x": 315.38,
+      "y": 0.0,
+      "name": "Logic analyzer"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "keypad",
+      "x": 12,
+      "y": 46,
+      "width": 228,
+      "height": 216,
+      "momentary_keys": false
+    },
+    {
+      "id": "led",
+      "x": 252,
+      "y": 46,
+      "width": 212,
+      "height": 80,
+      "momentary_keys": false
+    },
+    {
+      "id": "capture",
+      "x": 12,
+      "y": 274,
+      "width": 452,
+      "height": 298,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Press a key to trigger INT0 and light the LED.",
+      "x": 12,
+      "y": 12
+    }
+  ]
+}

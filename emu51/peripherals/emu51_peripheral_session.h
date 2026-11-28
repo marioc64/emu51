@@ -5,6 +5,7 @@
 #include "emu51/audio.h"
 #include "emu51/components.h"
 #include "emu51/displays.h"
+#include "emu51/serial_devices.h"
 #include "emu51/wired_bus.h"
 #include <array>
 #include <filesystem>
@@ -66,8 +67,10 @@ public:
     bool setKeys(const std::string& id, uint32_t keys);
     uint32_t keys(const std::string& id) const;
     bool ledState(const std::string& id, bool& defined) const;
+    bool stepperState(const std::string&, e51p_stepper_snapshot&) const;
     bool lcdState(const std::string& id, e51p_lcd_snapshot&) const;
     bool displayState(const std::string& id, e51p_segment_snapshot&) const;
+    e51p_serial_device* serialDevice(const std::string& id) const;
     bool setDisplayKeys(const std::string& id, uint64_t mask);
     uint64_t displayKeys(const std::string& id) const;
     // Snapshot on the simulation thread; writer may temporarily release the
@@ -111,11 +114,19 @@ private:
         e51p_component* handle = nullptr;
         uint32_t kind = 0, keys = 0;
         bool pressed = false, storageSaved = false;
-        std::array<uint8_t,256> savedBytes{};
+        uint32_t storageSize = 0;
+        uint64_t savedRevision = 0;
     };
     std::vector<Component> components_;
     struct Display { std::string id; e51p_display* handle; uint64_t keys = 0; };
     std::vector<Display> displays_;
+    struct SerialDevice {
+        std::string id, storagePath;
+        e51p_serial_device* handle = nullptr;
+        uint64_t savedRevision = 0;
+        bool storageSaved = false;
+    };
+    std::vector<SerialDevice> serialDevices_;
     bool built_ = false;
     bool storageActive_ = false;
     e51p_endpoint bus_ = E51P_INVALID_ID;

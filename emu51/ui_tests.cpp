@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_imgui_app.h"
+#include "emu51_imgui_actions.h"
 #include "emu51_editor_files.h"
 #include "emu51_segment_display.h"
 #include "TextEditor.h"
@@ -361,6 +362,15 @@ end
         routing.restore({{"cpu",0,0},{"obstacle",350,0},{"dac",700,0}});
         routing.rebuild(circuit,Emu51Model::i8052);
         const auto links = routing.connections(circuit);
+        const auto lead = [&](const char* name, int bit = -1) {
+            const auto* p = routing.pin(name);
+            return p ? routing.routeEnd(*p,bit).leadLength : 0.0f;
+        };
+        check(lead("obstacle.CS0") > 0 && lead("obstacle.CS0") == lead("obstacle.CS7") &&
+            lead("obstacle.CS0") < lead("obstacle.CS1") && lead("obstacle.CS1") < lead("obstacle.CS3") &&
+            lead("obstacle.CS3") == lead("obstacle.CS4"),
+            "Connectors fan out symmetrically with shorter leads at the top and bottom");
+        check(lead("cpu.P2",0) > lead("cpu.P0",-1),"Numbered bits use their own escape position for the lead");
         if (links.size() == 1) {
             auto& target = *std::find_if(routing.blocks_.begin(),routing.blocks_.end(),[](const auto& b) { return b.id == "dac"; });
             auto& blocker = *std::find_if(routing.blocks_.begin(),routing.blocks_.end(),[](const auto& b) { return b.id == "obstacle"; });
@@ -384,8 +394,9 @@ end
             check(clear,"An aligned wire detours around every obstructing block using orthogonal segments");
             if (curved.size() >= 4) {
                 const auto a = curved.front(), next = curved[1], b = curved.back(), previous = curved[curved.size()-2];
-                check(next.y == a.y && next.x-a.x >= 54 && previous.y == b.y && b.x-previous.x >= 54,
-                    "Rounded wires keep long perpendicular leads at both box edges");
+                check(next.y == a.y && next.x-a.x >= lead(link.from->descriptor.name.c_str(),link.fromBit)-16 &&
+                    previous.y == b.y && b.x-previous.x >= lead(link.to->descriptor.name.c_str(),link.toBit)-16,
+                    "Rounded wires preserve the preferred clearance at both box edges");
                 bool turns = false, outside = true;
                 for (std::size_t i = 1; i < curved.size(); ++i) {
                     const auto p = curved[i-1], q = curved[i];
@@ -408,8 +419,8 @@ end
             routing.moveBlock(target,{source.x+96,originalTarget.y+120});
             routing.updateRoutes(links);
             const auto& narrow = routing.roundedRoutes_.front();
-            check(narrow.size() >= 4 && narrow[1].y == narrow.front().y && narrow[1].x-narrow.front().x >= 30 &&
-                narrow[narrow.size()-2].y == narrow.back().y && narrow.back().x-narrow[narrow.size()-2].x >= 30,
+            check(narrow.size() >= 4 && narrow[1].y == narrow.front().y && narrow[1].x-narrow.front().x >= 16 &&
+                narrow[narrow.size()-2].y == narrow.back().y && narrow.back().x-narrow[narrow.size()-2].x >= 16,
                 "Facing connectors fit straight leads and rounded turns in a narrow channel");
             routing.moveBlock(target,originalTarget);
         } else check(false,"The routing fixture has its digital wire");
@@ -720,6 +731,85 @@ end
             "Apply is available from Live and renders the newly activated session immediately");
         io.AddMousePosEvent(-100,-100);
     }
+    static void test_live_labels(const fs::path& root)
+    {
+        auto app = create();
+        check(app->applyPeripheralConfig(emu51PeripheralPreset(1),12),"Create Live label project fixture");
+        auto& io = ImGui::GetIO(); io.DisplaySize = {900,650}; io.DeltaTime = 1.0f/60;
+        const auto frame = [&] {
+            ImGui::NewFrame(); ImGui::SetNextWindowPos({20,20}); ImGui::SetNextWindowSize({840,590});
+            ImGui::Begin("Live labels regression",nullptr,ImGuiWindowFlags_NoSavedSettings);
+            app->drawPeripheralLive(app->peripherals_->config());
+            ImGui::End(); ImGui::Render();
+        };
+        const auto click = [&](ImVec2 at,int button) {
+            io.AddMousePosEvent(at.x,at.y); frame();
+            io.AddMouseButtonEvent(button,true); frame();
+            io.AddMouseButtonEvent(button,false); frame(); frame();
+        };
+        const auto popup = [&](const char* id) -> ImGuiWindow* {
+            for (auto* child : GImGui->Windows) {
+                if (!(child->Flags&ImGuiWindowFlags_ChildWindow) || !std::strstr(child->Name,"live-canvas")) continue;
+                for (const auto& item : GImGui->OpenPopupStack)
+                    if (item.PopupId==child->GetID(id)) return item.Window;
+            }
+            return nullptr;
+        };
+        frame(); frame();
+        const ImVec2 at{190,190};
+        click(at,ImGuiMouseButton_Right);
+        check(!popup("live-label-menu"),"Right click cannot edit labels outside Edit layout");
+        app->peripheralLive_.editing_ = true; frame(); frame();
+        const auto choose = [&](const char* item) {
+            auto* menu = popup("live-label-menu");
+            check(menu!=nullptr,"Right click opens the Live label menu");
+            if (menu) { ImGui::ActivateItemByID(menu->GetID(item)); frame(); frame(); }
+            return menu!=nullptr;
+        };
+        const auto text = [&](const char* label) {
+            check(popup("live-label-text")!=nullptr,"Label menu action opens a text field");
+            io.AddInputCharactersUTF8(label); frame();
+            io.AddKeyEvent(ImGuiKey_Enter,true); frame();
+            io.AddKeyEvent(ImGuiKey_Enter,false); frame();
+        };
+        click(at,ImGuiMouseButton_Right);
+        check(app->peripheralLive_.interacting(),"Paused label menu keeps redraws active");
+        if (!choose("Add label")) return;
+        text("ADC input");
+        auto labels = app->peripheralLive_.labels();
+        check(labels.size()==1 && labels.front().text=="ADC input","Add places typed text on the canvas");
+        if (labels.size()!=1) return;
+        frame(); frame();
+        const ImVec2 inside{at.x+10,at.y+9};
+        click(inside,ImGuiMouseButton_Right);
+        if (!choose("Edit label")) return;
+        text("Analog input");
+        labels = app->peripheralLive_.labels();
+        check(labels.size()==1 && labels.front().text=="Analog input","Edit replaces the existing label text");
+        if (labels.size()!=1) return;
+        io.AddMousePosEvent(inside.x,inside.y); frame(); frame();
+        io.AddMouseButtonEvent(0,true); frame();
+        io.AddMousePosEvent(inside.x+48,inside.y+25); frame();
+        check(app->peripheralLive_.interacting(),"Dragging a label keeps paused redraws active");
+        io.AddMouseButtonEvent(0,false); frame(); frame();
+        const auto moved = app->peripheralLive_.labels();
+        check(moved[0].x>labels[0].x+40 && moved[0].y>labels[0].y+20,"Labels can be repositioned in Edit layout");
+
+        const auto path = root/"live-labels.emu51";
+        auto restored = create();
+        check(app->saveProjectToPath(path) && restored->openProjectFromPath(path) &&
+            restored->peripheralLive_.labels()==moved && !restored->peripheralLive_.editing(),
+            "Live label text and position round-trip, with editing locked after opening");
+        std::string error;
+        if (auto project = emu51LoadProject(path,error); project && !project->peripheralLiveLabels.empty()) {
+            project->peripheralLiveLabels[0].text = "\n";
+            check(!emu51SaveProject(root/"bad-live-label.emu51",*project,error),"Invalid Live label text is rejected");
+        }
+        click({inside.x+48,inside.y+25},ImGuiMouseButton_Right);
+        if (!choose("Remove label")) return;
+        check(app->peripheralLive_.labels().empty(),"Remove label deletes the label under the cursor");
+    }
+
     static void test_live_device_layout(const fs::path& root)
     {
         Emu51PeripheralConfig config;
@@ -1918,6 +2008,160 @@ fi
             app->assemblyEditor_->GetText() == "inc a\n", "Redo immediately after Save cannot bypass the quit guard");
     }
 
+    static void test_lab_peripheral_examples()
+    {
+        auto app = create();
+        const auto examples = fs::path(EMU51_REPO_ROOT)/"progs/asm/demo";
+        const auto run = [&](uint64_t ticks) {
+            const auto target = app->peripherals_->ticks()+ticks;
+            while (app->peripherals_->ticks()<target && app->peripherals_->status()==E51P_OK) app->executeInstruction();
+            check(app->peripherals_->status()==E51P_OK,"Lab demo runs without peripheral errors");
+        };
+        const bool stepper = app->openProjectFromPath(examples/"stepper_control.emu51");
+        check(stepper,"Open and assemble the ULN2003 stepper demo");
+        if (!stepper) return;
+        run(1000000);
+        e51p_stepper_snapshot forward{}, reverse{};
+        check(app->peripherals_->stepperState("motor",forward) && forward.valid &&
+            forward.direction==1 && forward.position_half_steps>0,"Stepper firmware advances the motor through ULN2003");
+        check(app->peripherals_->setPressed("reverse",true) && app->peripherals_->setPressed("half",true),
+            "Live switches select direction and half steps");
+        run(550000);
+        check(app->peripherals_->stepperState("motor",reverse) && reverse.valid && reverse.direction==-1 &&
+            reverse.position_half_steps<forward.position_half_steps &&
+            reverse.invalid_transitions==forward.invalid_transitions,"Firmware reverses the shaft without an invalid coil transition");
+
+        auto& io=ImGui::GetIO(); io.DisplaySize={1280,900}; io.DeltaTime=1.0f/60;
+        ImGui::NewFrame(); app->drawPeripherals(); ImGui::Render();
+        auto* window = ImGui::FindWindowByName("Peripherals");
+        auto* tabs = window ? GImGui->TabBars.GetByKey(window->GetID("peripheral-tabs")) : nullptr;
+        check(tabs!=nullptr,"Lab project opens the Peripherals window");
+        if (tabs) {
+            tabs->NextSelectedTabId = ImHashStr("Live",0,tabs->ID);
+            const auto tick = app->peripherals_->ticks();
+            for (int i=0; i<3; ++i) { ImGui::NewFrame(); app->drawPeripherals(); ImGui::Render(); }
+            check(app->peripherals_->ticks()==tick,"Stepper drawing preserves paused simulation time");
+        }
+
+        const bool adc = app->openProjectFromPath(examples/"adc0809_scan.emu51");
+        check(adc,"Open and assemble the ADC0809 eight-channel scan");
+        if (!adc) return;
+        for (unsigned i = 0; i < 8; ++i)
+            check(app->peripherals_->setSource("channel"+std::to_string(i),i*0.625),"Set a known ADC test voltage");
+        run(20000);
+        check(app->cpu_.IRAM[0x28]>0,"ADC0809 firmware completed a full scan");
+        for (unsigned i=0; i<8; ++i)
+            check(app->cpu_.IRAM[0x20+i] == i*32,"Firmware reads each separate analog channel");
+        check(app->peripherals_->setSource("channel3",5),"Adjust ADC channel 3 voltage");
+        run(20000);
+        check(app->cpu_.IRAM[0x23]==255 && app->cpu_.IRAM[0x24]==128,
+            "A live voltage update changes its channel and leaves the next channel independent");
+    }
+
+    static void test_serial_peripheral_examples(const fs::path& root)
+    {
+        const auto source = fs::path(EMU51_REPO_ROOT)/"progs/asm/demo";
+        const auto directory = root/"serial-examples";
+        fs::create_directories(directory);
+        fs::copy_file(source/"serial_i2c.inc",directory/"serial_i2c.inc");
+        for (const std::string name : {"oled_rtc","mcp23017_keypad","w25q64_flash"})
+            for (const auto* ext : {".asm",".emu51"}) fs::copy_file(source/(name+ext),directory/(name+ext));
+        auto app = create();
+        const auto open = [&](const std::string& name) {
+            const bool opened = app->openProjectFromPath(directory/(name+".emu51"));
+            if (!opened) std::fprintf(stderr,"Serial demo %s: %s\n",name.c_str(),app->statusMessage_.c_str());
+            check(opened,"Serial example opens and assembles through the project loader");
+            return opened;
+        };
+        const auto run = [&](uint64_t duration) {
+            const auto target = app->peripherals_->ticks()+duration;
+            for (unsigned i = 0; i < duration/12+1 && app->peripherals_->ticks()<target; ++i)
+                app->executeInstruction();
+            check(app->peripherals_->ticks()>=target,"Serial example advances emulated time");
+        };
+        std::array<e51p_logic_sample,E51P_LOGIC_CAPACITY> samples{};
+        std::array<e51p_logic_event,E51P_LOGIC_CAPACITY> events{};
+        e51p_logic_status capture{};
+        const auto decode = [&](unsigned protocol) {
+            auto* analyzer = app->peripherals_->serialDevice("capture");
+            check(e51p_logic_read(analyzer,&capture,samples.data(),samples.size())==E51P_OK && capture.count>1,
+                "Logic analyzer captures firmware bus edges");
+            return e51p_logic_decode(samples.data(),capture.count,protocol,events.data(),events.size());
+        };
+        if (!open("oled_rtc")) return;
+        run(800000);
+        auto* oled = app->peripherals_->serialDevice("oled");
+        auto* rtc = app->peripherals_->serialDevice("rtc");
+        e51p_oled_snapshot screen{};
+        e51p_rtc_snapshot clock{};
+        check(app->cpu_.IRAM[0x23]==0x55 && app->cpu_.IRAM[0x28]==0x58 &&
+            app->cpu_.IRAM[0x29]==0x59 && app->cpu_.IRAM[0x2a]==0x23,
+            "Firmware addresses the RTC separately and reads three BCD bytes using a repeated START");
+        check(e51p_oled_state(oled,&screen)==E51P_OK && (screen.pixels[0][0]&1) &&
+            screen.pixels[23][0]==255, "OLED firmware draws text and a plot into visible RAM");
+        const auto i2cEvents = decode(E51P_LOGIC_I2C);
+        check(std::any_of(events.begin(),events.begin()+i2cEvents,[](const auto& e) {
+            return e.kind==E51P_LOGIC_ADDRESS && e.a==0x78 && e.flags;
+        }),"I2C analyzer decodes the OLED write address and ACK");
+        auto graph = app->peripherals_->config();
+        check(app->saveProjectToPath(directory/"roundtrip.emu51"),"Serial device topology and settings save");
+        if (!open("roundtrip")) return;
+        check(app->peripherals_->config()==graph,"Serial device settings round trip");
+        run(24800000);
+        rtc = app->peripherals_->serialDevice("rtc");
+        check(e51p_rtc_state(rtc,&clock)==E51P_OK && clock.year==2000 && clock.month==3 &&
+            clock.day==1 && clock.hour==0 && clock.minute==0 && clock.second==0,
+            "RTC advances across leap day and midnight using emulated time");
+        const auto ticks = app->peripherals_->ticks();
+        auto& io = ImGui::GetIO(); io.DisplaySize = {1280,900}; io.DeltaTime = 1.0f/60;
+        app->peripheralsOpen_ = true;
+        ImGui::NewFrame(); app->drawPeripherals(); ImGui::Render();
+        auto* window = ImGui::FindWindowByName("Peripherals");
+        auto* tabs = window ? GImGui->TabBars.GetByKey(window->GetID("peripheral-tabs")) : nullptr;
+        check(tabs!=nullptr,"Serial devices load into the Peripherals window");
+        if (tabs) {
+            tabs->NextSelectedTabId = ImHashStr("Live",0,tabs->ID);
+            for (int i = 0; i < 3; ++i) { ImGui::NewFrame(); app->drawPeripherals(); ImGui::Render(); }
+        }
+        check(app->peripherals_->ticks()==ticks,"Rendering serial snapshots while paused leaves simulated time unchanged");
+
+        if (!open("mcp23017_keypad")) return;
+        run(100000);
+        check(app->cpu_.IRAM[0x23]==0x55,"Firmware configures the GPIO expander");
+        auto* analyzer = app->peripherals_->serialDevice("capture");
+        check(e51p_logic_arm(analyzer,2,0)==E51P_OK,"Analyzer arms on falling interrupt edge");
+        check(app->peripherals_->setKeys("keypad",1u<<9),"Press row 2 column 1");
+        run(100000);
+        bool defined = false;
+        check(app->cpu_.IRAM[0x26]==2 && app->peripherals_->ledState("led",defined) && defined,
+            "Expander interrupts the CPU, firmware scans the correct row/column, and lights the LED");
+        check(e51p_logic_stop(analyzer)==E51P_OK &&
+            e51p_logic_read(analyzer,&capture,samples.data(),samples.size())==E51P_OK &&
+            capture.triggered && !capture.armed && capture.trigger_tick<=capture.end_tick,
+            "Edge-triggered capture records the interrupt timestamp and stops");
+        app->peripherals_->setKeys("keypad",0);
+        run(100000);
+        check(app->cpu_.IRAM[0x26]==0 && !app->peripherals_->ledState("led",defined) && defined,
+            "Key release triggers another scan and turns off the LED");
+
+        if (!open("w25q64_flash")) return;
+        run(1500000);
+        const auto* iram = app->cpu_.IRAM;
+        check(iram[0x23]==0x55 && iram[0x20]==0xef && iram[0x21]==0x40 && iram[0x22]==0x17 &&
+            std::memcmp(iram+0x28,"EMU51",5)==0,"SPI firmware erases, programs and reads flash and the JEDEC ID");
+        const auto spiEvents = decode(E51P_LOGIC_SPI);
+        check(std::any_of(events.begin(),events.begin()+spiEvents,[](const auto& e) {
+            return e.kind==E51P_LOGIC_BYTE && e.flags==3 && e.b==0xef;
+        }),"SPI analyzer decodes valid bytes and observes the manufacturer's ID");
+        check(app->flushPeripheralStorage(),"Committed SPI flash image saves");
+        const auto image = read(directory/"w25q64_flash.bin");
+        check(image.size()==E51P_FLASH_SIZE && image.compare(0,5,"EMU51")==0,"Flash image contains the programmed bytes");
+        if (!open("w25q64_flash")) return;
+        std::vector<uint8_t> exported(E51P_FLASH_SIZE);
+        check(e51p_flash_export(app->peripherals_->serialDevice("flash"),exported.data(),E51P_FLASH_SIZE)==E51P_OK &&
+            std::memcmp(exported.data(),"EMU51",5)==0,"Flash contents survive reopening before firmware runs");
+    }
+
     static void test_segment_examples(const fs::path& root)
     {
         const auto source=fs::path(EMU51_REPO_ROOT)/"progs/asm/demo";
@@ -2545,6 +2789,208 @@ fi
         check(app->executionSettingsDialog_.cpuModel == 0, "Execution settings display the active CPU model");
     }
 
+    static void test_project_save_shortcuts(const fs::path& root)
+    {
+        const auto folder = root / "save-shortcuts";
+        fs::create_directory(folder);
+        const auto source = folder / "source.asm";
+        const auto include = folder / "defs.inc";
+        const auto clean = folder / "clean.asm";
+        const auto embedded = folder / "embedded.asm";
+        const auto project = folder / "session.emu51";
+        write(source, "nop\n");
+        write(include, "value equ 1\n");
+        write(clean, "; clean\r\n");
+        auto app = create();
+        check(app->addProjectUnit(include, false), "Add include to the project editor");
+        edit(*app, include, "value equ 2\n");
+        check(app->addProjectUnit(clean, false, false) && app->addProjectUnit(embedded, true),
+            "Add clean and embedded project sources");
+        edit(*app, {}, "; embedded project source\n");
+        check(app->addProjectUnit(source, false), "Add an active project source");
+        const auto active = app->activeProjectUnit_;
+        edit(*app, source, "inc a\n");
+        app->projectPathPicker_ = [&](bool save) { return save ? project : fs::path{}; };
+
+        auto& io = ImGui::GetIO();
+        io.DisplaySize = {1280, 900};
+#if defined(__APPLE__)
+        const auto primary = io.ConfigMacOSXBehaviors ? ImGuiMod_Ctrl : ImGuiMod_Super;
+#else
+        const auto primary = ImGuiMod_Ctrl;
+#endif
+        const auto shortcut = [&](bool shift) {
+            io.AddKeyEvent(primary, true);
+            io.AddKeyEvent(ImGuiMod_Shift, shift);
+            io.AddKeyEvent(ImGuiKey_S, true);
+            ImGui::NewFrame();
+            emu51HandleImguiShortcuts(*app);
+            ImGui::EndFrame();
+            io.AddKeyEvent(ImGuiKey_S, false);
+            io.AddKeyEvent(ImGuiMod_Shift, false);
+            io.AddKeyEvent(primary, false);
+            ImGui::NewFrame();
+            ImGui::EndFrame();
+        };
+        shortcut(true);
+        check(read(source) == "inc a\n" && read(include) == "value equ 1\n" && !fs::exists(project),
+            "Shift plus the save shortcut writes only the current source");
+        edit(*app, source, "dec a\n");
+        shortcut(false);
+        std::string error;
+        const auto saved = emu51LoadProject(project, error);
+        check(read(source) == "dec a\n" && read(include) == "value equ 2\n" && read(clean) == "; clean\r\n" &&
+            app->activeProjectUnit_ == active && !app->assemblyEditorState_.dirty && saved && saved->units.size() == 4 &&
+            !saved->units[0].editor.draft && saved->units[2].editor.draft &&
+            saved->units[2].editor.text == "; embedded project source\n" && !fs::exists(embedded),
+            "Save Project writes dirty source and include files and embeds sources without a disk file");
+
+        const auto previousDocument = read(project);
+        edit(*app, source, "ret\n");
+        app->stepsPerFrame_ = 321;
+        fs::remove(source);
+        fs::create_directory(source);
+        app->saveProject();
+        check(read(project) == previousDocument && app->assemblyEditorState_.dirty &&
+            app->statusMessage_.find(source.string()) != std::string::npos,
+            "A failed source write leaves the project file intact and the source dirty");
+        fs::remove(source);
+        app->saveProject();
+        check(read(source) == "ret\n" && read(project) != previousDocument && !app->assemblyEditorState_.dirty,
+            "Saving again after a source write failure persists both the source and project");
+    }
+
+    static void test_collapsible_edge_docks(const fs::path& root)
+    {
+        using Pane = Emu51ImguiApp::PaneKey;
+        using Target = Emu51ImguiSnapTarget;
+        auto app = create();
+        app->registersOpen_ = app->serialTerminalOpen_ = app->projectPanelOpen_ = app->peripheralsOpen_ = true;
+        const Pane registers{Pane::Kind::Registers, 0};
+        const Pane serial{Pane::Kind::SerialTerminal, 0};
+        const Pane project{Pane::Kind::Project, 0};
+        const Pane peripherals{Pane::Kind::Peripherals, 0};
+        const Pane center{Pane::Kind::Disassembly, app->disassemblyViews_.front().id};
+        app->setPaneSnapTarget(registers, Target::Left);
+        app->setPaneSnapTarget(serial, Target::Right);
+        app->setPaneSnapTarget(project, Target::Top);
+        app->setPaneSnapTarget(peripherals, Target::Bottom);
+        app->setPaneSnapTarget(center, Target::Center);
+        app->snapLayoutPreferences_.leftWidthFraction = 0.31f;
+        auto& io = ImGui::GetIO();
+        io.DisplaySize = {1280, 840};
+        const auto frame = [&] {
+            ImGui::NewFrame();
+            app->contentTop_ = emu51DrawImguiToolbar(*app);
+            app->updateSnappedPaneLayout();
+            app->drawRegisters();
+            app->drawDisassemblyViews();
+            app->drawSnapSplitters();
+            ImGui::Render();
+        };
+        frame(); frame();
+        const auto* toolbar = ImGui::FindWindowByName("ExecutionToolbar");
+        check(toolbar != nullptr && app->snappedPaneRects_.size() == 5, "The toolbar and all five docks start visible");
+        if (!toolbar) return;
+        const auto clickDock = [&](int index) {
+            const auto& style = ImGui::GetStyle();
+            const float size = ImGui::GetFrameHeight();
+            const float x = toolbar->Pos.x + toolbar->Size.x - style.WindowPadding.x -
+                size * 0.5f - (4 - index) * (size + style.ItemSpacing.x);
+            const float y = toolbar->Pos.y + style.WindowPadding.y + size * 0.5f;
+            io.AddMousePosEvent(x, y); frame();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true); frame();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false); frame();
+        };
+        const Target edges[]{Target::Left, Target::Top, Target::Right, Target::Bottom};
+        for (int i = 0; i < 4; ++i) {
+            clickDock(i);
+            for (int j = 0; j < 4; ++j)
+                check(app->edgeDockCollapsed(edges[j]) == (i == j), "A right-aligned toolbar icon toggles only its matching dock");
+            check(app->snappedPaneRects_.size() == 4, "The collapsed dock frees its space");
+            clickDock(i);
+            check(!app->edgeDockCollapsed(edges[i]) && app->snappedPaneRects_.size() == 5,
+                "Clicking a dock icon again expands its dock");
+        }
+        check(app->snapLayoutPreferences_.leftWidthFraction == 0.31f, "Toggling a dock preserves its size");
+        clickDock(0);
+        clickDock(4);
+        check(app->snappedPaneRects_.size() == 1 && app->snappedPaneRects_.front().pane == center &&
+            app->snappedPaneRects_.front().width > 1250 && app->snappedPaneRects_.front().height > 760 &&
+            app->snapSplitters_.empty(),
+            "The all-edges toolbar icon collapses the remaining docks and gives the center the full workspace");
+        const auto savedProject = root / "collapsed-docks.emu51";
+        check(app->saveProjectToPath(savedProject), "Save a project with collapsed docks");
+        auto restored = create();
+        check(restored->openProjectFromPath(savedProject) && restored->collapsedEdgeDocks_ == app->collapsedEdgeDocks_ &&
+            restored->snapTargetForPane(serial) == Target::Right,
+            "Reopening a project preserves collapsed docks and their pane assignments");
+        clickDock(4);
+        check(app->snappedPaneRects_.size() == 5, "Clicking the all-edges icon again restores the original layout");
+        io.DisplaySize = {420, 840};
+        frame(); frame();
+        clickDock(4);
+        check(app->snappedPaneRects_.size() == 1, "The dock icons remain reachable in a narrow toolbar");
+        clickDock(4);
+        io.DisplaySize = {1280, 840};
+        io.AddMousePosEvent(-100, -100);
+    }
+
+    static void test_project_workspace(const fs::path& root)
+    {
+        using Pane = Emu51ImguiApp::PaneKey;
+        using MemoryKind = Emu51ImguiApp::MonitorView::MemoryKind;
+        const auto path = root / "workspace.emu51";
+        auto app = create();
+        app->registersOpen_ = false;
+        app->peripheralsOpen_ = true;
+        app->projectPanelOpen_ = true;
+        app->internalRamMonitor_.open = false;
+        app->serialTerminalOpen_ = true;
+        app->disassemblyViews_.clear();
+        app->monitorViews_.clear();
+        app->addDisassemblyView(0x3456, false);
+        app->addMonitorView(MemoryKind::ExternalProgram, 0x1230);
+        const Pane disassembly{Pane::Kind::Disassembly, app->disassemblyViews_.front().id};
+        const Pane monitor{Pane::Kind::Monitor, app->monitorViews_.front().id};
+        const Pane serial{Pane::Kind::SerialTerminal, 0};
+        app->setPaneSnapTarget(disassembly, Emu51ImguiSnapTarget::Right);
+        app->findPaneSnapAssignment(disassembly)->share = 0.75f;
+        app->setPaneSnapTarget(monitor, Emu51ImguiSnapTarget::Bottom);
+        app->snapLayoutPreferences_.bottomHeightFraction = 0.34f;
+        auto& floating = app->ensureFloatingPaneState(serial);
+        floating.position = ImVec2(75, 86);
+        floating.size = ImVec2(615, 458);
+        floating.hasSize = true;
+        floating.collapsed = true;
+        app->projectPathPicker_ = [&](bool) { return path; };
+        app->saveProject();
+
+        auto restored = create();
+        restored->debuggerOpen_ = true;
+        restored->recentProgramPaths_ = {(root / "recent.hex").string()};
+        restored->addMonitorView(MemoryKind::ExternalData, 0x0);
+        check(restored->openProjectFromPath(path) && !restored->registersOpen_ && restored->peripheralsOpen_ &&
+            restored->projectPanelOpen_ && !restored->debuggerOpen_ && !restored->internalRamMonitor_.open &&
+            restored->serialTerminalOpen_ && restored->recentProgramPaths_.size() == 1,
+            "Opening a project restores its tool visibility and keeps application history");
+        const auto* right = restored->findPaneSnapAssignment(disassembly);
+        check(right && right->target == Emu51ImguiSnapTarget::Right && right->share == 0.75f &&
+            restored->snapTargetForPane(monitor) == Emu51ImguiSnapTarget::Bottom &&
+            restored->snapLayoutPreferences_.bottomHeightFraction == 0.34f &&
+            restored->disassemblyViews_.size() == 1 && !restored->disassemblyViews_.front().followPc &&
+            restored->disassemblyViews_.front().start == 0x3456 && restored->monitorViews_.size() == 1 &&
+            restored->monitorViews_.front().start == 0x1230 && restored->monitorViews_.front().memoryKind == MemoryKind::ExternalProgram,
+            "Restoring a project recreates its snap proportions, disassembly and memory monitor views");
+        ImGui::NewFrame();
+        restored->drawSerialTerminal();
+        const auto* window = ImGui::FindWindowByName("Serial Terminal");
+        check(window && window->Pos.x == 75 && window->Pos.y == 86 && window->Collapsed &&
+            window->SizeFull.x == 615 && window->SizeFull.y == 458,
+            "The first frame after opening restores floating window placement and collapse state");
+        ImGui::EndFrame();
+    }
+
     static void test_project_sessions(const fs::path& root)
     {
         const auto folder = root / "project folder";
@@ -2779,6 +3225,67 @@ fi
         if (position != std::string::npos) json.erase(position, field.size());
         write(path, json);
         check(app->openProjectFromPath(path) && !app->running_, "Older projects without a hardware field still open");
+    }
+
+    static void test_serial_terminal_docking(const fs::path& root)
+    {
+        using Pane = Emu51ImguiApp::PaneKey;
+        const Pane pane{Pane::Kind::SerialTerminal, 0};
+        auto app = create();
+        app->showSerialTerminal();
+        auto& io = ImGui::GetIO();
+        io.DisplaySize = {1280, 840};
+        const auto frame = [&](Emu51ImguiApp& terminalApp) {
+            ImGui::NewFrame();
+            terminalApp.updateDragSnapState();
+            terminalApp.updateSnappedPaneLayout();
+            terminalApp.drawSerialTerminal();
+            ImGui::Render();
+        };
+        frame(*app);
+        auto* window = ImGui::FindWindowByName("Serial Terminal");
+        check(window != nullptr, "The Serial Terminal has a dockable window");
+        if (!window) return;
+        ImGui::SetWindowCollapsed(window, false);
+        ImGui::SetWindowPos(window, {100, 100});
+        frame(*app);
+        const auto floatingWidth = window->Size.x;
+        io.AddMousePosEvent(window->Pos.x + 60, window->TitleBarRect().GetCenter().y);
+        frame(*app);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        frame(*app);
+        io.AddMousePosEvent(1200, 420);
+        frame(*app);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        frame(*app);
+        frame(*app);
+        check(app->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Right &&
+            window->Size.x < floatingWidth && (window->Flags & ImGuiWindowFlags_NoResize) &&
+            (window->Flags & ImGuiWindowFlags_HorizontalScrollbar),
+            "Title-bar dragging docks the terminal and keeps controls reachable in a narrow dock");
+        check(app->hasActivePane() && app->activePane_ == pane, "The docked terminal participates in Window snap commands");
+
+        const auto project = root / "docked-terminal.emu51";
+        app->projectPathPicker_ = [&](bool) { return project; };
+        app->saveProject();
+        auto restored = create();
+        check(restored->openProjectFromPath(project) && restored->serialTerminalOpen_ &&
+            restored->snapTargetForPane(pane) == Emu51ImguiSnapTarget::Right,
+            "Reopening a project restores the terminal in its saved dock");
+        frame(*restored);
+        ImGui::ActivateItemByID(window->GetID("#CLOSE"));
+        frame(*restored);
+        frame(*restored);
+        check(!restored->serialTerminalOpen_ && restored->snappedPaneRects_.empty(),
+            "Closing a docked terminal frees its dock space");
+        restored->showSerialTerminal();
+        frame(*restored);
+        check(!restored->snappedPaneRects_.empty(), "Showing the terminal again uses its previous dock");
+        restored->snapPane(pane, Emu51ImguiSnapTarget::None);
+        io.AddMousePosEvent(-100, -100);
+        frame(*restored);
+        check(window->Size.x == floatingWidth && !(window->Flags & ImGuiWindowFlags_NoResize),
+            "Floating the terminal restores its previous size and resize handles");
     }
 
     static void test_serial_terminal(const fs::path& root)
@@ -3256,6 +3763,7 @@ int main(int argc, char** argv)
     Emu51ImguiAppTestAccess::test_peripheral_window();
     Emu51ImguiAppTestAccess::test_peripheral_title_apply(root);
     Emu51ImguiAppTestAccess::test_live_device_layout(root);
+    Emu51ImguiAppTestAccess::test_live_labels(root);
     Emu51ImguiAppTestAccess::test_live_content_scaling_and_key_modes(root);
     Emu51ImguiAppTestAccess::test_segment_colon_alignment();
     Emu51ImguiAppTestAccess::test_peripheral_workflows(root);
@@ -3271,6 +3779,8 @@ int main(int argc, char** argv)
     Emu51ImguiAppTestAccess::test_undo_redo_after_save(root);
     Emu51ImguiAppTestAccess::test_component_examples(root);
     Emu51ImguiAppTestAccess::test_segment_examples(root);
+    Emu51ImguiAppTestAccess::test_serial_peripheral_examples(root);
+    Emu51ImguiAppTestAccess::test_lab_peripheral_examples();
     Emu51ImguiAppTestAccess::test_ui_state(root);
     Emu51ImguiAppTestAccess::test_disassembly_follow_pc_persistence(root);
     Emu51ImguiAppTestAccess::test_disassembly_title_control();
@@ -3279,9 +3789,13 @@ int main(int argc, char** argv)
     Emu51ImguiAppTestAccess::test_symbolic_debugging(root);
     Emu51ImguiAppTestAccess::test_cpu_models(root);
     Emu51ImguiAppTestAccess::test_project_sessions(root);
+    Emu51ImguiAppTestAccess::test_project_save_shortcuts(root);
+    Emu51ImguiAppTestAccess::test_project_workspace(root);
+    Emu51ImguiAppTestAccess::test_collapsible_edge_docks(root);
     Emu51ImguiAppTestAccess::test_recent_projects(root);
     Emu51ImguiAppTestAccess::test_hardware_projects(root);
     Emu51ImguiAppTestAccess::test_serial_terminal(root);
+    Emu51ImguiAppTestAccess::test_serial_terminal_docking(root);
     Emu51ImguiAppTestAccess::test_serial_file_send(root);
     Emu51ImguiAppTestAccess::test_serial_file_endings(root);
     Emu51ImguiAppTestAccess::test_tinybasic(root);

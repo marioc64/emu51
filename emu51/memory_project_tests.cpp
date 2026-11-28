@@ -152,6 +152,14 @@ int main() {
     check(!emu51MigrateProject(overlap,error) && !overlap.peripherals.circuitBus,"Unaligned legacy register window requires explicit wiring");
     Emu51Project draft;
     draft.programs.push_back({(root/"loaded.asm").string(),0,true,"org 0\ndb 42h\nend\n"});
+    auto duplicate = draft;
+    duplicate.editor = {true,true,true,"","loaded.asm",(root/".").string(),draft.programs.front().sourceText,2,1};
+    check(emu51MigrateProject(duplicate,error) && duplicate.units.size() == 1 &&
+        duplicate.activeUnit == "program1" && !duplicate.units.front().includeOnly &&
+        duplicate.units.front().editor.line == 2 && duplicate.units.front().editor.column == 1 &&
+        duplicate.mappings.size() == 1 && duplicate.mappings.front().unit == "program1" &&
+        emu51BuildProject(duplicate).success(),
+        "Migration reuses a matching embedded program and preserves its editor and load mapping");
     draft.editor = {true,true,true,(root/"unfinished.asm").string(),"unfinished.asm",root.string(),"unfinished source",4,2};
     check(emu51MigrateProject(draft,error) && draft.units.size() == 2 && draft.units.back().includeOnly && draft.activeUnit == "editor" &&
         draft.units.back().editor.text == "unfinished source" && draft.units.back().editor.line == 4 && emu51BuildProject(draft).success(),

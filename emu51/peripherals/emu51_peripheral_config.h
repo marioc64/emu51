@@ -7,7 +7,7 @@
 enum class Emu51PeripheralKind { I8255, Adc0804, Dac, Voltage, Digital, Audio,
     Led, Switch, Button, Lcd, Keypad, Shift595, Shift165, Eeprom, Ay38910,
     Display7, Display14, Display16, Bargraph, Cd4511, Ls47, Max7219, Max7221, Ht16k33, Tm1637,
-    Ram, Rom, Clock, AddressDecoder, BusLatch, BusBuffer, KeyMatrix, Inverter };
+    Ram, Rom, Clock, AddressDecoder, BusLatch, BusBuffer, KeyMatrix, Inverter, Ssd1306, Ds1307, Mcp23017, W25q64, LogicAnalyzer, Eeprom256, Uln2003, Stepper, Adc0809 };
 struct Emu51MemoryImage {
     std::string path;
     std::uint64_t offset = 0, length = 0;
@@ -54,6 +54,7 @@ struct Emu51PeripheralDevice {
     int keyLayoutColumns = 0, keyLayoutRows = 0;
     std::vector<int> keyLayout = {}; // visual row-major slots; -1 = empty, otherwise electrical key index
     std::vector<std::string> keyLegends = {};
+    int serialAddress = 0, rtcDay = 0, rtcSecond = 0;
     bool operator==(const Emu51PeripheralDevice&) const = default;
 };
 struct Emu51PeripheralWire {
@@ -85,6 +86,13 @@ struct Emu51PeripheralLiveBox {
     bool momentaryKeys = false;
     bool operator==(const Emu51PeripheralLiveBox&) const = default;
 };
+struct Emu51PeripheralLiveLabel {
+    static constexpr unsigned maxCount = 64, textCapacity = 256;
+    std::string text;
+    double x = 0, y = 0;
+    bool operator==(const Emu51PeripheralLiveLabel&) const = default;
+};
+bool emu51ValidLiveLabel(const Emu51PeripheralLiveLabel&);
 // Preset 0: empty; 1: P1 -> DAC; 2: XDATA -> 8255 -> ADC/DAC;
 // 3: microphone -> ADC -> P0, P1 -> Covox -> default host playback.
 // 4: two-voice music on P1 -> Covox -> playback only.
@@ -103,12 +111,22 @@ std::string emu51KeyLabel(const Emu51PeripheralDevice&, unsigned key);
 inline constexpr int emu51PeripheralComponentKind(Emu51PeripheralKind kind) {
     if (kind >= Emu51PeripheralKind::BusLatch && kind <= Emu51PeripheralKind::KeyMatrix)
         return 9+static_cast<int>(kind)-static_cast<int>(Emu51PeripheralKind::BusLatch);
+    if (kind >= Emu51PeripheralKind::Eeprom256 && kind <= Emu51PeripheralKind::Adc0809)
+        return 12+static_cast<int>(kind)-static_cast<int>(Emu51PeripheralKind::Eeprom256);
     return kind >= Emu51PeripheralKind::Led && kind <= Emu51PeripheralKind::Ay38910 ?
         static_cast<int>(kind)-static_cast<int>(Emu51PeripheralKind::Led) : -1;
+}
+inline constexpr unsigned emu51PeripheralEepromSize(Emu51PeripheralKind kind) {
+    return kind == Emu51PeripheralKind::Eeprom256 ? 32768 : kind == Emu51PeripheralKind::Eeprom ? 256 : 0;
 }
 inline constexpr int emu51PeripheralBusSize(Emu51PeripheralKind kind) {
     return kind == Emu51PeripheralKind::I8255 ? 4 : kind == Emu51PeripheralKind::Ay38910 ? 2 :
         (kind == Emu51PeripheralKind::BusLatch || kind == Emu51PeripheralKind::BusBuffer) ? 1 : 0;
+}
+
+inline constexpr int emu51PeripheralSerialKind(Emu51PeripheralKind kind) {
+    return kind >= Emu51PeripheralKind::Ssd1306 && kind <= Emu51PeripheralKind::LogicAnalyzer ?
+        static_cast<int>(kind)-static_cast<int>(Emu51PeripheralKind::Ssd1306) : -1;
 }
 
 inline constexpr int emu51PeripheralDisplayKind(Emu51PeripheralKind kind) {

@@ -2,6 +2,7 @@
 #include "emu51_imgui_app.h"
 #include "emu51_editor_files.h"
 #include "TextEditor.h"
+#include "imgui_internal.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,85 @@ std::string read(const fs::path& path) { std::ifstream input(path,std::ios::bina
 }
 struct Emu51ImguiAppTestAccess {
     static std::unique_ptr<Emu51ImguiApp> create() { return std::unique_ptr<Emu51ImguiApp>(new Emu51ImguiApp(false,false)); }
+    static void projectPanel(const fs::path& root) {
+        auto app = create();
+        const auto demo = fs::path(EMU51_REPO_ROOT)/"progs/asm/demo/banked_rom.emu51";
+        const auto binPath = root/"binary_with_a_long_filename_to_check_the_width_of_the_project_sidebar.bin";
+        check(app->openProjectFromPath(demo) && app->projectPanelVisible(), "Opening a project shows its own panel");
+        check(emu51WriteTextFileAtomically(root/"extra.asm", "org 20h\nend\n") &&
+            emu51WriteTextFileAtomically(root/"extra.hex", ":0100100042AD\n:00000001FF\n") &&
+            emu51WriteTextFileAtomically(binPath, std::string(1, '\x71')), "Write ASM, HEX and BIN fixtures");
+        check(app->addProjectUnit(root/"extra.asm", false, false), "Add ASM without opening an editor tab");
+        const auto extra = app->selectedProjectFile_;
+        check(app->addProjectUnit(root/"extra.hex", false, false), "Add HEX to project");
+        const auto hex = app->selectedProjectFile_;
+        check(app->addProjectUnit(binPath, false, false), "Add BIN to project");
+        const auto bin = app->selectedProjectFile_;
+        check(app->activeProjectUnit_ == "boot" && !app->openProjectUnit(hex) && !app->openProjectUnit(bin),
+            "HEX and BIN belong to the project without becoming text tabs");
+        app->projectMappings_.push_back({"test_hex", hex, "work_ram", 0x10, 0x11, 0x20, 10, false});
+        app->projectMappings_.push_back({"test_bin", bin, "work_ram", 0, 1, 0x21, 11, false});
+        check(app->buildProjectUnits(true) &&
+            app->peripherals_->snapshotMemory("work_ram", 0x20, 2) == std::vector<std::uint8_t>{0x42, 0x71},
+            "HEX and BIN load to their own physical destinations");
+        check(app->openProjectUnit(extra), "Open ASM from the project");
+        app->assemblyEditor_->ReplaceSectionText(0,0,0,0,"; unsaved tab\n");
+        app->trackAssemblyEditorChanges();
+        auto& io = ImGui::GetIO();
+        io.DisplaySize = {1280, 800};
+        io.DeltaTime = 1.0f / 60;
+        const auto frame = [&] {
+            ImGui::NewFrame();
+            app->updateSnappedPaneLayout();
+            app->drawProjectPanel();
+            app->drawAssemblyEditor();
+            ImGui::Render();
+        };
+        frame(); frame(); frame();
+        auto* panel = ImGui::FindWindowByName("Project###project_panel");
+        auto* editor = ImGui::FindWindowByName("Assembly Editor###assembly_editor");
+        check(panel && editor && panel != editor, "Project and ASM have separate windows");
+        const auto tabBarId = editor->GetID("assembly-file-tabs");
+        auto* tabs = GImGui->TabBars.GetByKey(tabBarId);
+        const auto bootTab = ImHashStr("###boot", 0, tabBarId);
+        check(tabs && tabs->Tabs.Size == 4 && tabs->BarRect.Min.y == editor->TitleBarRect().Min.y,
+            "Only opened ASM files have tabs, in the editor title bar");
+        ImGui::ActivateItemByID(bootTab);
+        frame(); frame(); frame();
+        check(app->activeProjectUnit_ == "boot", "Selecting a title-bar tab switches the source");
+
+        const Emu51ImguiApp::PaneKey pane{Emu51ImguiApp::PaneKey::Kind::Project, 0};
+        app->snapLayoutPreferences_.leftWidthFraction = app->snapLayoutPreferences_.rightWidthFraction = 0.16f;
+        app->setPaneSnapTarget(pane, Emu51ImguiSnapTarget::Left);
+        frame(); frame();
+        const auto listId = panel->GetID("project-file-list");
+        const auto list = std::find_if(panel->DC.ChildWindows.begin(), panel->DC.ChildWindows.end(),
+            [&](const auto* window) { return window->ChildId == listId; });
+        check(list != panel->DC.ChildWindows.end(), "Project files are in a separate list above the properties");
+        const auto* listWindow = *list;
+        const auto binItem = ImHashStr("###file", 0, ImHashStr(bin.c_str(), 0, listWindow->ID));
+        ImGui::ActivateItemByID(binItem);
+        frame(); frame();
+        check(app->selectedProjectFile_ == bin && app->activeProjectUnit_ == "boot",
+            "Selecting a file in the narrow sidebar shows its properties without switching the editor");
+        check(panel->Pos.x < 32 && panel->Size.x < 210 && panel->ScrollMax.x == 0 && listWindow->ScrollMax.x == 0,
+            "A long file name and its load settings fit the narrow left dock");
+        app->setPaneSnapTarget(pane, Emu51ImguiSnapTarget::Right);
+        frame(); frame();
+        check(panel->Pos.x > 1000 && panel->Size.x < 210 && panel->ScrollMax.x == 0 && listWindow->ScrollMax.x == 0,
+            "The project sidebar also fits in a narrow right dock");
+
+        app->closeProjectUnitTab(extra);
+        check(app->projectUnits_.size() == 6 && app->saveProjectToPath(root/"with-tabs.emu51"),
+            "Closing a tab keeps the project file and its draft");
+        auto reopened = create();
+        check(reopened->openProjectFromPath(root/"with-tabs.emu51") &&
+            reopened->activeProjectUnit_ == "boot" &&
+            std::count_if(reopened->projectUnits_.begin(), reopened->projectUnits_.end(),
+                [](const auto& unit) { return unit.editor.open; }) == 3 &&
+            reopened->openProjectUnit(extra) && reopened->assemblyEditor_->GetText().starts_with("; unsaved tab"),
+            "Reopening the project restores tab visibility and retains closed drafts");
+    }
     static void run(const fs::path& root) {
         const auto demos = fs::path(EMU51_REPO_ROOT)/"progs/asm/demo";
         auto app = create();
@@ -143,6 +223,6 @@ int main() {
     ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr;
     ImGui::GetIO().Fonts->AddFontDefault(); ImGui::GetIO().Fonts->Build();
     const auto root = fs::temp_directory_path()/("emu51-memory-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    fs::create_directories(root); Emu51ImguiAppTestAccess::run(root); fs::remove_all(root);
+    fs::create_directories(root); Emu51ImguiAppTestAccess::run(root); Emu51ImguiAppTestAccess::projectPanel(root); fs::remove_all(root);
     ImGui::DestroyContext(); std::puts("Memory circuit UI, independent editors, physical sources, clocks and lifecycle passed.");
 }

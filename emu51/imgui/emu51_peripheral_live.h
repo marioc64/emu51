@@ -17,13 +17,19 @@ public:
     bool momentaryKeys(const std::string&) const;
     void setMomentaryKeys(const std::string&,bool);
     std::vector<Emu51PeripheralLiveBox> layout(const Emu51PeripheralConfig&) const;
-    void restore(const std::vector<Emu51PeripheralLiveBox>& boxes) { boxes_ = boxes; editing_ = false; suspend(); }
+    const std::vector<Emu51PeripheralLiveLabel>& labels() const { return labels_; }
+    void restore(const std::vector<Emu51PeripheralLiveBox>&,const std::vector<Emu51PeripheralLiveLabel>& = {});
     bool interacting() const { return interacting_; }
     bool editing() const { return editing_; }
     void suspend() { interacting_ = false; }
 private:
     friend struct Emu51ImguiAppTestAccess;
     std::vector<Emu51PeripheralLiveBox> boxes_;
+    std::vector<Emu51PeripheralLiveLabel> labels_;
+    char labelText_[Emu51PeripheralLiveLabel::textCapacity]{};
+    ImVec2 labelPosition_{};
+    int labelTarget_ = -1;
+    void drawLabels(ImVec2 origin,ImVec2& extent);
     bool editing_ = false, interacting_ = false;
     void arrange(float width);
 };

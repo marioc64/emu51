@@ -70,7 +70,7 @@ void Emu51ImguiApp::updateDragSnapState()
 	ImGuiContext& g = *GImGui;
 	if (ImGuiWindow* movingWindow = g.MovingWindow ? g.MovingWindow->RootWindow : nullptr) {
 		PaneKey pane;
-		if (paneFromWindowId(movingWindow->ID, &pane)) {
+		if (paneFromWindowId(movingWindow->ID, &pane) && !paneHiddenByCollapsedDock(pane)) {
 			const bool dragStarted = !dragSnapActive_ || !(draggingPane_ == pane);
 			const bool dragFromTitleBar = movingWindow->TitleBarRect().Contains(g.IO.MouseClickedPos[ImGuiMouseButton_Left]);
 			draggingPane_ = pane;
@@ -205,6 +205,42 @@ void Emu51ImguiApp::drawSnapSplitters()
 	ImGui::End();
 }
 
+bool Emu51ImguiApp::edgeDockCollapsed(Emu51ImguiSnapTarget target) const
+{
+	const int index = snapTargetIndex(target);
+	return index >= 0 && index < static_cast<int>(collapsedEdgeDocks_.size()) && collapsedEdgeDocks_[index];
+}
+
+bool Emu51ImguiApp::paneHiddenByCollapsedDock(const PaneKey& pane) const
+{
+	return edgeDockCollapsed(snapTargetForPane(pane));
+}
+
+void Emu51ImguiApp::setEdgeDockCollapsed(Emu51ImguiSnapTarget target, bool collapsed)
+{
+	const int index = snapTargetIndex(target);
+	if (index < 0 || index >= static_cast<int>(collapsedEdgeDocks_.size()) || collapsedEdgeDocks_[index] == collapsed)
+		return;
+	collapsedEdgeDocks_[index] = collapsed;
+	edgeDockVisibilityChanged();
+}
+
+void Emu51ImguiApp::setAllEdgeDocksCollapsed(bool collapsed)
+{
+	if (std::all_of(collapsedEdgeDocks_.begin(), collapsedEdgeDocks_.end(), [collapsed](bool value) { return value == collapsed; }))
+		return;
+	collapsedEdgeDocks_.fill(collapsed);
+	edgeDockVisibilityChanged();
+}
+
+void Emu51ImguiApp::edgeDockVisibilityChanged()
+{
+	if (hasActivePane_ && paneHiddenByCollapsedDock(activePane_))
+		hasActivePane_ = false;
+	markLayoutStateDirty();
+	executionRedrawPending_.store(true, std::memory_order_release);
+}
+
 void Emu51ImguiApp::updateSnappedPaneLayout()
 {
 	snappedPaneRects_.clear();
@@ -213,6 +249,9 @@ void Emu51ImguiApp::updateSnappedPaneLayout()
 	std::array<std::vector<PaneKey>, 5> panesByTarget;
 	appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::Registers, 0});
 	appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::Peripherals, 0});
+	appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::SerialTerminal, 0});
+	if (projectPanelOpen_)
+		appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::Project, 0});
 	if (assemblyEditorState_.open)
 		appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::AssemblyEditor, 0});
 	for (const DisassemblyView& view : disassemblyViews_)
@@ -222,6 +261,9 @@ void Emu51ImguiApp::updateSnappedPaneLayout()
 	for (const MonitorView& view : monitorViews_)
 		appendSnappedPane(panesByTarget, PaneKey{PaneKey::Kind::Monitor, view.id});
 
+	for (size_t index = 0; index < collapsedEdgeDocks_.size(); ++index)
+		if (collapsedEdgeDocks_[index])
+			panesByTarget[index].clear();
 	int snappedPaneCount = 0;
 	for (const auto& panes : panesByTarget)
 		snappedPaneCount += static_cast<int>(panes.size());
@@ -405,6 +447,11 @@ void Emu51ImguiApp::updateSnappedPaneLayout()
 
 void Emu51ImguiApp::applyWindowPlacement(const PaneKey& pane, const ImVec2& defaultSize, ImGuiWindowFlags* flags)
 {
+	FloatingPaneState* state = findFloatingPaneState(pane);
+	if (state && state->restoreCollapsePending) {
+		ImGui::SetNextWindowCollapsed(state->collapsed, ImGuiCond_Always);
+		state->restoreCollapsePending = false;
+	}
 	for (const SnappedPaneRect& rect : snappedPaneRects_) {
 		if (!(rect.pane == pane))
 			continue;
@@ -415,12 +462,26 @@ void Emu51ImguiApp::applyWindowPlacement(const PaneKey& pane, const ImVec2& defa
 		return;
 	}
 
-	if (FloatingPaneState* state = findFloatingPaneState(pane); state != nullptr && state->restorePending && state->hasSize) {
+	if (state && state->restorePositionPending && state->position) {
+		const auto* viewport = ImGui::GetMainViewport();
+		if (viewport->WorkSize.x > 0 && viewport->WorkSize.y > 0) {
+			const ImVec2 size = state->hasSize ? state->size : defaultSize;
+			const auto work = viewport->WorkSize;
+			const auto origin = viewport->WorkPos;
+			const auto padding = ImMin(ImGui::GetStyle().DisplayWindowPadding, ImVec2(work.x * 0.5f, work.y * 0.5f));
+			const ImVec2 min(origin.x + padding.x - size.x, origin.y + padding.y - ImGui::GetFrameHeight());
+			const ImVec2 max(origin.x + work.x - padding.x, origin.y + work.y - padding.y);
+			const ImVec2 position(viewport->Pos.x + state->position->x, viewport->Pos.y + state->position->y);
+			ImGui::SetNextWindowPos(ImClamp(position, min, max), ImGuiCond_Always);
+			state->restorePositionPending = false;
+		}
+	}
+	if (state && state->restorePending && state->hasSize) {
 		ImGui::SetNextWindowSize(state->size, ImGuiCond_Always);
 		state->restorePending = false;
 		return;
 	}
-	if (const FloatingPaneState* state = findFloatingPaneState(pane); state != nullptr && state->hasSize) {
+	if (state && state->hasSize) {
 		ImGui::SetNextWindowSize(state->size, ImGuiCond_FirstUseEver);
 		return;
 	}
@@ -451,13 +512,17 @@ void Emu51ImguiApp::registerPaneWindow(const PaneKey& pane)
 	paneWindowBindings_.push_back(PaneWindowBinding{pane, windowId});
 }
 
-void Emu51ImguiApp::captureFloatingPaneState(const PaneKey& pane)
+void Emu51ImguiApp::capturePanePlacement(const PaneKey& pane)
 {
+	FloatingPaneState& state = ensureFloatingPaneState(pane);
+	state.collapsed = ImGui::IsWindowCollapsed();
 	if (snapTargetForPane(pane) != Emu51ImguiSnapTarget::None)
 		return;
 
-	FloatingPaneState& state = ensureFloatingPaneState(pane);
-	const ImVec2 size = ImGui::GetWindowSize();
+	const auto origin = ImGui::GetMainViewport()->Pos;
+	const auto position = ImGui::GetWindowPos();
+	if (!state.restorePositionPending) state.position = ImVec2(position.x - origin.x, position.y - origin.y);
+	const ImVec2 size = ImGui::GetCurrentWindowRead()->SizeFull;
 	if (!state.hasSize || state.size.x != size.x || state.size.y != size.y) {
 		state.size = size;
 		state.hasSize = true;
@@ -504,6 +569,10 @@ bool Emu51ImguiApp::paneExists(const PaneKey& pane) const
 		return registersOpen_;
 	case PaneKey::Kind::Peripherals:
 		return peripheralsOpen_;
+	case PaneKey::Kind::SerialTerminal:
+		return serialTerminalOpen_;
+	case PaneKey::Kind::Project:
+		return projectPanelOpen_;
 	case PaneKey::Kind::AssemblyEditor:
 		return assemblyEditorState_.open;
 	case PaneKey::Kind::Disassembly:
@@ -629,44 +698,79 @@ bool Emu51ImguiApp::saveState() const
 Emu51UiState Emu51ImguiApp::captureUiState() const
 {
     Emu51UiState state;
+    static_cast<Emu51UiLayout&>(state) = captureUiLayout();
+    state.recentPrograms = recentProgramPaths_;
+    state.recentProjects = recentProjectPaths_;
+    return state;
+}
+
+Emu51UiLayout Emu51ImguiApp::captureUiLayout() const
+{
+    Emu51UiLayout state;
     state.leftWidth = snapLayoutPreferences_.leftWidthFraction;
     state.rightWidth = snapLayoutPreferences_.rightWidthFraction;
     state.topHeight = snapLayoutPreferences_.topHeightFraction;
     state.bottomHeight = snapLayoutPreferences_.bottomHeightFraction;
     state.registersVisible = registersOpen_;
     state.peripheralInspector = peripheralEditor_.inspectorVisible();
-    state.recentPrograms = recentProgramPaths_;
-    state.recentProjects = recentProjectPaths_;
+    state.collapsedEdgeDocks = collapsedEdgeDocks_;
     state.panes.clear();
-    auto writePane = [this,&state](const PaneKey& pane, bool followPc = true) {
+    auto writePane = [this,&state](const PaneKey& pane, bool open) -> Emu51UiPaneState& {
         const auto* assignment = findPaneSnapAssignment(pane);
         const auto* floating = findFloatingPaneState(pane);
         state.panes.push_back({paneKindLabel(pane.kind),pane.id,
             snapTargetPersistedLabel(assignment ? assignment->target : Emu51ImguiSnapTarget::None),
             assignment ? assignment->share : 1.0,
             floating && floating->hasSize ? floating->size.x : 0.0,
-            floating && floating->hasSize ? floating->size.y : 0.0,followPc});
+            floating && floating->hasSize ? floating->size.y : 0.0});
+        auto& saved = state.panes.back();
+        saved.open = open;
+        saved.collapsed = floating && floating->collapsed;
+        if (floating && floating->position) {
+            saved.positioned = true;
+            saved.x = floating->position->x;
+            saved.y = floating->position->y;
+        }
+        return saved;
     };
-    writePane({PaneKey::Kind::Registers,0});
-    writePane({PaneKey::Kind::Peripherals,0});
-    writePane({PaneKey::Kind::AssemblyEditor,0});
-    writePane({PaneKey::Kind::InternalRamMonitor,0});
-    for (const auto& view : disassemblyViews_)
-        if (view.open) writePane({PaneKey::Kind::Disassembly,view.id},view.followPc);
-    for (const auto& view : monitorViews_) writePane({PaneKey::Kind::Monitor,view.id});
+    writePane({PaneKey::Kind::Registers,0},registersOpen_);
+    writePane({PaneKey::Kind::Peripherals,0},peripheralsOpen_);
+    writePane({PaneKey::Kind::Project,0},projectPanelOpen_);
+    writePane({PaneKey::Kind::AssemblyEditor,0},assemblyEditorState_.open);
+    writePane({PaneKey::Kind::Debugger,0},true);
+    writePane({PaneKey::Kind::SerialTerminal,0},true);
+    writePane({PaneKey::Kind::InternalRamMonitor,0},internalRamMonitor_.open).address = internalRamMonitor_.start;
+    for (const auto& view : disassemblyViews_) if (view.open) {
+        auto& saved = writePane({PaneKey::Kind::Disassembly,view.id},view.open);
+        saved.followPc = view.followPc;
+        saved.address = view.start;
+    }
+    for (const auto& view : monitorViews_) if (view.open) {
+        auto& saved = writePane({PaneKey::Kind::Monitor,view.id},view.open);
+        saved.memoryKind = static_cast<int>(view.memoryKind);
+        saved.address = view.start;
+    }
     return state;
 }
 
-void Emu51ImguiApp::applyUiState(const Emu51UiState& state)
+void Emu51ImguiApp::applyUiLayout(const Emu51UiLayout& state, bool restoreWorkspace)
 {
     snapLayoutPreferences_ = {static_cast<float>(state.leftWidth),static_cast<float>(state.rightWidth),
         static_cast<float>(state.topHeight),static_cast<float>(state.bottomHeight)};
     registersOpen_ = state.registersVisible;
     peripheralEditor_.setInspectorVisible(state.peripheralInspector);
+    collapsedEdgeDocks_ = state.collapsedEdgeDocks;
     paneSnapAssignments_.clear();
     floatingPaneStates_.clear();
     disassemblyViews_.clear();
     nextDisassemblyViewId_ = 1;
+    if (restoreWorkspace) {
+        monitorViews_.clear();
+        nextMonitorViewId_ = 1;
+        paneWindowBindings_.clear();
+        hasActivePane_ = dragSnapActive_ = false;
+        dragSnapTarget_ = Emu51ImguiSnapTarget::None;
+    }
     for (const auto& saved : state.panes) {
         PaneKey::Kind kind;
         Emu51ImguiSnapTarget target;
@@ -678,14 +782,48 @@ void Emu51ImguiApp::applyUiState(const Emu51UiState& state)
         floating.pane = pane;
         floating.size = ImVec2(static_cast<float>(saved.width),static_cast<float>(saved.height));
         floating.hasSize = saved.width > 0 && saved.height > 0;
+        if (restoreWorkspace) {
+            if (saved.positioned) floating.position = ImVec2(static_cast<float>(saved.x),static_cast<float>(saved.y));
+            floating.restorePositionPending = saved.positioned && target == Emu51ImguiSnapTarget::None;
+            floating.restorePending = floating.hasSize;
+            floating.collapsed = saved.collapsed;
+            floating.restoreCollapsePending = true;
+        }
         floatingPaneStates_.push_back(floating);
-        if (kind == PaneKey::Kind::Disassembly) {
+        if (kind == PaneKey::Kind::Disassembly && saved.open) {
             DisassemblyView view;
             view.id = saved.id; view.followPc = saved.followPc;
+            if (restoreWorkspace) view.start = view.end = static_cast<std::uint16_t>(saved.address);
             disassemblyViews_.push_back(view);
             nextDisassemblyViewId_ = std::max(nextDisassemblyViewId_,saved.id+1);
         }
+        if (!restoreWorkspace) continue;
+        switch (kind) {
+        case PaneKey::Kind::Peripherals: peripheralsOpen_ = saved.open; break;
+        case PaneKey::Kind::Project: projectPanelOpen_ = saved.open; break;
+        case PaneKey::Kind::AssemblyEditor: assemblyEditorState_.open = saved.open; break;
+        case PaneKey::Kind::InternalRamMonitor:
+            internalRamMonitor_.open = saved.open;
+            internalRamMonitor_.start = clampMonitorAddress(internalRamMonitor_, static_cast<std::uint16_t>(saved.address));
+            break;
+        case PaneKey::Kind::Monitor:
+            if (saved.open) {
+                MonitorView view;
+                view.id = saved.id;
+                view.memoryKind = static_cast<MonitorView::MemoryKind>(saved.memoryKind);
+                view.start = clampMonitorAddress(view, static_cast<std::uint16_t>(saved.address));
+                monitorViews_.push_back(view);
+                nextMonitorViewId_ = std::max(nextMonitorViewId_,saved.id+1);
+            }
+            break;
+        default: break;
+        }
     }
+}
+
+void Emu51ImguiApp::applyUiState(const Emu51UiState& state)
+{
+    applyUiLayout(state);
     auto restorePaths = [](const auto& source, auto& target, bool programs) {
         target.clear();
         for (const auto& saved : source) {
@@ -731,6 +869,7 @@ void Emu51ImguiApp::snapPane(const PaneKey& pane, Emu51ImguiSnapTarget target)
 		state.restorePending = state.hasSize;
 	}
 	setPaneSnapTarget(pane, target);
+	setEdgeDockCollapsed(target, false);
 	if (target == Emu51ImguiSnapTarget::None)
 		statusMessage_ = "pane released from snapped layout";
 	else

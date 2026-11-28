@@ -1218,7 +1218,9 @@ bool Emu51ImguiApp::assemblyEditorVisible() const
 
 void Emu51ImguiApp::setAssemblyEditorVisible(bool visible)
 {
+	if (assemblyEditorState_.open == visible) return;
 	assemblyEditorState_.open = visible;
+	executionRedrawPending_.store(true, std::memory_order_release);
 }
 
 void Emu51ImguiApp::createDisassemblyView()
@@ -1277,6 +1279,7 @@ void Emu51ImguiApp::resetSnappedPanes()
 {
 	paneSnapAssignments_.clear();
 	snappedPaneRects_.clear();
+	setAllEdgeDocksCollapsed(false);
 	statusMessage_ = "reset snapped layout";
 	markLayoutStateDirty();
 }
@@ -1306,6 +1309,7 @@ void Emu51ImguiApp::draw()
 	drawDebugger();
 	drawSerialTerminal();
     drawPeripherals();
+	drawProjectPanel();
 	drawAssemblyEditor();
 	drawDisassemblyViews();
 	drawMonitorViews();
@@ -1328,25 +1332,17 @@ void Emu51ImguiApp::drawMainMenu()
 
 void Emu51ImguiApp::drawAssemblyEditor()
 {
-	if (!assemblyEditorState_.open || assemblyEditor_ == nullptr)
+	const PaneKey pane{PaneKey::Kind::AssemblyEditor, 0};
+	if (!assemblyEditorState_.open || assemblyEditor_ == nullptr || paneHiddenByCollapsedDock(pane))
 		return;
 
 	trackAssemblyEditorChanges();
-	const PaneKey pane{PaneKey::Kind::AssemblyEditor, 0};
-	std::string title = "Assembly Editor";
-	if (!assemblyEditorState_.sourceName.empty()) {
-		title += " - ";
-		title += assemblyEditorState_.sourceName;
-	}
-	if (assemblyEditorState_.dirty)
-		title += " *";
-	title += "###assembly_editor";
-
 	ImGuiWindowFlags flags = 0;
 	applyWindowPlacement(pane, ImVec2(720.0f, 520.0f), &flags);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
-	ImGui::Begin(title.c_str(), &assemblyEditorState_.open, flags);
+	const bool visible = ImGui::Begin("Assembly Editor###assembly_editor", &assemblyEditorState_.open, flags);
+	capturePanePlacement(pane);
 	registerPaneWindow(pane);
 	drawPaneSnapContextMenu(pane);
 
@@ -1354,7 +1350,24 @@ void Emu51ImguiApp::drawAssemblyEditor()
 		ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
 		ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 	notePaneActivity(pane, editorActive);
-	drawProjectTree();
+	if (visible && assemblyEditorState_.open) drawAssemblyEditorTabs();
+	const bool activeFileOpen = projectUnits_.empty() ||
+		std::any_of(projectUnits_.begin(), projectUnits_.end(), [&](const auto& unit) {
+			return unit.id == activeProjectUnit_ && unit.editor.open;
+		});
+	if (!visible || !assemblyEditorState_.open || !activeFileOpen) {
+		if (visible && assemblyEditorState_.open) {
+			if (ImGui::SmallButton("Open Project panel")) setProjectPanelVisible(true);
+		}
+		ImGui::End();
+		ImGui::PopStyleVar(2);
+		if (!assemblyEditorState_.open) {
+			removePaneSnapTarget(pane);
+			if (hasActivePane_ && activePane_ == pane) hasActivePane_ = false;
+			executionRedrawPending_.store(true, std::memory_order_release);
+		}
+		return;
+	}
 
 	if (loadedSources_.contains(editorSourceKey()) && !editorMatchesLoadedSource_)
 		ImGui::TextWrapped("Source differs from the loaded program. Compile and Load to update source debugging.");
@@ -1403,15 +1416,9 @@ void Emu51ImguiApp::drawAssemblyEditor()
 		}
 		ImGui::EndChild();
 	}
-	captureFloatingPaneState(pane);
 	ImGui::End();
 	ImGui::PopStyleVar(2);
 
-	if (!assemblyEditorState_.open) {
-		removePaneSnapTarget(pane);
-		if (hasActivePane_ && activePane_ == pane)
-			hasActivePane_ = false;
-	}
 }
 
 void Emu51ImguiApp::drawDisassemblyViews()
@@ -1437,12 +1444,15 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 	char windowId[64];
 	char popupId[64];
 	const PaneKey pane{PaneKey::Kind::Disassembly, view.id};
+	if (paneHiddenByCollapsedDock(pane))
+		return;
 	std::snprintf(title, sizeof(title), "Disassembly @ %04X", view.start);
     std::snprintf(windowId,sizeof(windowId),"###disassembly_%d",view.id);
 	std::snprintf(popupId, sizeof(popupId), "Goto###goto_%d", view.id);
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoNavInputs;
 	applyWindowPlacement(pane, ImVec2(230.0f, 400.0f), &flags);
     const bool visible = ImGui::Begin(windowId,&view.open,flags);
+    capturePanePlacement(pane);
     if (!view.open) executionRedrawPending_.store(true,std::memory_order_release);
 	registerPaneWindow(pane);
 	drawPaneSnapContextMenu(pane);
@@ -1450,7 +1460,6 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
     if (!visible) { ImGui::End(); return; }
     notePaneActivity(pane,ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
         ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-    captureFloatingPaneState(pane);
 	const float childHeight = ImGui::GetContentRegionAvail().y;
 	const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
 	const int visibleRows = std::max(1, static_cast<int>(std::ceil(childHeight / lineHeight)));
@@ -1608,8 +1617,9 @@ void Emu51ImguiApp::drawDisassemblyView(DisassemblyView& view)
 
 void Emu51ImguiApp::drawRegisters()
 {
-    if (!registersOpen_) return;
 	const PaneKey pane{PaneKey::Kind::Registers, 0};
+	if (!registersOpen_ || paneHiddenByCollapsedDock(pane))
+		return;
 	const int registerBank = (cpu_.PSW >> 3) & 0x03;
 	const unsigned registerBankBase = static_cast<unsigned>(registerBank << 3);
 	char r0Address[3];
@@ -1674,6 +1684,7 @@ void Emu51ImguiApp::drawRegisters()
 	applyWindowPlacement(pane, ImVec2(860.0f, 520.0f), &flags);
     if (focusRegisters_) { ImGui::SetNextWindowFocus(); focusRegisters_ = false; }
     const bool visible = ImGui::Begin("Registers", &registersOpen_, flags);
+    capturePanePlacement(pane);
     if (!registersOpen_) {
         markLayoutStateDirty();
         // Closing during drawing changes the snapped layout for the next frame.
@@ -1688,7 +1699,6 @@ void Emu51ImguiApp::drawRegisters()
 	notePaneActivity(pane,
 		ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
 		ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-	captureFloatingPaneState(pane);
 
 	const bool canEditPc = !running_;
 	ImGui::TextColored(kPcHeaderColor, "PC");
@@ -1839,8 +1849,12 @@ bool Emu51ImguiApp::loadProgram(
 			for (const auto& m : peripherals_->memories()) if (m.id == "system_memory" || m.id == "system_code") target = m.id;
 			unsigned order = 0; for (const auto& row : projectMappings_) order = std::max(order,row.order+1);
 			projectMappings_.push_back({"load"+std::to_string(order+1),unit->id,target,0,65536,0,order,false});
-			projectTreeOpen_ = true;
-			if (target.empty()) { statusMessage_ = "Choose this source's memory device and physical destination in Project files / Program load mappings"; return false; }
+			selectedProjectFile_ = unit->id;
+			setProjectPanelVisible(true);
+			if (target.empty()) {
+				projectPanelMessage_ = statusMessage_ = "Choose this file's memory chip and physical address in the Project panel";
+				return false;
+			}
 		}
 		if (!buildProjectUnits(true)) return false;
 		if (resetCpuBeforeLoad) resetCpuState(true);
@@ -2063,17 +2077,23 @@ bool Emu51ImguiApp::loadCompiledAssemblyEditorOutput(bool updateStatus, bool res
 		unit.path = unit.embedded ? (assemblyEditorBaseDirectory()/assemblyEditorState_.sourceName).string() : assemblyEditorState_.sourcePath;
 		unit.path = fs::absolute(unit.path).lexically_normal().string();
 		unit.baseDirectory = assemblyEditorBaseDirectory().string();
+		unit.editor.open = assemblyEditorState_.open;
 		projectUnits_.push_back(std::move(unit)); activeProjectUnit_ = "source1"; syncProjectUnit();
 		std::string target;
 		for (const auto& m : peripherals_->memories()) if (m.id == "system_memory" || m.id == "system_code") target = m.id;
-		projectMappings_.push_back({"load1","source1",target,0,65536,0,0,false}); projectTreeOpen_ = true;
+		projectMappings_.push_back({"load1","source1",target,0,65536,0,0,false});
+		selectedProjectFile_ = activeProjectUnit_;
+		setProjectPanelVisible(true);
 		if (target.empty()) {
-			statusMessage_ = "Choose this source's memory device and physical destination in Project files / Program load mappings";
+			projectPanelMessage_ = statusMessage_ = "Choose this file's memory chip and physical address in the Project panel";
+			setAssemblyEditorBuildStatus(false, "Load failed", statusMessage_);
 			return false;
 		}
 	}
 	if (!projectUnits_.empty()) {
-		if (!buildProjectUnits(true)) return false;
+		const bool loaded = buildProjectUnits(true);
+		setAssemblyEditorBuildStatus(loaded, loaded ? "Project loaded" : "Load failed", statusMessage_);
+		if (!loaded) return false;
 		if (resetBeforeLoad) resetCpuState(true);
 		return true;
 	}

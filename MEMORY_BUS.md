@@ -118,16 +118,23 @@ Use binary Save to retain those bytes. Paths are project-relative where possible
 
 ## Multiple sources and explicit load mappings
 
-Open **Project files** in the assembly editor. Add an existing source or create a
-new embedded one. Each file has its own buffer, cursor, undo history, diagnostics
-and compiled image. **Include file** retains an editable include without building
-it independently. **Build only** permits an output with no programming rows.
-Per-unit include directories resolve relative to the project folder. Unsaved
-include drafts participate in assembly without first being written to disk.
+Open **Window → Project** to see the project's ASM, HEX and BIN files. Select a
+file to see its memory chip, physical load address and build options below the list.
+The panel can dock on either side of the workspace. Use
+**File → Add file...** for existing files or **File → New ASM File** for a new
+source. Use **Open in ASM Editor** to open
+a source in a title-bar tab. Closing a tab keeps the file and its edits in the project.
+Each source retains its own cursor, undo history and diagnostics.
 
-Expand **Program load mappings** and add rows with a source unit, source start
-and inclusive end, target RAM/ROM ID, physical destination and explicit order.
-For a source byte at address `a`, the destination is:
+**Include file** retains an editable include without building it independently.
+**Build only** permits an output with no programming rows. Include directories
+resolve relative to the project folder. Unsaved include drafts participate in
+assembly without first being written to disk.
+
+Under **Load mappings**, add a mapping for the selected file and set the memory
+chip and physical address. Expand **Source range and order** to set the source
+start, inclusive end and explicit order. The destination of a byte at source
+address `a` is calculated as follows.
 
 ```text
 physical destination + (a - source start)
@@ -145,11 +152,12 @@ emitted bytes are rejected unless both overlapping rows explicitly allow
 are validated before programming any chip. A failed build preserves the active
 machine. HEX uses its encoded addresses; BIN uses its declared source base.
 
-**Build project** compiles and validates. **Build and load** programs the mapped
-bytes without changing selectors. **Reload** rebuilds and loads all project
-units, following its CPU-reset action. **Power cycle** constructs fresh memory
-from the full recipe, resets the CPU and pauses. Compilation can also be used
-independently in each editor, with its listing and symbols available in the tree.
+**Build → Build Project** compiles and validates. **Build → Build and Load**
+programs the mapped bytes without changing selectors. **Reload** rebuilds and
+loads all project units, following its CPU-reset action. **Build → Power Cycle**
+constructs fresh memory from the full recipe, resets the CPU and pauses. Compilation can also be used
+independently for each ASM file, with its listing and symbols available in the
+Project panel.
 Save Project retains all dirty source drafts. Ordinary source Save updates only
 the selected file. Switching files preserves independent recovery drafts;
 abandoned drafts are offered for recovery at startup.

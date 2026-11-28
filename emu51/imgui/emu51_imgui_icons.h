@@ -9,6 +9,11 @@ enum class Emu51ImguiIcon {
 	StepOver,
 	StepIn,
 	StepOut,
+	DockLeft,
+	DockTop,
+	DockRight,
+	DockBottom,
+	DockAll,
 };
 
 bool emu51ImguiIconButton(const char* id, Emu51ImguiIcon icon, const ImVec2& size);

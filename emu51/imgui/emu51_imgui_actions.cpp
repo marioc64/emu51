@@ -19,8 +19,8 @@ bool hasSource(const Emu51ImguiMenuTarget& t)   { return t.hasAssemblyEditorSour
 bool hasBuildOutput(const Emu51ImguiMenuTarget& t) { return t.hasCompiledAssemblyEditorOutput(); }
 
 constexpr ActionEntry kActions[] = {
-	{Emu51Action::FileSave,            {ImGuiKey_S,  Emu51ShortcutModifier::Primary},      "S",  canSave,        [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.saveAssemblyEditorFile(); }},
-	{Emu51Action::FileSaveAs,          {ImGuiKey_S,  Emu51ShortcutModifier::PrimaryShift}, "S",  canSave,        [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.saveAssemblyEditorFileAs(); }},
+	{Emu51Action::ProjectSave,        {ImGuiKey_S,  Emu51ShortcutModifier::Primary},      "S",  alwaysEnabled,  [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.saveProject(); }},
+	{Emu51Action::SourceSave,         {ImGuiKey_S,  Emu51ShortcutModifier::PrimaryShift}, "S",  canSave,        [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.saveAssemblyEditorFile(); }},
 	{Emu51Action::BuildCompile,        {ImGuiKey_B,  Emu51ShortcutModifier::Primary},      "B",  hasSource,      [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.compileAssemblyEditor(); }},
 	{Emu51Action::BuildLoad,           {ImGuiKey_L,  Emu51ShortcutModifier::PrimaryShift}, "L",  hasBuildOutput, [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.loadCompiledAssemblyEditorOutput(); }},
 	{Emu51Action::BuildCompileAndLoad, {ImGuiKey_B,  Emu51ShortcutModifier::PrimaryShift}, "B",  hasSource,      [](Emu51ImguiMenuTarget& t, const ImGuiIO&) { t.compileAndLoadAssemblyEditor(); }},

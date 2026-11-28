@@ -10,8 +10,8 @@
 // binding is a one-place edit.
 
 enum class Emu51Action {
-	FileSave,
-	FileSaveAs,
+	ProjectSave,
+	SourceSave,
 	BuildCompile,
 	BuildLoad,
 	BuildCompileAndLoad,

@@ -169,14 +169,14 @@ void Emu51ImguiApp::drawOpenProjectBrowser()
 void Emu51ImguiApp::saveProject()
 {
     if (projectPath_.empty()) saveProjectAs();
-    else saveProjectToPath(projectPath_);
+    else saveProjectToPath(projectPath_, true);
 }
 
 void Emu51ImguiApp::saveProjectAs()
 {
     const auto path = chooseProjectPath(true);
     resetTimingAfterUiWork();
-    if (!path.empty()) saveProjectToPath(path);
+    if (!path.empty()) saveProjectToPath(path, true);
 }
 
 int Emu51ImguiApp::recentProjectFileCount() const
@@ -213,7 +213,42 @@ void Emu51ImguiApp::rememberRecentProjectPath(const fs::path& path)
     saveState();
 }
 
-bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
+bool Emu51ImguiApp::saveProjectSources()
+{
+    const auto active = std::find_if(projectUnits_.begin(), projectUnits_.end(),
+        [&](const auto& unit) { return unit.id == activeProjectUnit_; });
+    const fs::path activePath = assemblyEditorState_.sourcePath;
+    if (assemblyEditorState_.dirty && !activePath.empty() &&
+        (active == projectUnits_.end() || !active->embedded)) {
+        if (!saveAssemblyEditorFileToPath(activePath)) {
+            statusMessage_ = "Cannot save project source: " + activePath.string();
+            return false;
+        }
+        syncProjectUnit();
+    }
+    for (auto& unit : projectUnits_) {
+        if (unit.id == activeProjectUnit_ || unit.embedded || !unit.editor.draft ||
+            !isEditableProjectUnit(unit)) continue;
+        const auto& source = unit.editor.path.empty() ? unit.path : unit.editor.path;
+        if (source.empty()) continue;
+        const auto buffer = unitEditors_.find(unit.id);
+        const auto& text = buffer == unitEditors_.end() ? unit.editor.text : buffer->second.observed;
+        if (!withoutExecutionLock([&] { return emu51WriteTextFileAtomically(source, text); })) {
+            statusMessage_ = "Cannot save project source: " + source;
+            return false;
+        }
+        unit.editor.draft = false;
+        unit.editor.text.clear();
+        if (buffer != unitEditors_.end()) {
+            buffer->second.state.dirty = false;
+            if (auto* recovery = buffer->second.recovery.get())
+                withoutExecutionLock([recovery] { recovery->clear(); });
+        }
+    }
+    return true;
+}
+
+bool Emu51ImguiApp::saveProjectToPath(const fs::path& path, bool saveFiles)
 {
     syncProjectUnit();
     trackAssemblyEditorChanges();
@@ -231,7 +266,8 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
             return false;
         }
     }
-    for (const auto& unit : projectUnits_) if (target == normalizedProgramPath(unit.path)) {
+    for (const auto& unit : projectUnits_) if (target == normalizedProgramPath(unit.path) ||
+        (!unit.editor.path.empty() && target == normalizedProgramPath(unit.editor.path))) {
         statusMessage_ = "choose a project path different from every project source/include file"; return false;
     }
     if (peripherals_) for (const auto& device : peripherals_->config().devices)
@@ -244,6 +280,7 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
             statusMessage_ = "choose a project path different from binary initialization images"; return false;
         }
     }
+    if (saveFiles && (!saveProjectSources() || !flushPeripheralStorage())) return false;
     Emu51Project project;
     project.units = projectUnits_; project.mappings = projectMappings_; project.activeUnit = activeProjectUnit_;
     const auto sourceBase = projectPath_.empty() ? fs::current_path() : fs::path(projectPath_).parent_path();
@@ -252,6 +289,8 @@ bool Emu51ImguiApp::saveProjectToPath(const fs::path& path)
     if (peripherals_) project.peripherals = peripherals_->config();
     project.peripheralLayout = peripheralEditor_.positions(project.peripherals);
     project.peripheralLiveLayout = peripheralLive_.layout(project.peripherals);
+    project.peripheralLiveLabels = peripheralLive_.labels();
+    project.workspace = captureUiLayout();
     project.cpuModel = cpu_.model();
     project.unified = unifiedMode_;
     project.execution = {cycleExact_, crystalMHz_, stepsPerFrame_};
@@ -327,7 +366,7 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
             if (!preparedBuild.success()) { statusMessage_ = preparedBuild.error; return false; }
             candidateEditors.clear();
             for (const auto& unit : project->units) {
-                if (emu51_asm::detect_program_file_kind(unit.path) == emu51_asm::ProgramFileKind::raw_binary) continue;
+                if (!isEditableProjectUnit(unit)) continue;
                 std::string text = unit.editor.text;
                 if (!unit.embedded && !unit.editor.draft) {
                     const auto built = std::find_if(preparedBuild.units.begin(),preparedBuild.units.end(),[&](const auto& b) { return b.id == unit.id; });
@@ -339,7 +378,8 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
                 buffer.editor->SetText(text); buffer.editor->SetCursor(unit.editor.line,unit.editor.column);
                 buffer.observed = buffer.editor->GetText(); buffer.savedInProject = buffer.observed;
                 buffer.state.sourcePath = unit.editor.path.empty() && !unit.embedded ? unit.path : unit.editor.path;
-                buffer.state.sourceName = unit.editor.name; buffer.state.open = true; buffer.state.dirty = unit.editor.draft;
+                buffer.state.sourceName = unit.editor.present ? unit.editor.name : fs::path(unit.path).filename().string();
+                buffer.state.dirty = unit.editor.draft;
                 buffer.baseDirectory = unit.baseDirectory.empty() ? fs::path(unit.path).parent_path().string() : unit.baseDirectory;
                 const auto built = std::find_if(preparedBuild.units.begin(),preparedBuild.units.end(),[&](const auto& b) { return b.id == unit.id; });
                 if (built != preparedBuild.units.end()) { buffer.state.compiledImage = built->image; buffer.diagnostics = built->diagnostics; }
@@ -390,7 +430,7 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     installPeripheralSession(std::move(peripheralCandidate));
     peripheralDraft_ = project->peripherals;
     peripheralEditor_.restore(project->peripheralLayout);
-    peripheralLive_.restore(project->peripheralLiveLayout);
+    peripheralLive_.restore(project->peripheralLiveLayout,project->peripheralLiveLabels);
     peripheralsOpen_ = peripheralsOpen_ || !peripheralDraft_.devices.empty();
     cpu_.setModel(project->cpuModel);
     resetMachine();
@@ -414,7 +454,10 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     lastUnitBuilds_.clear(); for (const auto& unit : preparedBuild.units) lastUnitBuilds_.emplace(unit.id,unit);
     projectUnits_ = project->units; projectMappings_ = project->mappings;
     for (const auto& unit : projectUnits_) savedProjectUnits_.insert(unit.id);
-    projectTreeOpen_ = !projectUnits_.empty();
+    selectedProjectFile_ = project->activeUnit.empty() && !projectUnits_.empty() ? projectUnits_.front().id : project->activeUnit;
+    projectPanelMessage_.clear();
+    pendingAssemblyTab_.clear();
+    if (!projectUnits_.empty()) setProjectPanelVisible(true);
     loadedProgramPath_ = project->reloadPath;
     loadedProgramBinaryAddress_ = project->reloadBinaryAddress;
     breakpoints_ = project->breakpoints;
@@ -433,7 +476,9 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     assemblyEditorState_ = {};
     assemblyEditorState_.sourcePath = editor.path;
     assemblyEditorState_.sourceName = editor.name;
-    assemblyEditorState_.open = editor.open;
+    assemblyEditorState_.open = editor.open || (!editor.present &&
+        std::any_of(projectUnits_.begin(), projectUnits_.end(),
+            [](const auto& unit) { return unit.editor.open && isEditableProjectUnit(unit); }));
     untitledSourceBaseDirectory_ = editor.path.empty() ? editor.baseDirectory : std::string{};
     assemblyEditor_->SetText(editorText);
     assemblyEditor_->ClearMarkers();
@@ -444,7 +489,21 @@ bool Emu51ImguiApp::openProjectFromPath(const fs::path& path)
     clearEditorRecovery();
     assemblyEditor_->SetCursor(editor.line, editor.column);
     updateEditorSourceMatch();
-    if (!project->activeUnit.empty() && unitEditors_.contains(project->activeUnit)) (void)switchProjectUnit(project->activeUnit);
+    if (unitEditors_.contains(project->activeUnit)) {
+        const auto unit = std::find_if(projectUnits_.begin(), projectUnits_.end(),
+            [&](const auto& item) { return item.id == project->activeUnit; });
+        if (!unit->editor.present) (void)openProjectUnit(unit->id);
+        else (void)switchProjectUnit(unit->id);
+    }
+    auto openUnit = std::find_if(projectUnits_.begin(), projectUnits_.end(),
+        [&](const auto& unit) { return unit.id == activeProjectUnit_ && unit.editor.open; });
+    if (openUnit == projectUnits_.end()) {
+        openUnit = std::find_if(projectUnits_.begin(), projectUnits_.end(),
+            [](const auto& unit) { return unit.editor.open && isEditableProjectUnit(unit); });
+        if (openUnit != projectUnits_.end()) (void)switchProjectUnit(openUnit->id);
+    }
+    if (openUnit != projectUnits_.end()) pendingAssemblyTab_ = openUnit->id;
+    if (project->workspace) applyUiLayout(*project->workspace, true);
     binaryLoadDialog_.open = fillRangeDialog_.open = setProgramCounterDialog_.open = executionSettingsDialog_.open = false;
     projectPath_ = normalizedProgramPath(path);
     rememberRecentProjectPath(projectPath_);

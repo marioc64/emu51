@@ -268,8 +268,11 @@ void Emu51ImguiApp::drawPeripherals()
         if (peripherals_) for (const auto& d : peripherals_->config().devices)
             if (d.kind == Emu51PeripheralKind::Button) (void)peripherals_->setPressed(d.id,false);
     };
-    if (!peripheralsOpen_) { releaseLiveKeypads(); releaseButtons(); peripheralEditor_.suspend(); peripheralLive_.suspend(); return; }
     const PaneKey pane{PaneKey::Kind::Peripherals, 0};
+    if (!peripheralsOpen_ || paneHiddenByCollapsedDock(pane)) {
+        releaseLiveKeypads(); releaseButtons(); peripheralEditor_.suspend(); peripheralLive_.suspend();
+        return;
+    }
     ImGuiWindowFlags flags = 0;
     applyWindowPlacement(pane, ImVec2(1180, 780), &flags);
     if (snapTargetForPane(pane) == Emu51ImguiSnapTarget::None)
@@ -277,11 +280,11 @@ void Emu51ImguiApp::drawPeripherals()
     ImGui::PushStyleVar(ImGuiStyleVar_WindowTitleAlign,ImVec2(0,0.5f));
     const bool visible = ImGui::Begin("Peripherals", &peripheralsOpen_, flags);
     ImGui::PopStyleVar();
+    capturePanePlacement(pane);
     if (!peripheralsOpen_) executionRedrawPending_.store(true,std::memory_order_release);
     registerPaneWindow(pane);
     drawPaneSnapContextMenu(pane);
     if (!visible || !peripheralsOpen_) { releaseLiveKeypads(); releaseButtons(); peripheralEditor_.suspend(); peripheralLive_.suspend(); ImGui::End(); return; }
-    captureFloatingPaneState(pane);
     notePaneActivity(pane, ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
         ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
     bool graphVisible = false;
@@ -461,10 +464,185 @@ void Emu51ImguiApp::drawPeripheralKeys(const Emu51PeripheralDevice& d,unsigned c
     if (momentary && mask) liveKeypadsThisFrame_.insert(d.id);
     ImGui::PopID();
 }
+namespace {
+void drawStepper(const e51p_stepper_snapshot& motor,float scale)
+{
+    const auto available = ImGui::GetContentRegionAvail();
+    const auto at = ImGui::GetCursorScreenPos();
+    const float textHeight = 2*ImGui::GetTextLineHeightWithSpacing();
+    const float height = std::max(1.0f,available.y-textHeight);
+    const float radius = std::max(1.0f,std::min(available.x,height)*0.35f);
+    const ImVec2 center{at.x+available.x/2,at.y+height/2};
+    auto* draw = ImGui::GetWindowDrawList();
+    const auto rim = ImGui::GetColorU32(ImGuiCol_Border);
+    const auto accent = IM_COL32(90,217,177,255);
+    draw->AddCircleFilled(center,radius,ImGui::GetColorU32(ImGuiCol_FrameBg));
+    draw->AddCircle(center,radius,rim);
+    constexpr ImVec2 compass[]{{0,-1},{1,0},{0,1},{-1,0}};
+    constexpr const char* labels[]{"A","B","C","D"};
+    for (unsigned i=0; i<4; ++i) {
+        const auto& dir = compass[i];
+        const ImVec2 coil{center.x+dir.x*radius*1.2f,center.y+dir.y*radius*1.2f};
+        const auto size = ImGui::CalcTextSize(labels[i]);
+        const auto color = motor.coils&(1u<<i) ? accent : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        draw->AddText({coil.x-size.x/2,coil.y-size.y/2},color,labels[i]);
+    }
+    constexpr float turn = static_cast<float>(E51P_STEPPER_HALF_STEPS_PER_TURN);
+    const float angle = motor.position_half_steps*(6.2831853f/turn);
+    draw->AddLine(center,{center.x+radius*0.82f*std::sin(angle),center.y-radius*0.82f*std::cos(angle)},accent,2*scale);
+    draw->AddCircleFilled(center,3*scale,accent);
+    ImGui::Dummy({available.x,height});
+    const char* direction = motor.direction > 0 ? "Forward" : motor.direction < 0 ? "Reverse" : motor.coils ? "Holding" : "Released";
+    ImGui::Text("%.1f deg  %s",motor.position_half_steps*(360.0/turn),motor.valid ? direction : "Invalid coils");
+    ImGui::Text("Invalid transitions: %u",motor.invalid_transitions);
+}
+void drawOled(const e51p_oled_snapshot& oled)
+{
+    const auto at = ImGui::GetCursorScreenPos();
+    const auto available = ImGui::GetContentRegionAvail();
+    const float pixel = std::max(0.1f,std::min(available.x/128,available.y/64));
+    const ImVec2 origin{at.x+(available.x-128*pixel)/2,at.y+(available.y-64*pixel)/2};
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(origin,{origin.x+128*pixel,origin.y+64*pixel},IM_COL32(7,14,19,255));
+    const auto on = IM_COL32(48+oled.contrast/2,96+oled.contrast/2,128+oled.contrast/2,255);
+    for (unsigned y = 0; y < 64; ++y) {
+        const auto lit = [&](unsigned x) { return (oled.pixels[y][x/8]>>(x%8))&1; };
+        for (unsigned x = 0; x < 128;) {
+            if (!lit(x)) { ++x; continue; }
+            const unsigned start = x;
+            do { ++x; } while (x<128 && lit(x));
+            draw->AddRectFilled({origin.x+start*pixel,origin.y+y*pixel},
+                {origin.x+x*pixel,origin.y+(y+1)*pixel},on);
+        }
+    }
+    ImGui::Dummy(available);
+}
+void drawLogicTrace(const e51p_logic_status& state,const e51p_logic_sample* samples,float scale)
+{
+    if (!state.count) return;
+    const auto at = ImGui::GetCursorScreenPos();
+    const auto available = ImGui::GetContentRegionAvail();
+    const float lane = std::max(6.0f,(available.y-ImGui::GetTextLineHeightWithSpacing())/8);
+    const float left = at.x+24*scale, width = std::max(1.0f,available.x-24*scale);
+    const auto start = samples[0].tick;
+    const auto span = std::max<uint64_t>(1,state.end_tick-start);
+    const auto xAt = [&](uint64_t tick) { return left+width*static_cast<float>(static_cast<double>(tick-start)/span); };
+    auto* draw = ImGui::GetWindowDrawList();
+    for (unsigned channel = 0; channel < 8; ++channel) {
+        const float top = at.y+channel*lane;
+        draw->AddText({at.x,top},ImGui::GetColorU32(ImGuiCol_TextDisabled),("D"+std::to_string(channel)).c_str());
+        draw->AddLine({left,top+lane},{left+width,top+lane},ImGui::GetColorU32(ImGuiCol_Border));
+        const unsigned bit = 1u<<channel;
+        const auto yAt = [&](const e51p_digital_state& pins) {
+            return top+lane*(((pins.floating|pins.contention)&bit) ? .5f : (pins.value&bit) ? .20f : .80f);
+        };
+        const auto colorFor = [&](const e51p_digital_state& pins) {
+            return (pins.contention&bit) ? IM_COL32(255,105,95,255) :
+                (pins.floating&bit) ? IM_COL32(128,136,146,255) : IM_COL32(90,217,177,255);
+        };
+        auto previous = samples[0].pins;
+        float x = left;
+        for (unsigned i = 1; i < state.count; ++i) {
+            const auto& sample = samples[i];
+            if (!(((sample.pins.value^previous.value)|(sample.pins.floating^previous.floating)|
+                (sample.pins.contention^previous.contention))&bit)) continue;
+            const auto nextX = xAt(sample.tick), y = yAt(previous);
+            const auto color = colorFor(previous);
+            draw->AddLine({x,y},{nextX,y},color);
+            draw->AddLine({nextX,y},{nextX,yAt(sample.pins)},color);
+            x = nextX;
+            previous = sample.pins;
+        }
+        const auto y = yAt(previous);
+        draw->AddLine({x,y},{left+width,y},colorFor(previous));
+    }
+    if (state.triggered && state.trigger_tick >= start) {
+        const auto x = xAt(state.trigger_tick);
+        draw->AddLine({x,at.y},{x,at.y+8*lane},IM_COL32(255,186,84,255));
+    }
+    ImGui::Dummy({available.x,8*lane});
+    ImGui::Text("%.3f ms",1000.0*static_cast<double>(state.end_tick-start)/state.tick_hz);
+}
+void drawLogicDecoded(const e51p_logic_sample* samples,unsigned count,unsigned protocol)
+{
+    std::array<e51p_logic_event,E51P_LOGIC_CAPACITY> events;
+    const auto decoded = e51p_logic_decode(samples,count,protocol,events.data(),events.size());
+    if (ImGui::BeginChild("decoded",ImGui::GetContentRegionAvail())) {
+        for (unsigned i = 0; i < decoded; ++i) {
+            const auto& e = events[i];
+            ImGui::Text("%llu",static_cast<unsigned long long>(e.tick));
+            ImGui::SameLine(90*ImGui::GetFontSize()/13);
+            if (e.kind == E51P_LOGIC_BEGIN) ImGui::TextUnformatted(protocol==E51P_LOGIC_I2C ? "START" : "CS low");
+            else if (e.kind == E51P_LOGIC_END) ImGui::TextUnformatted(protocol==E51P_LOGIC_I2C ? "STOP" : "CS high");
+            else if (protocol==E51P_LOGIC_SPI) {
+                if (e.flags==3) ImGui::Text("MOSI %02X   MISO %02X",e.a,e.b);
+                else if (e.flags&1) ImGui::Text("MOSI %02X   MISO --",e.a);
+                else if (e.flags&2) ImGui::Text("MOSI --   MISO %02X",e.b);
+                else ImGui::TextUnformatted("MOSI --   MISO --");
+            } else if (e.kind==E51P_LOGIC_ADDRESS)
+                ImGui::Text("Address %02X %s  %s",e.a>>1,e.a&1 ? "R" : "W",e.flags ? "ACK" : "NACK");
+            else ImGui::Text("%02X  %s",e.a,e.flags ? "ACK" : "NACK");
+        }
+    }
+    ImGui::EndChild();
+}
+void drawAnalyzer(e51p_serial_device* device,float scale)
+{
+    e51p_logic_status state{};
+    std::array<e51p_logic_sample,E51P_LOGIC_CAPACITY> samples;
+    if (e51p_logic_read(device,&state,samples.data(),samples.size())!=E51P_OK) return;
+    auto* settings = ImGui::GetStateStorage();
+    const auto channelId = ImGui::GetID("trigger-channel"), edgeId = ImGui::GetID("trigger-edge");
+    int channel = settings->GetInt(channelId), edge = settings->GetInt(edgeId);
+    ImGui::SetNextItemWidth(100*scale);
+    if (ImGui::Combo("##trigger", &channel,"Immediate\0D0\0D1\0D2\0D3\0D4\0D5\0D6\0D7\0"))
+        settings->SetInt(channelId,channel);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(86*scale);
+    if (ImGui::Combo("##edge", &edge,"Rising\0Falling\0")) settings->SetInt(edgeId,edge);
+    ImGui::SameLine();
+    if (ImGui::Button("Arm")) (void)e51p_logic_arm(device,channel-1,edge==0);
+    ImGui::SameLine();
+    if (ImGui::Button("Stop")) (void)e51p_logic_stop(device);
+    ImGui::Text("%s  %u / %u",state.armed ? (state.triggered ? "Capturing" : "Waiting for trigger") : "Stopped",
+        state.count,static_cast<unsigned>(E51P_LOGIC_CAPACITY));
+    if (ImGui::BeginTabBar("capture")) {
+        if (ImGui::BeginTabItem("Waveforms")) {
+            drawLogicTrace(state,samples.data(),scale);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("I2C")) {
+            ImGui::TextUnformatted("D0 SCL  /  D1 SDA");
+            drawLogicDecoded(samples.data(),state.count,E51P_LOGIC_I2C);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("SPI")) {
+            ImGui::TextUnformatted("D0 SCK  /  D1 MOSI  /  D2 MISO  /  D3 CS");
+            drawLogicDecoded(samples.data(),state.count,E51P_LOGIC_SPI);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+}
 void Emu51ImguiApp::drawPeripheralLiveDevice(const Emu51PeripheralDevice& d,float scale)
 {
     ImGui::PushID(d.id.c_str());
-    if (emu51PeripheralDisplayKind(d.kind)>=0) {
+    if (d.kind == Emu51PeripheralKind::Stepper) {
+        e51p_stepper_snapshot motor{};
+        if (peripherals_->stepperState(d.id,motor)) drawStepper(motor,scale);
+    } else if (d.kind == Emu51PeripheralKind::Ssd1306) {
+        e51p_oled_snapshot oled{};
+        if (e51p_oled_state(peripherals_->serialDevice(d.id),&oled)==E51P_OK) drawOled(oled);
+    } else if (d.kind == Emu51PeripheralKind::Ds1307) {
+        e51p_rtc_snapshot rtc{};
+        if (e51p_rtc_state(peripherals_->serialDevice(d.id),&rtc)==E51P_OK) {
+            ImGui::Text("%04u-%02u-%02u",rtc.year,rtc.month,rtc.day);
+            ImGui::Text("%02u:%02u:%02u%s",rtc.hour,rtc.minute,rtc.second,rtc.halted ? "  Halted" : "");
+        }
+    } else if (d.kind == Emu51PeripheralKind::LogicAnalyzer) {
+        drawAnalyzer(peripherals_->serialDevice(d.id),scale);
+    } else if (emu51PeripheralDisplayKind(d.kind)>=0) {
         e51p_segment_snapshot display{};
         if (peripherals_->displayState(d.id,display)) {
             const int style=d.kind==Emu51PeripheralKind::Bargraph ? 0 : d.kind==Emu51PeripheralKind::Display14 ? 14 :
@@ -645,6 +823,10 @@ void Emu51ImguiApp::drawPeripheralLive(const Emu51PeripheralConfig& active)
         else if (d.kind == Emu51PeripheralKind::Switch) { size = {140,64}; minimum = {100,64}; }
         else if (d.kind == Emu51PeripheralKind::Button) { size = {140,72}; minimum = {100,72}; }
         else if (d.kind == Emu51PeripheralKind::Audio) { size = {420,320}; minimum = {360,240}; }
+        else if (d.kind == Emu51PeripheralKind::Stepper) { size = {210,215}; minimum = {150,145}; }
+        else if (d.kind == Emu51PeripheralKind::Ssd1306) { size = {280,170}; minimum = {120,95}; }
+        else if (d.kind == Emu51PeripheralKind::Ds1307) { size = {185,86}; minimum = {110,70}; }
+        else if (d.kind == Emu51PeripheralKind::LogicAnalyzer) { size = {550,350}; minimum = {290,245}; }
         else if (d.kind == Emu51PeripheralKind::Lcd) {
             size = {std::max(120.0f,static_cast<float>(d.columns*14+24)),static_cast<float>(d.rows*23+48)};
             minimum = {100,60};

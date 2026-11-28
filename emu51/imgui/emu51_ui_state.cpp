@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include "emu51_ui_state.h"
-#include "kason_schema.h"
+#include "emu51_ui_layout_schema.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,54 +11,24 @@
 
 namespace {
 constexpr std::size_t kMaxDocument = 1024 * 1024;
-struct StoredPane {
-    char kind[32], target[16];
-    int id, followPc;
-    double share, width, height;
-};
-struct StoredLayout {
-    double leftWidth, rightWidth, topHeight, bottomHeight;
-    int registersVisible, peripheralInspector;
-    StoredPane panes[1024]; std::size_t paneCount;
-};
 struct StoredState {
     int version;
-    StoredLayout layout;
+    emu51_ui_layout::StoredLayout layout;
     char recentPrograms[10][4096]; std::size_t programCount;
     char recentProjects[10][4096]; std::size_t projectCount;
 };
 
 const kason_schema* stateSchema()
 {
-    static const kason_schema_field paneFields[] = {
-        KaSON_FIELD_STRING(StoredPane, kind, "kind", KaSON_REQUIRED),
-        KaSON_FIELD_INT(StoredPane, id, "id", KaSON_REQUIRED),
-        KaSON_FIELD_STRING(StoredPane, target, "target", KaSON_DEFAULT_STRING("none")),
-        KaSON_FIELD_DOUBLE(StoredPane, share, "share", KaSON_DEFAULT_DOUBLE(1)),
-        KaSON_FIELD_DOUBLE(StoredPane, width, "width", KaSON_DEFAULT_DOUBLE(0)),
-        KaSON_FIELD_DOUBLE(StoredPane, height, "height", KaSON_DEFAULT_DOUBLE(0)),
-        KaSON_FIELD_BOOL(StoredPane, followPc, "follow_pc", KaSON_DEFAULT_BOOL(true)),
-    };
-    KaSON_SCHEMA_DEFINE(paneSchema, StoredPane, paneFields, 16);
-    static const kason_schema_field layoutFields[] = {
-        KaSON_FIELD_DOUBLE(StoredLayout, leftWidth, "left_width", KaSON_DEFAULT_DOUBLE(0.24)),
-        KaSON_FIELD_DOUBLE(StoredLayout, rightWidth, "right_width", KaSON_DEFAULT_DOUBLE(0.24)),
-        KaSON_FIELD_DOUBLE(StoredLayout, topHeight, "top_height", KaSON_DEFAULT_DOUBLE(0.22)),
-        KaSON_FIELD_DOUBLE(StoredLayout, bottomHeight, "bottom_height", KaSON_DEFAULT_DOUBLE(0.22)),
-        KaSON_FIELD_BOOL(StoredLayout, registersVisible, "registers_visible", KaSON_DEFAULT_BOOL(true)),
-        KaSON_FIELD_BOOL(StoredLayout, peripheralInspector, "peripheral_inspector", KaSON_DEFAULT_BOOL(true)),
-        KaSON_FIELD_STRUCT_ARRAY(StoredLayout, panes, paneCount, "panes", &paneSchema, KaSON_REQUIRED),
-    };
-    KaSON_SCHEMA_DEFINE(layoutSchema, StoredLayout, layoutFields, 16);
+    const auto* layoutSchema = emu51_ui_layout::schema();
     static const kason_schema_field fields[] = {
         KaSON_FIELD_INT(StoredState, version, "version", KaSON_REQUIRED),
-        KaSON_FIELD_STRUCT(StoredState, layout, "layout", &layoutSchema, KaSON_REQUIRED),
+        KaSON_FIELD_STRUCT(StoredState, layout, "layout", layoutSchema, KaSON_REQUIRED),
         KaSON_FIELD_STRING_ARRAY(StoredState, recentPrograms, programCount, "recent_programs", KaSON_DEFAULT_EMPTY_ARRAY),
         KaSON_FIELD_STRING_ARRAY(StoredState, recentProjects, projectCount, "recent_projects", KaSON_DEFAULT_EMPTY_ARRAY),
     };
     KaSON_SCHEMA_DEFINE(schema, StoredState, fields, 8);
-    static const bool initialized = kason_schema_init(&paneSchema) == KaSON_SCHEMA_SUCCESS &&
-        kason_schema_init(&layoutSchema) == KaSON_SCHEMA_SUCCESS && kason_schema_init(&schema) == KaSON_SCHEMA_SUCCESS;
+    static const bool initialized = layoutSchema && kason_schema_init(&schema) == KaSON_SCHEMA_SUCCESS;
     return initialized ? &schema : nullptr;
 }
 
@@ -72,18 +41,23 @@ template<std::size_t N> bool copyText(char (&to)[N], const std::string& from)
 
 bool validPane(const Emu51UiPaneState& pane)
 {
-    const bool knownKind = pane.kind == "registers" || pane.kind == "peripherals" || pane.kind == "assembly_editor" ||
-        pane.kind == "disassembly" || pane.kind == "internal_ram" || pane.kind == "monitor";
+    const bool knownKind = pane.kind == "registers" || pane.kind == "peripherals" || pane.kind == "assembly_editor" || pane.kind == "project" ||
+        pane.kind == "disassembly" || pane.kind == "internal_ram" || pane.kind == "monitor" ||
+        pane.kind == "debugger" || pane.kind == "serial_terminal";
     const bool knownTarget = pane.target == "none" || pane.target == "left" || pane.target == "right" ||
         pane.target == "top" || pane.target == "bottom" || pane.target == "center";
     return knownKind && knownTarget && pane.id >= 0 && pane.id < std::numeric_limits<int>::max() &&
-        (pane.kind != "disassembly" || pane.id > 0) &&
+        ((pane.kind != "disassembly" && pane.kind != "monitor") || pane.id > 0) &&
+        (pane.kind != "debugger" || pane.target == "none") &&
+        pane.memoryKind >= 0 && pane.memoryKind <= 2 && pane.address >= 0 && pane.address <= 65535 &&
+        std::isfinite(pane.x) && std::abs(pane.x) <= 100000 &&
+        std::isfinite(pane.y) && std::abs(pane.y) <= 100000 &&
         std::isfinite(pane.share) && pane.share >= 0.05 && pane.share <= 10000 &&
         std::isfinite(pane.width) && pane.width >= 0 && pane.width <= 100000 &&
         std::isfinite(pane.height) && pane.height >= 0 && pane.height <= 100000;
 }
 
-bool validState(const Emu51UiState& state)
+bool validLayout(const Emu51UiLayout& state)
 {
     for (double fraction : {state.leftWidth,state.rightWidth,state.topHeight,state.bottomHeight})
         if (!std::isfinite(fraction) || fraction < 0.12-1e-7 || fraction > 0.70+1e-7) return false;
@@ -106,6 +80,90 @@ void readRecent(std::istream& input, std::vector<std::string>& paths)
 }
 } // namespace
 
+namespace emu51_ui_layout {
+
+const kason_schema* schema()
+{
+    static const kason_schema_field paneFields[] = {
+        KaSON_FIELD_STRING(StoredPane, kind, "kind", KaSON_REQUIRED),
+        KaSON_FIELD_INT(StoredPane, id, "id", KaSON_REQUIRED),
+        KaSON_FIELD_STRING(StoredPane, target, "target", KaSON_DEFAULT_STRING("none")),
+        KaSON_FIELD_DOUBLE(StoredPane, share, "share", KaSON_DEFAULT_DOUBLE(1)),
+        KaSON_FIELD_DOUBLE(StoredPane, width, "width", KaSON_DEFAULT_DOUBLE(0)),
+        KaSON_FIELD_DOUBLE(StoredPane, height, "height", KaSON_DEFAULT_DOUBLE(0)),
+        KaSON_FIELD_BOOL(StoredPane, followPc, "follow_pc", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredPane, open, "open", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredPane, positioned, "positioned", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_DOUBLE(StoredPane, x, "x", KaSON_DEFAULT_DOUBLE(0)),
+        KaSON_FIELD_DOUBLE(StoredPane, y, "y", KaSON_DEFAULT_DOUBLE(0)),
+        KaSON_FIELD_INT(StoredPane, memoryKind, "memory_kind", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_INT(StoredPane, address, "address", KaSON_DEFAULT_INT(0)),
+        KaSON_FIELD_BOOL(StoredPane, collapsed, "collapsed", KaSON_DEFAULT_BOOL(false)),
+    };
+    KaSON_SCHEMA_DEFINE(paneSchema, StoredPane, paneFields, 16);
+    static const kason_schema_field layoutFields[] = {
+        KaSON_FIELD_DOUBLE(StoredLayout, leftWidth, "left_width", KaSON_DEFAULT_DOUBLE(0.24)),
+        KaSON_FIELD_DOUBLE(StoredLayout, rightWidth, "right_width", KaSON_DEFAULT_DOUBLE(0.24)),
+        KaSON_FIELD_DOUBLE(StoredLayout, topHeight, "top_height", KaSON_DEFAULT_DOUBLE(0.22)),
+        KaSON_FIELD_DOUBLE(StoredLayout, bottomHeight, "bottom_height", KaSON_DEFAULT_DOUBLE(0.22)),
+        KaSON_FIELD_BOOL(StoredLayout, registersVisible, "registers_visible", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredLayout, peripheralInspector, "peripheral_inspector", KaSON_DEFAULT_BOOL(true)),
+        KaSON_FIELD_BOOL(StoredLayout, leftCollapsed, "left_collapsed", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_BOOL(StoredLayout, rightCollapsed, "right_collapsed", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_BOOL(StoredLayout, topCollapsed, "top_collapsed", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_BOOL(StoredLayout, bottomCollapsed, "bottom_collapsed", KaSON_DEFAULT_BOOL(false)),
+        KaSON_FIELD_STRUCT_ARRAY(StoredLayout, panes, paneCount, "panes", &paneSchema, KaSON_REQUIRED),
+    };
+    KaSON_SCHEMA_DEFINE(layoutSchema, StoredLayout, layoutFields, 16);
+    static const bool initialized = kason_schema_init(&paneSchema) == KaSON_SCHEMA_SUCCESS &&
+        kason_schema_init(&layoutSchema) == KaSON_SCHEMA_SUCCESS;
+    return initialized ? &layoutSchema : nullptr;
+}
+
+bool decode(const StoredLayout& stored, Emu51UiLayout& layout)
+{
+    Emu51UiLayout decoded;
+    decoded.leftWidth = stored.leftWidth; decoded.rightWidth = stored.rightWidth;
+    decoded.topHeight = stored.topHeight; decoded.bottomHeight = stored.bottomHeight;
+    decoded.registersVisible = stored.registersVisible != 0;
+    decoded.peripheralInspector = stored.peripheralInspector != 0;
+    decoded.collapsedEdgeDocks = {stored.leftCollapsed != 0, stored.rightCollapsed != 0,
+        stored.topCollapsed != 0, stored.bottomCollapsed != 0};
+    decoded.panes.clear();
+    for (std::size_t i = 0; i < stored.paneCount; ++i) {
+        const auto& pane = stored.panes[i];
+        decoded.panes.push_back({pane.kind,pane.id,pane.target,pane.share,pane.width,pane.height,
+            pane.followPc != 0,pane.open != 0,pane.positioned != 0,pane.x,pane.y,pane.memoryKind,pane.address,pane.collapsed != 0});
+    }
+    if (!validLayout(decoded)) return false;
+    layout = std::move(decoded);
+    return true;
+}
+
+bool encode(const Emu51UiLayout& layout, StoredLayout& stored)
+{
+    if (layout.panes.size() > std::size(stored.panes) || !validLayout(layout)) return false;
+    stored.leftWidth = layout.leftWidth; stored.rightWidth = layout.rightWidth;
+    stored.topHeight = layout.topHeight; stored.bottomHeight = layout.bottomHeight;
+    stored.registersVisible = layout.registersVisible; stored.peripheralInspector = layout.peripheralInspector;
+    stored.leftCollapsed = layout.collapsedEdgeDocks[0];
+    stored.rightCollapsed = layout.collapsedEdgeDocks[1];
+    stored.topCollapsed = layout.collapsedEdgeDocks[2];
+    stored.bottomCollapsed = layout.collapsedEdgeDocks[3];
+    stored.paneCount = 0;
+    for (const auto& pane : layout.panes) {
+        auto& out = stored.panes[stored.paneCount++];
+        if (!copyText(out.kind,pane.kind) || !copyText(out.target,pane.target)) return false;
+        out.id = pane.id; out.share = pane.share; out.width = pane.width; out.height = pane.height;
+        out.followPc = pane.followPc; out.open = pane.open; out.positioned = pane.positioned;
+        out.x = pane.x; out.y = pane.y; out.memoryKind = pane.memoryKind; out.address = pane.address;
+        out.collapsed = pane.collapsed;
+    }
+    return true;
+}
+
+} // namespace emu51_ui_layout
+
 bool emu51DecodeUiState(std::string_view json, Emu51UiState& state)
 {
     if (json.empty() || json.size() > kMaxDocument) return false;
@@ -115,37 +173,19 @@ bool emu51DecodeUiState(std::string_view json, Emu51UiState& state)
     if (!schema || kason_unpack_range(document.data(),document.data()+document.size()-1,schema,stored.get(),nullptr) != KaSON_SCHEMA_SUCCESS ||
         stored->version != 1) return false;
     Emu51UiState decoded;
-    const auto& layout = stored->layout;
-    decoded.leftWidth = layout.leftWidth; decoded.rightWidth = layout.rightWidth;
-    decoded.topHeight = layout.topHeight; decoded.bottomHeight = layout.bottomHeight;
-    decoded.registersVisible = layout.registersVisible != 0; decoded.peripheralInspector = layout.peripheralInspector != 0;
-    decoded.panes.clear();
-    for (std::size_t i = 0; i < layout.paneCount; ++i) {
-        const auto& pane = layout.panes[i];
-        decoded.panes.push_back({pane.kind,pane.id,pane.target,pane.share,pane.width,pane.height,pane.followPc != 0});
-    }
+    if (!emu51_ui_layout::decode(stored->layout,decoded)) return false;
     for (std::size_t i = 0; i < stored->programCount; ++i) decoded.recentPrograms.emplace_back(stored->recentPrograms[i]);
     for (std::size_t i = 0; i < stored->projectCount; ++i) decoded.recentProjects.emplace_back(stored->recentProjects[i]);
-    if (!validState(decoded)) return false;
     state = std::move(decoded);
     return true;
 }
 
 bool emu51EncodeUiState(const Emu51UiState& state, std::string& json)
 {
-    if (!validState(state) || state.panes.size() > 1024 || state.recentPrograms.size() > 10 || state.recentProjects.size() > 10)
-        return false;
+    if (state.recentPrograms.size() > 10 || state.recentProjects.size() > 10) return false;
     auto stored = std::make_unique<StoredState>();
     stored->version = 1;
-    auto& layout = stored->layout;
-    layout.leftWidth = state.leftWidth; layout.rightWidth = state.rightWidth;
-    layout.topHeight = state.topHeight; layout.bottomHeight = state.bottomHeight;
-    layout.registersVisible = state.registersVisible; layout.peripheralInspector = state.peripheralInspector;
-    for (const auto& pane : state.panes) {
-        auto& out = layout.panes[layout.paneCount++];
-        if (!copyText(out.kind,pane.kind) || !copyText(out.target,pane.target)) return false;
-        out.id = pane.id; out.share = pane.share; out.width = pane.width; out.height = pane.height; out.followPc = pane.followPc;
-    }
+    if (!emu51_ui_layout::encode(state,stored->layout)) return false;
     for (const auto& path : state.recentPrograms)
         if (!copyText(stored->recentPrograms[stored->programCount++],path)) return false;
     for (const auto& path : state.recentProjects)

@@ -12,12 +12,16 @@ enum class Emu51ImguiSnapTarget {
 	Center,
 };
 
+enum class Emu51ProjectBuildAction { Build, BuildAndLoad, PowerCycle };
+
 class Emu51ImguiMenuTarget {
 public:
 	virtual ~Emu51ImguiMenuTarget() = default;
 
 	virtual void requestOpenProgram() = 0;
 	virtual void requestOpenProject() = 0;
+	virtual void requestAddProjectFiles() = 0;
+	virtual void newProjectAssemblyFile() = 0;
 	virtual void saveProject() = 0;
 	virtual void saveProjectAs() = 0;
 	virtual int recentProjectFileCount() const = 0;
@@ -51,6 +55,8 @@ public:
 	virtual void compileAssemblyEditor() = 0;
 	virtual void loadCompiledAssemblyEditorOutput() = 0;
 	virtual void compileAndLoadAssemblyEditor() = 0;
+	virtual bool hasProjectFiles() const = 0;
+	virtual void performProjectBuild(Emu51ProjectBuildAction action) = 0;
 	virtual bool running() const = 0;
 	virtual std::string executionTimingStatus() const = 0;
 	virtual void toggleRun() = 0;
@@ -73,6 +79,8 @@ public:
 	virtual void setInternalRamMonitorVisible(bool visible) = 0;
 	virtual bool assemblyEditorVisible() const = 0;
 	virtual void setAssemblyEditorVisible(bool visible) = 0;
+	virtual bool projectPanelVisible() const = 0;
+	virtual void setProjectPanelVisible(bool visible) = 0;
 	virtual void createDisassemblyView() = 0;
 	virtual void createDataMemoryMonitor() = 0;
 	virtual void createProgramMemoryMonitor() = 0;
@@ -84,6 +92,9 @@ public:
 	virtual bool hasActivePane() const = 0;
 	virtual void snapActivePane(Emu51ImguiSnapTarget target) = 0;
 	virtual void resetSnappedPanes() = 0;
+	virtual bool edgeDockCollapsed(Emu51ImguiSnapTarget target) const = 0;
+	virtual void setEdgeDockCollapsed(Emu51ImguiSnapTarget target, bool collapsed) = 0;
+	virtual void setAllEdgeDocksCollapsed(bool collapsed) = 0;
 };
 
 void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target);

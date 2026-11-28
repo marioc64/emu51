@@ -138,6 +138,8 @@ void Emu51ImguiApp::drawMonitorView(MonitorView& view)
 		view.memoryKind == MonitorView::MemoryKind::InternalRam ? PaneKey::Kind::InternalRamMonitor : PaneKey::Kind::Monitor,
 		view.memoryKind == MonitorView::MemoryKind::InternalRam ? 0 : view.id
 	};
+	if (paneHiddenByCollapsedDock(pane))
+		return;
 	const int addressDigits = monitorAddressDigits(view);
 	const std::uint16_t maxAddress = clampMonitorAddress(view, Emu51ImguiApp::kMemoryBytes);
 	const char* name = monitorName(view);
@@ -148,9 +150,14 @@ void Emu51ImguiApp::drawMonitorView(MonitorView& view)
 	std::snprintf(popupId, sizeof(popupId), "Goto###monitor_goto_%d", view.id);
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoNavInputs;
 	applyWindowPlacement(pane, ImVec2(430.0f, 400.0f), &flags);
-	ImGui::Begin(title, &view.open, flags);
+	const bool visible = ImGui::Begin(title, &view.open, flags);
+	capturePanePlacement(pane);
 	registerPaneWindow(pane);
 	drawPaneSnapContextMenu(pane);
+	if (!visible) {
+		ImGui::End();
+		return;
+	}
 
 	const ImVec2 childSize = ImGui::GetContentRegionAvail();
 	ImGui::BeginChild("monitor_view", childSize, false,
@@ -182,7 +189,6 @@ void Emu51ImguiApp::drawMonitorView(MonitorView& view)
 		ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
 		ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 	notePaneActivity(pane, monitorActive);
-	captureFloatingPaneState(pane);
 
 	if (monitorActive && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
 		if (addressDigits == 2)

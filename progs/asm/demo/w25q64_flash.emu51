@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "flash",
+      "kind": 36,
+      "storage_path": "w25q64_flash.bin"
+    },
+    {
+      "id": "capture",
+      "kind": 37
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "flash.SCK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "flash.MOSI",
+      "a_bit": 1,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "flash.MISO",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "flash.CS",
+      "a_bit": 3,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "capture.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "w25q64_flash.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "w25q64_flash.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "w25q64_flash.asm",
+    "name": "w25q64_flash.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0.0,
+      "y": 0.0,
+      "name": "Intel 8051"
+    },
+    {
+      "id": "flash",
+      "x": 335.0,
+      "y": 36.0,
+      "name": "FLASH"
+    },
+    {
+      "id": "capture",
+      "x": 670.0,
+      "y": 53.0,
+      "name": "Logic analyzer"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "capture",
+      "x": 12,
+      "y": 46,
+      "width": 492,
+      "height": 318,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Run, then open SPI to inspect the flash commands.",
+      "x": 12,
+      "y": 12
+    }
+  ]
+}

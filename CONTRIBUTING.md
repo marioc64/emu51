@@ -350,6 +350,14 @@ GUI tests execute all six firmware examples and check actual outputs and JSON
 round trips, then render snapshots while paused. See
 [DISPLAYS.md](peripheral-sdk/DISPLAYS.md) for the functional profiles.
 
+`peripheral-sdk/src/serial_devices.cpp` models the SSD1306, DS1307, MCP23017,
+W25Q64 and an eight-channel logic analyzer. I²C slaves share one open-drain
+state machine. MCP23017 weak pulls participate in the normal net resolver.
+Flash snapshots use the same host-side atomic write path as EEPROM images,
+with revision checks for unchanged images. Logic transitions and decoder
+timestamps use SDK ticks. The desktop Live panel draws passive OLED and
+analyzer snapshots. See [serial device profiles](peripheral-sdk/SERIAL_DEVICES.md).
+
 `Emu51ExecutionWorker` owns normal desktop execution on a dedicated thread.
 Cocoa/GLFW callers keep `app.access()` alive while reading or editing the live
 model; UI-only work uses `withoutExecutionLock` so event dialogs, text rendering

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -12,12 +13,20 @@ struct Emu51UiPaneState {
     std::string target = "none";
     double share = 1, width = 0, height = 0;
     bool followPc = true;
+    bool open = true, positioned = false;
+    double x = 0, y = 0;
+    int memoryKind = 0, address = 0;
+    bool collapsed = false;
 };
 
-struct Emu51UiState {
+struct Emu51UiLayout {
     double leftWidth = 0.24, rightWidth = 0.24, topHeight = 0.22, bottomHeight = 0.22;
     bool registersVisible = true, peripheralInspector = true;
     std::vector<Emu51UiPaneState> panes{{"disassembly", 1}};
+    std::array<bool, 4> collapsedEdgeDocks{}; // Left, right, top, bottom.
+};
+
+struct Emu51UiState : Emu51UiLayout {
     std::vector<std::string> recentPrograms, recentProjects;
 };
 

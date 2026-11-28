@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "unified_memory": true,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": false,
+  "serial_input_ending": 0,
+  "serial_file_ending": 0,
+  "serial_file_line_delay_ms": 0,
+  "cpu_model": "8051",
+  "hardware_module": "",
+  "peripheral_devices": [
+    {
+      "id": "driver",
+      "kind": 39
+    },
+    {
+      "id": "motor",
+      "kind": 40
+    },
+    {
+      "id": "reverse",
+      "kind": 7
+    },
+    {
+      "id": "half",
+      "kind": 7
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.P1",
+      "b": "driver.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "driver.OUT",
+      "b": "motor.COILS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 4
+    },
+    {
+      "a": "cpu.P3",
+      "b": "reverse.out",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P3",
+      "b": "half.out",
+      "a_bit": 3,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_analog_wires": [],
+  "cycle_exact": true,
+  "crystal_mhz": 12,
+  "instructions_per_frame": 500,
+  "programs": [
+    {
+      "path": "stepper_control.asm",
+      "binary_address": 0,
+      "from_editor": false,
+      "source_text": ""
+    }
+  ],
+  "reload_program": "stepper_control.asm",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": true,
+    "open": true,
+    "draft": false,
+    "path": "stepper_control.asm",
+    "name": "stepper_control.asm",
+    "base_directory": ".",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 0.0,
+      "y": 0.0,
+      "name": "8051"
+    },
+    {
+      "id": "driver",
+      "x": 157.88,
+      "y": 16.75,
+      "name": "ULN2003"
+    },
+    {
+      "id": "motor",
+      "x": 302.85,
+      "y": 19.75,
+      "name": "Stepper"
+    },
+    {
+      "id": "reverse",
+      "x": 0.0,
+      "y": 158.25,
+      "name": "Reverse"
+    },
+    {
+      "id": "half",
+      "x": 0.0,
+      "y": 222.5,
+      "name": "Half step"
+    }
+  ],
+  "peripheral_live_layout": [
+    {
+      "id": "motor",
+      "x": 12,
+      "y": 46,
+      "width": 236,
+      "height": 216,
+      "momentary_keys": false
+    },
+    {
+      "id": "reverse",
+      "x": 260,
+      "y": 46,
+      "width": 184,
+      "height": 72,
+      "momentary_keys": false
+    },
+    {
+      "id": "half",
+      "x": 260,
+      "y": 130,
+      "width": 184,
+      "height": 72,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Toggle Reverse and Half step while the motor is running.",
+      "x": 12,
+      "y": 12
+    }
+  ]
+}

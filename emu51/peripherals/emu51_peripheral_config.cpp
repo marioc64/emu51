@@ -40,6 +40,15 @@ const char* emu51PeripheralKindName(Emu51PeripheralKind kind)
     case Emu51PeripheralKind::BusBuffer: return "8-bit bus input buffer";
     case Emu51PeripheralKind::KeyMatrix: return "Configurable key matrix";
     case Emu51PeripheralKind::Inverter: return "Bit Inverter";
+    case Emu51PeripheralKind::Ssd1306: return "SSD1306 OLED";
+    case Emu51PeripheralKind::Ds1307: return "DS1307 real-time clock";
+    case Emu51PeripheralKind::Mcp23017: return "MCP23017 GPIO expander";
+    case Emu51PeripheralKind::W25q64: return "W25Q64 SPI flash";
+    case Emu51PeripheralKind::LogicAnalyzer: return "Logic analyzer";
+    case Emu51PeripheralKind::Eeprom256: return "24LC256 EEPROM";
+    case Emu51PeripheralKind::Uln2003: return "ULN2003";
+    case Emu51PeripheralKind::Stepper: return "Four-phase stepper";
+    case Emu51PeripheralKind::Adc0809: return "ADC0809";
     default: break;
     }
     return "Unknown";
@@ -59,7 +68,7 @@ void emu51ValidatePeripheralConfig(const Emu51PeripheralConfig& c)
                     (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
             }) || !ids.insert(d.id).second)
             throw std::runtime_error("Device IDs must be unique letters, digits, '_' or '-' (cpu is reserved)");
-        if (d.kind < Emu51PeripheralKind::I8255 || d.kind > Emu51PeripheralKind::Inverter ||
+        if (d.kind < Emu51PeripheralKind::I8255 || d.kind > Emu51PeripheralKind::Adc0809 ||
             !std::isfinite(d.referenceVolts) || d.referenceVolts <= 0 || d.referenceVolts > 1000 ||
             !std::isfinite(d.voltage) || std::abs(d.voltage) > 1000 || d.conversionTicks < 1 ||
             d.digitalValue < 0 || d.digitalValue > 255 || d.audioDirections < 1 || d.audioDirections > 3 ||
@@ -82,8 +91,13 @@ void emu51ValidatePeripheralConfig(const Emu51PeripheralConfig& c)
         }
         if (d.kind == Emu51PeripheralKind::Audio && ++audioCount > 1)
             throw std::runtime_error("One host audio device is supported per project");
-        if (d.kind == Emu51PeripheralKind::Eeprom && !d.storagePath.empty() && !images.insert(d.storagePath).second)
-            throw std::runtime_error("EEPROM devices require separate image files");
+        if ((emu51PeripheralEepromSize(d.kind) || d.kind == Emu51PeripheralKind::W25q64) &&
+            !d.storagePath.empty() && !images.insert(d.storagePath).second)
+            throw std::runtime_error("EEPROM and flash devices require separate image files");
+        if ((d.kind == Emu51PeripheralKind::Ssd1306 && d.serialAddress && d.serialAddress != 0x3c && d.serialAddress != 0x3d) ||
+            (d.kind == Emu51PeripheralKind::Mcp23017 && d.serialAddress && (d.serialAddress < 0x20 || d.serialAddress > 0x27)) ||
+            (d.kind == Emu51PeripheralKind::Ds1307 && (d.rtcDay < 0 || d.rtcDay >= 36525 || d.rtcSecond < 0 || d.rtcSecond >= 86400)))
+            throw std::runtime_error("Invalid serial device settings: " + d.id);
         if (d.kind == Emu51PeripheralKind::Ram || d.kind == Emu51PeripheralKind::Rom) {
             if (!d.memoryCapacity || d.memoryCapacity > (UINT64_C(1) << 32) || d.memoryFill < 0 || d.memoryFill > 255 || d.memoryImages.size() > 32)
                 throw std::runtime_error("Invalid memory capacity, fill or image count: " + d.id);
@@ -261,4 +275,13 @@ Emu51PeripheralConfig emu51PeripheralPreset(int preset)
         c.analog = {{"covox.out", "audio.playback"}};
     }
     return c;
+}
+
+bool emu51ValidLiveLabel(const Emu51PeripheralLiveLabel& label)
+{
+    return std::isfinite(label.x) && std::isfinite(label.y) &&
+        label.x >= 0 && label.y >= 0 && label.x <= 100000 && label.y <= 100000 &&
+        label.text.size() < Emu51PeripheralLiveLabel::textCapacity &&
+        std::any_of(label.text.begin(),label.text.end(),[](unsigned char ch) { return ch > 32; }) &&
+        std::none_of(label.text.begin(),label.text.end(),[](unsigned char ch) { return ch < 32 || ch == 127; });
 }

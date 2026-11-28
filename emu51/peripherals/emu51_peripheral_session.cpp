@@ -2,7 +2,6 @@
 #include "emu51_peripheral_session.h"
 #include "emu51/registry.h"
 #include "emu51_editor_files.h"
-#include <fstream>
 #ifdef EMU51_GUI_HOST_AUDIO
 #include "emu51/audio_host.h"
 #endif
@@ -34,9 +33,12 @@ const char* factoryType(Emu51PeripheralKind kind)
     if (const int component = emu51PeripheralComponentKind(kind); component >= 0) {
         static const char* types[]{"emu51.led","emu51.switch","emu51.button","emu51.hd44780","emu51.keypad4x4",
             "emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910",
-            "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix"};
+            "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix",
+            "emu51.24lc256","emu51.uln2003","emu51.stepper","emu51.adc0809"};
         return types[component];
     }
+    if (const int serial = emu51PeripheralSerialKind(kind); serial >= 0)
+        return e51p_serial_type_id(static_cast<unsigned>(serial));
     switch (kind) {
     case Emu51PeripheralKind::I8255: return "emu51.i8255.mode0";
     case Emu51PeripheralKind::Adc0804: return "emu51.adc0804";
@@ -114,7 +116,8 @@ std::vector<Emu51PeripheralPin> Emu51PeripheralSession::describe(const Emu51Peri
             for (const auto& output : d.decoderOutputs) add(output.id.c_str(),E51P_DIGITAL,E51P_OUTPUT);
             continue;
         }
-        if (emu51PeripheralComponentKind(d.kind) >= 0 || emu51PeripheralDisplayKind(d.kind) >= 0) {
+        if (emu51PeripheralComponentKind(d.kind) >= 0 || emu51PeripheralDisplayKind(d.kind) >= 0 ||
+            emu51PeripheralSerialKind(d.kind) >= 0) {
             const auto* descriptor = factory(d.kind);
             for (unsigned i = 0; i < descriptor->pin_count; ++i) {
                 const auto& p = descriptor->pins[i];
@@ -249,6 +252,30 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, c
             for (std::size_t i = 0; i < out.size(); ++i) pin(d.decoderOutputs[i].id.c_str(),out[i]);
             continue;
         }
+        if (const int kind = emu51PeripheralSerialKind(d.kind); kind >= 0) {
+            auto settings = e51p_serial_config_init(static_cast<unsigned>(kind));
+            if (d.serialAddress) settings.address = static_cast<unsigned>(d.serialAddress);
+            settings.rtc_day = static_cast<unsigned>(d.rtcDay);
+            settings.rtc_second = static_cast<unsigned>(d.rtcSecond);
+            SerialDevice device{d.id, d.kind == Emu51PeripheralKind::W25q64 ? d.storagePath : std::string{}};
+            e51p_endpoint handles[7];
+            require(e51p_add_serial_device(api_,context_,d.id.c_str(),&settings,&device.handle,handles,7),"Create "+d.id);
+            const auto* descriptor = factory(d.kind);
+            for (unsigned i = 0; i < descriptor->pin_count; ++i) pin(descriptor->pins[i].name,handles[i]);
+            if (!device.storagePath.empty()) {
+                std::error_code error;
+                const bool exists = std::filesystem::exists(device.storagePath,error);
+                if (error) throw std::runtime_error("Cannot inspect flash image: "+device.storagePath);
+                if (exists) {
+                    const auto bytes = readBinary(device.storagePath,E51P_FLASH_SIZE);
+                    require(e51p_flash_import(device.handle,bytes.data(),E51P_FLASH_SIZE),"Load flash image");
+                    device.savedRevision = e51p_flash_revision(device.handle);
+                    device.storageSaved = true;
+                }
+            }
+            serialDevices_.push_back(std::move(device));
+            continue;
+        }
         if (const int kind=emu51PeripheralDisplayKind(d.kind); kind>=0) {
             auto settings=e51p_display_config_init(static_cast<unsigned>(kind));
             settings.digits=static_cast<unsigned>(d.displayDigits); settings.bar_segments=static_cast<unsigned>(d.barSegments);
@@ -269,6 +296,8 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, c
             settings.i2c_address = static_cast<unsigned>(d.i2cAddress); settings.clock_hz = d.clockHz;
             e51p_endpoint handles[16]; e51p_component* handle = nullptr;
             require(e51p_add_component(api_,context_,d.id.c_str(),&settings,&handle,handles,16),"Create "+d.id);
+            if (d.kind == Emu51PeripheralKind::Adc0809)
+                require(e51p_component_set_adc0809(handle,static_cast<uint64_t>(d.conversionTicks),d.referenceVolts),"Configure "+d.id);
             if (d.kind == Emu51PeripheralKind::KeyMatrix)
                 require(e51p_component_set_matrix_direct_keys(handle,static_cast<unsigned>(d.directKeys)),"Configure direct keys "+d.id);
             if (d.kind == Emu51PeripheralKind::BusLatch) {
@@ -286,17 +315,16 @@ void Emu51PeripheralSession::build(const Emu51PeripheralConfig& c, double mhz, c
                 require(api_->map_bus(context_,bus_,static_cast<unsigned>(d.address),static_cast<unsigned>(size),handles[0],0),"Map "+d.id);
             Component component; component.id = d.id; component.handle = handle;
             component.kind = static_cast<unsigned>(kind); component.pressed = d.initiallyPressed;
-            component.savedBytes.fill(255);
-            if (d.kind == Emu51PeripheralKind::Eeprom && !d.storagePath.empty()) {
+            component.storageSize = emu51PeripheralEepromSize(d.kind);
+            if (component.storageSize && !d.storagePath.empty()) {
                 component.storagePath = d.storagePath;
                 std::error_code error;
                 const bool exists = std::filesystem::exists(d.storagePath,error);
                 if (error) throw std::runtime_error("Cannot inspect EEPROM image: "+d.storagePath);
                 if (exists) {
-                    std::ifstream image(d.storagePath,std::ios::binary);
-                    if (!image.read(reinterpret_cast<char*>(component.savedBytes.data()),256) || image.peek() != std::char_traits<char>::eof())
-                        throw std::runtime_error("EEPROM image must contain exactly 256 bytes: "+d.storagePath);
-                    require(e51p_component_eeprom_import(handle,component.savedBytes.data(),256),"Load EEPROM image");
+                    const auto bytes = readBinary(d.storagePath,component.storageSize);
+                    require(e51p_component_eeprom_import(handle,bytes.data(),component.storageSize),"Load EEPROM image");
+                    component.savedRevision = e51p_component_eeprom_revision(handle);
                     component.storageSaved = true;
                 }
             }
@@ -490,6 +518,11 @@ bool Emu51PeripheralSession::ledState(const std::string& id, bool& defined) cons
     for (const auto& c : components_) if (c.id == id && e51p_component_get_led(c.handle,&on,&known) == E51P_OK) break;
     defined = known != 0; return on != 0;
 }
+bool Emu51PeripheralSession::stepperState(const std::string& id,e51p_stepper_snapshot& state) const
+{
+    for (const auto& c : components_) if (c.id==id) return e51p_component_get_stepper(c.handle,&state)==E51P_OK;
+    return false;
+}
 bool Emu51PeripheralSession::lcdState(const std::string& id, e51p_lcd_snapshot& state) const
 {
     state.struct_size = sizeof(state);
@@ -512,13 +545,24 @@ uint64_t Emu51PeripheralSession::displayKeys(const std::string& id) const
     for (const auto& d : displays_) if (d.id==id) return d.keys;
     return 0;
 }
+e51p_serial_device* Emu51PeripheralSession::serialDevice(const std::string& id) const
+{
+    for (const auto& device : serialDevices_) if (device.id == id) return device.handle;
+    return nullptr;
+}
 void Emu51PeripheralSession::carryStorageFrom(const Emu51PeripheralSession& previous)
 {
     for (auto& c : components_) if (!c.storagePath.empty())
-        for (const auto& old : previous.components_) if (old.storagePath == c.storagePath) {
-            std::array<uint8_t,256> bytes{};
-            if (e51p_component_eeprom_export(old.handle,bytes.data(),256) == E51P_OK)
-                (void)e51p_component_eeprom_import(c.handle,bytes.data(),256);
+        for (const auto& old : previous.components_) if (old.storagePath == c.storagePath && old.storageSize == c.storageSize) {
+            std::vector<uint8_t> bytes(c.storageSize);
+            if (e51p_component_eeprom_export(old.handle,bytes.data(),c.storageSize) == E51P_OK)
+                (void)e51p_component_eeprom_import(c.handle,bytes.data(),c.storageSize);
+        }
+    for (auto& d : serialDevices_) if (!d.storagePath.empty())
+        for (const auto& old : previous.serialDevices_) if (old.storagePath == d.storagePath) {
+            std::vector<uint8_t> bytes(E51P_FLASH_SIZE);
+            if (e51p_flash_export(old.handle,bytes.data(),E51P_FLASH_SIZE) == E51P_OK)
+                (void)e51p_flash_import(d.handle,bytes.data(),E51P_FLASH_SIZE);
         }
 }
 bool Emu51PeripheralSession::flushStorage(std::string& error,
@@ -526,13 +570,30 @@ bool Emu51PeripheralSession::flushStorage(std::string& error,
 {
     error.clear();
     for (auto& c : components_) if (!c.storagePath.empty()) {
-        std::array<uint8_t,256> bytes{};
-        if (e51p_component_eeprom_export(c.handle,bytes.data(),256) != E51P_OK) return false;
-        if (c.storageSaved && c.savedBytes == bytes) continue;
+        const auto revision = e51p_component_eeprom_revision(c.handle);
+        if (c.storageSaved && c.savedRevision == revision) continue;
+        std::vector<uint8_t> bytes(c.storageSize);
+        if (e51p_component_eeprom_export(c.handle,bytes.data(),c.storageSize) != E51P_OK) {
+            error = "Cannot snapshot EEPROM image: "+c.storagePath;
+            return false;
+        }
         const std::string_view data(reinterpret_cast<const char*>(bytes.data()),bytes.size());
         const bool saved = writer ? writer(c.storagePath,data) : emu51WriteTextFileAtomically(c.storagePath,data);
         if (!saved) { error = "Cannot save EEPROM image: "+c.storagePath; return false; }
-        c.savedBytes = bytes; c.storageSaved = true;
+        c.savedRevision = revision; c.storageSaved = true;
+    }
+    for (auto& d : serialDevices_) if (!d.storagePath.empty()) {
+        const auto revision = e51p_flash_revision(d.handle);
+        if (d.storageSaved && d.savedRevision == revision) continue;
+        std::vector<uint8_t> bytes(E51P_FLASH_SIZE);
+        if (e51p_flash_export(d.handle,bytes.data(),E51P_FLASH_SIZE) != E51P_OK) {
+            error = "Cannot snapshot flash image: "+d.storagePath;
+            return false;
+        }
+        const std::string_view data(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+        const bool saved = writer ? writer(d.storagePath,data) : emu51WriteTextFileAtomically(d.storagePath,data);
+        if (!saved) { error = "Cannot save flash image: "+d.storagePath; return false; }
+        d.storageSaved = true; d.savedRevision = revision;
     }
     return true;
 }

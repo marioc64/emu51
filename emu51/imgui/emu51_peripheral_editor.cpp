@@ -21,7 +21,8 @@ constexpr float bitRowHeight = 2*bitHalf.y+bitLeadGap+(bitsPerRow-1)*bitLaneGap+
 // Project layout coordinates keep their original units.
 constexpr float layoutScale = 4;
 constexpr float columnGap = 184, blockGap = 64;
-constexpr float leadLength = 72, clearance = 24, cornerRadius = 16, laneGap = 20;
+constexpr float minLead = 40, maxLead = 96, leadStep = 8;
+constexpr float clearance = 24, cornerRadius = 16, laneGap = 20;
 constexpr ImU32 digitalColor = IM_COL32(94, 198, 241, 255);
 constexpr ImU32 analogColor = IM_COL32(245, 188, 91, 255);
 constexpr ImU32 busColor = IM_COL32(185, 151, 246, 255);
@@ -63,7 +64,7 @@ struct Terminal {
 };
 using TerminalPair = std::pair<std::optional<Terminal>,std::optional<Terminal>>;
 
-std::optional<Terminal> terminal(ImVec2 edge, bool left, const std::vector<Bounds>& boxes, float maxLength = leadLength)
+std::optional<Terminal> terminal(ImVec2 edge, bool left, const std::vector<Bounds>& boxes, float maxLength)
 {
     const int outward = left ? -1 : 1;
     float available = maxLength;
@@ -100,11 +101,18 @@ std::vector<ImVec2> roundCorners(const std::vector<ImVec2>& route)
     return curve;
 }
 
-TerminalPair routedTerminals(ImVec2 a, bool aLeft, ImVec2 b, bool bLeft, const std::vector<Bounds>& boxes)
+TerminalPair routedTerminals(ImVec2 a, bool aLeft, float aLength,
+    ImVec2 b, bool bLeft, float bLength, const std::vector<Bounds>& boxes)
 {
     const float gap = (b.x-a.x)*(aLeft ? -1 : 1);
-    const float length = aLeft != bLeft && gap >= 2*clearance ? std::min(leadLength,gap/2) : leadLength;
-    return std::pair{terminal(a,aLeft,boxes,length),terminal(b,bLeft,boxes,length)};
+    if (aLeft != bLeft && gap >= 2*clearance && gap < aLength+bLength) {
+        // Share the tight space above the minimum clearance in proportion to
+        // each terminal's preferred length.
+        const float fraction = (gap-2*clearance)/(aLength+bLength-2*clearance);
+        aLength = clearance+(aLength-clearance)*fraction;
+        bLength = gap-aLength;
+    }
+    return {terminal(a,aLeft,boxes,aLength),terminal(b,bLeft,boxes,bLength)};
 }
 
 ImVec2 pointAlong(const std::vector<ImVec2>& path, float fraction)
@@ -130,8 +138,8 @@ public:
         for (const auto& box : boxes) {
             const auto lo = minus(box.lo,{clearance,clearance});
             const auto hi = plus(box.hi,{clearance,clearance});
-            xs_.insert(xs_.end(),{lo.x,box.lo.x-leadLength-laneGap,box.lo.x-leadLength-2*laneGap,
-                hi.x,box.hi.x+leadLength+laneGap,box.hi.x+leadLength+2*laneGap});
+            xs_.insert(xs_.end(),{lo.x,box.lo.x-maxLead-laneGap,box.lo.x-maxLead-2*laneGap,
+                hi.x,box.hi.x+maxLead+laneGap,box.hi.x+maxLead+2*laneGap});
             ys_.insert(ys_.end(),{lo.y-2*laneGap,lo.y-laneGap,lo.y,hi.y,hi.y+laneGap,hi.y+2*laneGap});
         }
         for (auto* axis : {&xs_,&ys_}) {
@@ -265,6 +273,13 @@ unsigned bitsInRow(unsigned width, unsigned bit)
     return std::min(bitsPerRow,width-bit/bitsPerRow*bitsPerRow);
 }
 
+float bitEscapeY(ImVec2 port, unsigned bit, unsigned width, bool left)
+{
+    const unsigned index = bit%bitsPerRow;
+    const unsigned lane = left ? index : bitsInRow(width,bit)-1-index;
+    return port.y+bitHalf.y+bitLeadGap+lane*bitLaneGap;
+}
+
 std::string range(const std::string& name, int bit, int width)
 {
     return name + "[" + (width > 1 ? std::to_string(bit+width-1) + ":" : "") + std::to_string(bit) + "]";
@@ -336,7 +351,20 @@ void Emu51PeripheralEditor::rebuild(const Emu51PeripheralConfig& config, Emu51Mo
             b.pinWidths[0]+b.pinWidths[1];
         b.size = {std::max(heading+2*headerPadding,std::max(labels,2*halfWidthForBits)+pinColumnGap),
             headerHeight+std::max(heights[0],heights[1])+3};
+        // The first and last connectors on each side set the lead length
+        // profile. Include numbered bit tails where they leave the block.
+        std::array<float,2> first{FLT_MAX,FLT_MAX}, last{-FLT_MAX,-FLT_MAX};
+        for (const auto& p : b.pins) {
+            const int side = p.left ? 0 : 1;
+            first[side] = std::min(first[side],p.position.y);
+            last[side] = std::max(last[side],p.position.y);
+            for (unsigned bit = 0; bit < p.bits.size(); ++bit)
+                last[side] = std::max(last[side],bitEscapeY(p.bits[bit],bit,p.descriptor.width,p.left));
+        }
         for (auto& p : b.pins) {
+            const int side = p.left ? 0 : 1;
+            p.leadHalfSpan = (last[side]-first[side])/2;
+            p.leadCenterOffset = first[side]+p.leadHalfSpan-p.position.y;
             const auto edge = plus(b.position,{p.left ? 0 : b.size.x,0});
             p.position = plus(edge,p.position);
             for (auto& bit : p.bits) bit = plus(edge,bit);
@@ -412,12 +440,14 @@ std::vector<Emu51PeripheralEditor::Connection> Emu51PeripheralEditor::connection
 
 Emu51PeripheralEditor::RouteEnd Emu51PeripheralEditor::routeEnd(const Pin& pin, int bit) const
 {
-    if (bit < 0 || bit >= static_cast<int>(pin.bits.size())) return {pin.position,pin.position,pin.left};
-    const auto port = pin.bits[bit];
-    const unsigned index = bit%bitsPerRow;
-    const unsigned lane = pin.left ? index : bitsInRow(pin.bits.size(),bit)-1-index;
-    const ImVec2 edge{pin.position.x,port.y+bitHalf.y+bitLeadGap+lane*bitLaneGap};
-    return {port,edge,pin.left};
+    const bool numbered = bit >= 0 && bit < static_cast<int>(pin.bits.size());
+    const auto port = numbered ? pin.bits[bit] : pin.position;
+    const ImVec2 edge{pin.position.x,numbered ? bitEscapeY(port,static_cast<unsigned>(bit),pin.descriptor.width,pin.left) : port.y};
+    const float centerDistance = std::abs((edge.y-pin.position.y)-pin.leadCenterOffset);
+    const float weight = pin.leadHalfSpan > 0 ? std::max(0.0f,1-centerDistance/pin.leadHalfSpan) : 0;
+    // Reuse a small set of routing rails for nearby connectors.
+    const float length = minLead+leadStep*std::round(weight*(maxLead-minLead)/leadStep);
+    return {port,edge,pin.left,length};
 }
 
 void Emu51PeripheralEditor::arrange(const Emu51PeripheralConfig& config)
@@ -531,7 +561,7 @@ void Emu51PeripheralEditor::updateRoutes(const std::vector<Connection>& wires)
     for (const auto& box : boxes) geometry.insert(geometry.end(),{box.lo.x,box.lo.y,box.hi.x,box.hi.y});
     for (const auto& wire : wires) {
         for (const auto end : {routeEnd(*wire.from,wire.fromBit),routeEnd(*wire.to,wire.toBit)}) {
-            geometry.insert(geometry.end(),{end.edge.x,end.edge.y,end.left ? -1.0f : 1.0f});
+            geometry.insert(geometry.end(),{end.edge.x,end.edge.y,end.left ? -1.0f : 1.0f,end.leadLength});
         }
     }
     if (geometry == routeGeometry_) return;
@@ -545,7 +575,7 @@ void Emu51PeripheralEditor::updateRoutes(const std::vector<Connection>& wires)
     std::vector<ImVec2> ports;
     for (const auto& wire : wires) {
         const auto a = routeEnd(*wire.from,wire.fromBit), b = routeEnd(*wire.to,wire.toBit);
-        const auto ends = routedTerminals(a.edge,a.left,b.edge,b.left,boxes);
+        const auto ends = routedTerminals(a.edge,a.left,a.leadLength,b.edge,b.left,b.leadLength,boxes);
         terminals.push_back(ends);
         if (!ends.first || !ends.second) continue;
         ports.push_back(ends.first->lead);
@@ -928,8 +958,8 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
             std::vector<Bounds> boxes;
             for (const auto& block : blocks_) boxes.push_back({block.position,plus(block.position,block.size)});
             if (target != p && (target || hoverBlock.empty())) {
-                const auto [start,end] = target ? routedTerminals(a.edge,a.left,b.edge,b.left,boxes) :
-                    std::pair{terminal(a.edge,a.left,boxes),std::optional{Terminal{cursor,cursor,0}}};
+                const auto [start,end] = target ? routedTerminals(a.edge,a.left,a.leadLength,b.edge,b.left,b.leadLength,boxes) :
+                    std::pair{terminal(a.edge,a.left,boxes,a.leadLength),std::optional{Terminal{cursor,cursor,0}}};
                 const auto route = start && end ?
                     WireRouter(boxes,{start->lead,end->lead}).route(*start,*end) : std::vector<ImVec2>{};
                 if (!route.empty()) {
@@ -969,9 +999,9 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
             "LED", "Switch", "Pushbutton", "HD44780 LCD", "4x4 matrix keypad", "74HC595", "74HC165", "24C02 EEPROM", "AY-3-8910", "7-segment LED display", "14-segment LED display", "16-segment LED display", "LED bar graph",
             "CD4511 BCD decoder", "74LS47 BCD decoder", "MAX7219", "MAX7221", "HT16K33", "TM1637",
             "RAM", "ROM", "Clock", "Address Decoder", "8-bit bus output latch", "8-bit bus input buffer", "Configurable key matrix",
-            "Bit Inverter"};
+            "Bit Inverter", "SSD1306 OLED", "DS1307 real-time clock", "MCP23017 GPIO expander", "W25Q64 SPI flash", "Logic analyzer", "24LC256 EEPROM", "ULN2003", "Four-phase stepper", "ADC0809"};
         const bool hasAudio = std::any_of(config.devices.begin(),config.devices.end(),[](const auto& d) { return d.kind == Emu51PeripheralKind::Audio; });
-        for (int kind = 0; kind <= static_cast<int>(Emu51PeripheralKind::Inverter); ++kind) {
+        for (int kind = 0; kind <= static_cast<int>(Emu51PeripheralKind::Adc0809); ++kind) {
             if (!ImGui::MenuItem(kinds[kind],nullptr,false,kind != static_cast<int>(Emu51PeripheralKind::Audio) || !hasAudio)) continue;
             int suffix = 1; std::string id;
             do { id = "device" + std::to_string(suffix++); } while (std::any_of(config.devices.begin(),config.devices.end(),[&](const auto& d) { return d.id == id; }));
@@ -981,6 +1011,7 @@ void Emu51PeripheralEditor::contextMenu(Emu51PeripheralConfig& config, const std
             if (device.kind == Emu51PeripheralKind::KeyMatrix) { device.rows = 8; device.columns = 2; }
             if (device.kind == Emu51PeripheralKind::Rom) device.memoryFill = 255;
             if (device.kind == Emu51PeripheralKind::Clock) device.clockHz = 12000000;
+            if (device.kind == Emu51PeripheralKind::Adc0809) device.conversionTicks = 1200;
             if (const int size = emu51PeripheralBusSize(device.kind)) {
                 device.address = device.kind == Emu51PeripheralKind::Ay38910 ? 0x9000 : 0x8000;
                 while (device.address <= 65536-size && std::any_of(config.devices.begin(),config.devices.end(),[&](const auto& d) {
@@ -1227,11 +1258,34 @@ void Emu51PeripheralEditor::inspector(Emu51PeripheralConfig& config)
                 }
                 if (d.kind == Emu51PeripheralKind::Keypad)
                     ImGui::TextWrapped("Drive rows low to scan; columns are open-drain outputs with pull-ups. Hold keys in Live.");
-                if (d.kind == Emu51PeripheralKind::Eeprom) {
+                if (const auto imageSize = emu51PeripheralEepromSize(d.kind)) {
                     ImGui::InputInt("I2C address (50..57)",&d.i2cAddress,0,0,ImGuiInputTextFlags_CharsHexadecimal);
                     char path[4096]; std::snprintf(path,sizeof(path),"%s",d.storagePath.c_str());
                     if (ImGui::InputText("Image file",path,sizeof(path))) d.storagePath = path;
-                    ImGui::TextWrapped("Optional 256-byte image. Committed bytes save on Pause/exit. SDA needs open-drain master drive; WP high protects writes.");
+                    ImGui::TextWrapped("Optional %u-byte image. Committed bytes save on Pause or exit. Release SDA for ACK/read cycles. WP high protects writes.",imageSize);
+                }
+                if (d.kind == Emu51PeripheralKind::Ssd1306 || d.kind == Emu51PeripheralKind::Mcp23017) {
+                    int address = d.serialAddress ? d.serialAddress : d.kind == Emu51PeripheralKind::Ssd1306 ? 0x3c : 0x20;
+                    if (ImGui::InputInt("I2C address",&address,0,0,ImGuiInputTextFlags_CharsHexadecimal)) d.serialAddress = address;
+                }
+                if (d.kind == Emu51PeripheralKind::Ds1307) {
+                    ImGui::TextUnformatted("I2C address 68h");
+                    ImGui::InputInt("Days since 2000-01-01",&d.rtcDay);
+                    ImGui::InputInt("Seconds since midnight",&d.rtcSecond);
+                }
+                if (d.kind == Emu51PeripheralKind::Adc0809) {
+                    ImGui::InputInt("Conversion ticks",&d.conversionTicks,1,12);
+                    ImGui::InputDouble("Full scale (V)",&d.referenceVolts,0.1,1.0,"%.3f");
+                    ImGui::TextWrapped("Pulse ALE to latch ADDR, then pulse START. EOC goes high when conversion completes. OE high drives DATA.");
+                }
+                if (d.kind == Emu51PeripheralKind::Uln2003)
+                    ImGui::TextWrapped("A high input sinks the corresponding output. Other outputs are open.");
+                if (d.kind == Emu51PeripheralKind::Stepper)
+                    ImGui::TextWrapped("Wire four active-low coil drivers in A, B, C, D order. The shaft uses 200 full steps per turn.");
+                if (d.kind == Emu51PeripheralKind::W25q64) {
+                    char path[4096]; std::snprintf(path,sizeof(path),"%s",d.storagePath.c_str());
+                    if (ImGui::InputText("Image file",path,sizeof(path))) d.storagePath = path;
+                    ImGui::TextWrapped("Optional 8 MiB image. Committed bytes save on Pause or exit.");
                 }
                 if (d.kind == Emu51PeripheralKind::Ay38910) {
                     if (!d.wiredBus) ImGui::InputInt("XDATA base",&d.address,0,0,ImGuiInputTextFlags_CharsHexadecimal);

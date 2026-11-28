@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "emu51_imgui_menu.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -63,6 +65,32 @@ void drawRunButton(Emu51ImguiMenuTarget& target)
 		ImGui::PopStyleColor(3);
 }
 
+struct DockControl {
+	Emu51ImguiSnapTarget edge;
+	Emu51ImguiIcon icon;
+	const char* id;
+	const char* name;
+};
+
+constexpr std::array kDockControls{
+	DockControl{Emu51ImguiSnapTarget::Left, Emu51ImguiIcon::DockLeft, "##dock_left", "left dock"},
+	DockControl{Emu51ImguiSnapTarget::Top, Emu51ImguiIcon::DockTop, "##dock_top", "top dock"},
+	DockControl{Emu51ImguiSnapTarget::Right, Emu51ImguiIcon::DockRight, "##dock_right", "right dock"},
+	DockControl{Emu51ImguiSnapTarget::Bottom, Emu51ImguiIcon::DockBottom, "##dock_bottom", "bottom dock"},
+};
+
+bool dockToggle(const char* id, Emu51ImguiIcon icon, const char* name, bool collapsed, const ImVec2& size)
+{
+	if (collapsed)
+		ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+	const bool clicked = emu51ImguiIconButton(id, icon, size);
+	if (collapsed)
+		ImGui::PopStyleColor();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+		ImGui::SetTooltip("%s %s", collapsed ? "Expand" : "Collapse", name);
+	return clicked;
+}
+
 }  // namespace
 
 void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
@@ -85,8 +113,10 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 			if (ImGui::MenuItem("Clear Menu")) target.clearRecentProjectFiles();
 			ImGui::EndMenu();
 		}
-		if (ImGui::MenuItem("Save project")) target.saveProject();
+		if (ImGui::MenuItem("Save project", emu51ShortcutLabel(Emu51Action::ProjectSave))) target.saveProject();
 		if (ImGui::MenuItem("Save project as...")) target.saveProjectAs();
+		if (ImGui::MenuItem("Add file...")) target.requestAddProjectFiles();
+		if (ImGui::MenuItem("New ASM File")) target.newProjectAssemblyFile();
 		ImGui::Separator();
 		if (ImGui::MenuItem("Open program..."))
 			target.requestOpenProgram();
@@ -110,9 +140,9 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 			ImGui::EndMenu();
 		}
 		ImGui::Separator();
-		if (ImGui::MenuItem("Save", emu51ShortcutLabel(Emu51Action::FileSave), false, target.canSaveAssemblyEditorFile()))
+		if (ImGui::MenuItem("Save source", emu51ShortcutLabel(Emu51Action::SourceSave), false, target.canSaveAssemblyEditorFile()))
 			target.saveAssemblyEditorFile();
-		if (ImGui::MenuItem("Save As...", emu51ShortcutLabel(Emu51Action::FileSaveAs), false, target.canSaveAssemblyEditorFile()))
+		if (ImGui::MenuItem("Save source as...", nullptr, false, target.canSaveAssemblyEditorFile()))
 			target.saveAssemblyEditorFileAs();
 		ImGui::Separator();
 		if (ImGui::MenuItem("Quit"))
@@ -177,6 +207,14 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 			target.loadCompiledAssemblyEditorOutput();
 		if (ImGui::MenuItem("Compile and Load", emu51ShortcutLabel(Emu51Action::BuildCompileAndLoad), false, target.hasAssemblyEditorSource()))
 			target.compileAndLoadAssemblyEditor();
+		ImGui::Separator();
+		const bool hasProjectFiles = target.hasProjectFiles();
+		if (ImGui::MenuItem("Build Project", nullptr, false, hasProjectFiles))
+			target.performProjectBuild(Emu51ProjectBuildAction::Build);
+		if (ImGui::MenuItem("Build and Load", nullptr, false, hasProjectFiles))
+			target.performProjectBuild(Emu51ProjectBuildAction::BuildAndLoad);
+		if (ImGui::MenuItem("Power Cycle"))
+			target.performProjectBuild(Emu51ProjectBuildAction::PowerCycle);
 		ImGui::EndMenu();
 	}
 
@@ -214,6 +252,9 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 		const bool assemblyEditorVisible = target.assemblyEditorVisible();
 		if (ImGui::MenuItem("Assembly Editor", nullptr, assemblyEditorVisible))
 			target.setAssemblyEditorVisible(!assemblyEditorVisible);
+		const bool projectVisible = target.projectPanelVisible();
+		if (ImGui::MenuItem("Project", nullptr, projectVisible))
+			target.setProjectPanelVisible(!projectVisible);
 		if (ImGui::MenuItem("New Disassembly View"))
 			target.createDisassemblyView();
 		if (target.unifiedMode()) {
@@ -226,6 +267,11 @@ void emu51DrawImguiMainMenuBar(Emu51ImguiMenuTarget& target)
 			if (ImGui::MenuItem("New Program Memory Monitor"))
 				target.createProgramMemoryMonitor();
 		}
+		ImGui::Separator();
+		if (ImGui::MenuItem("Collapse All Edge Docks"))
+			target.setAllEdgeDocksCollapsed(true);
+		if (ImGui::MenuItem("Expand All Edge Docks"))
+			target.setAllEdgeDocksCollapsed(false);
 		ImGui::EndMenu();
 	}
 
@@ -271,9 +317,42 @@ float emu51DrawImguiToolbar(Emu51ImguiMenuTarget& target)
 		target.stepOut();
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
 		ImGui::SetTooltip("Step out (Shift+F8)");
-	ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 3.0f);
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextDisabled("%s", target.executionTimingStatus().c_str());
+	const float spacing = ImGui::GetStyle().ItemSpacing.x;
+	const float left = ImGui::GetCursorPosX();
+	const float right = left + ImGui::GetContentRegionAvail().x;
+	const float dockCount = static_cast<float>(kDockControls.size() + 1);
+	const float dockWidth = std::clamp((right - left - (dockCount - 1) * spacing) / dockCount,
+		buttonSize.y * 0.75f, buttonSize.y);
+	const float dockStart = std::max(left, right - dockCount * dockWidth - (dockCount - 1) * spacing);
+	const float executionEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+	const bool docksFitInline = executionEnd + spacing <= dockStart;
+	const auto timing = target.executionTimingStatus();
+	const bool timingFitsInline = docksFitInline && executionEnd + 4 * spacing + ImGui::CalcTextSize(timing.c_str()).x <= dockStart;
+	if (timingFitsInline) {
+		ImGui::SameLine(0.0f, 3 * spacing);
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled("%s", timing.c_str());
+	}
+	if (docksFitInline)
+		ImGui::SameLine(dockStart);
+	else
+		ImGui::SetCursorPosX(dockStart);
+	const ImVec2 dockButtonSize(dockWidth, buttonSize.y);
+	bool allCollapsed = true;
+	for (const auto& control : kDockControls) {
+		const bool collapsed = target.edgeDockCollapsed(control.edge);
+		if (dockToggle(control.id, control.icon, control.name, collapsed, dockButtonSize))
+			target.setEdgeDockCollapsed(control.edge, !collapsed);
+		allCollapsed &= target.edgeDockCollapsed(control.edge);
+		ImGui::SameLine();
+	}
+	if (dockToggle("##dock_all", Emu51ImguiIcon::DockAll, "all edge docks", allCollapsed, dockButtonSize))
+		target.setAllEdgeDocksCollapsed(!allCollapsed);
+	if (!timingFitsInline) {
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+		ImGui::TextWrapped("%s", timing.c_str());
+		ImGui::PopStyleColor();
+	}
 
 	const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
 	ImGui::End();

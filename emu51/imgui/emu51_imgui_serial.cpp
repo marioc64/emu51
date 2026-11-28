@@ -214,9 +214,20 @@ void Emu51ImguiApp::cancelSerialFileSend()
 
 void Emu51ImguiApp::drawSerialTerminal()
 {
-    if (!serialTerminalOpen_) return;
-    ImGui::SetNextWindowSize(ImVec2(680, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Serial Terminal", &serialTerminalOpen_)) { ImGui::End(); return; }
+    const PaneKey pane{PaneKey::Kind::SerialTerminal, 0};
+    if (!serialTerminalOpen_ || paneHiddenByCollapsedDock(pane)) return;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_HorizontalScrollbar;
+    applyWindowPlacement(pane, ImVec2(680, 480), &flags);
+    const bool visible = ImGui::Begin("Serial Terminal", &serialTerminalOpen_, flags);
+    capturePanePlacement(pane);
+    registerPaneWindow(pane);
+    drawPaneSnapContextMenu(pane);
+    if (!serialTerminalOpen_)
+        executionRedrawPending_.store(true, std::memory_order_release);
+    else
+        notePaneActivity(pane, ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+    if (!visible) { ImGui::End(); return; }
     const unsigned mode = cpu_.serialMode();
     ImGui::Text("Mode %u (%s)  SCON %02X  SBUF RX %02X  RI %u  TI %u", mode,
         mode == 0 ? "shift register" : (mode == 1 ? "8-bit UART" : "9-bit UART"),

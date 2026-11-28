@@ -102,7 +102,15 @@ bool emu51MigrateProject(Emu51Project& project, std::string& error)
             if (!next.units.empty()) next.activeUnit = next.units.front().id;
             if (next.editor.present && !next.units.empty()) {
                 const auto& editor = next.editor;
-                const auto existing = std::find_if(next.units.begin(),next.units.end(),[&](const auto& u) { return !editor.path.empty() && u.path == editor.path; });
+                const bool untitled = editor.path.empty();
+                const auto editorSource = untitled ? std::filesystem::path(editor.baseDirectory)/editor.name :
+                    std::filesystem::path(editor.path);
+                const auto existing = std::find_if(next.units.begin(),next.units.end(),[&](const auto& u) {
+                    if (std::filesystem::path(u.path).lexically_normal() != editorSource.lexically_normal()) return false;
+                    // A legacy project can store the same embedded source in
+                    // both its loaded program and its unnamed editor buffer.
+                    return !untitled || (u.embedded && u.editor.text == editor.text);
+                });
                 if (existing != next.units.end()) {
                     existing->editor = editor; existing->embedded = editor.path.empty();
                     if (!editor.baseDirectory.empty()) existing->baseDirectory = editor.baseDirectory;
@@ -111,7 +119,7 @@ bool emu51MigrateProject(Emu51Project& project, std::string& error)
                     // An unloaded editor is retained without making its possibly
                     // incomplete draft a required program image during migration.
                     Emu51AssemblyUnit unit; unit.id = "editor";
-                    unit.path = editor.path.empty() ? (std::filesystem::path(editor.baseDirectory)/editor.name).string() : editor.path;
+                    unit.path = editorSource.string();
                     unit.baseDirectory = editor.baseDirectory; unit.embedded = editor.path.empty();
                     unit.includeOnly = true; unit.editor = editor;
                     next.activeUnit = unit.id; next.units.push_back(std::move(unit));

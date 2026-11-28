@@ -63,6 +63,8 @@ public:
 	bool prepareToQuit();
 	void requestOpenProgram() override;
 	void requestOpenProject() override;
+	void requestAddProjectFiles() override;
+	void newProjectAssemblyFile() override;
 	void saveProject() override;
 	void saveProjectAs() override;
 	int recentProjectFileCount() const override;
@@ -97,6 +99,8 @@ public:
 	void compileAssemblyEditor() override;
 	void loadCompiledAssemblyEditorOutput() override;
 	void compileAndLoadAssemblyEditor() override;
+	bool hasProjectFiles() const override { return !projectUnits_.empty(); }
+	void performProjectBuild(Emu51ProjectBuildAction action) override;
 	bool running() const override;
 	std::string executionTimingStatus() const override;
 	void toggleRun() override;
@@ -124,6 +128,8 @@ public:
 	void setInternalRamMonitorVisible(bool visible) override;
 	bool assemblyEditorVisible() const override;
 	void setAssemblyEditorVisible(bool visible) override;
+	bool projectPanelVisible() const override { return projectPanelOpen_; }
+	void setProjectPanelVisible(bool visible) override;
 	void createDisassemblyView() override;
 	void createDataMemoryMonitor() override;
 	void createProgramMemoryMonitor() override;
@@ -135,6 +141,9 @@ public:
 	bool hasActivePane() const override;
 	void snapActivePane(Emu51ImguiSnapTarget target) override;
 	void resetSnappedPanes() override;
+	bool edgeDockCollapsed(Emu51ImguiSnapTarget target) const override;
+	void setEdgeDockCollapsed(Emu51ImguiSnapTarget target, bool collapsed) override;
+	void setAllEdgeDocksCollapsed(bool collapsed) override;
 
 	struct DisassemblyView {
 		int id = 0;
@@ -223,14 +232,22 @@ public:
     std::set<std::string> savedProjectUnits_;
     Emu51ProjectBuild projectBuild_;
     std::map<std::string,Emu51BuiltUnit> lastUnitBuilds_;
-    bool projectTreeOpen_ = false;
+    bool projectPanelOpen_ = false;
+    std::string selectedProjectFile_;
+    std::string projectPanelMessage_;
+    std::string pendingAssemblyTab_;
     bool switchProjectUnit(const std::string&);
+    bool openProjectUnit(const std::string&);
+    void closeProjectUnitTab(const std::string&);
+    static bool isEditableProjectUnit(const Emu51AssemblyUnit&);
     void syncProjectUnit();
     bool confirmProjectEditors();
-    void drawProjectTree();
+    void drawProjectPanel();
+    void drawProjectFiles();
+    void drawAssemblyEditorTabs();
     bool removeProjectUnit(std::string id);
     bool buildProjectUnits(bool load, bool powerCycle = false);
-    bool addProjectUnit(const std::filesystem::path&, bool embedded = false);
+    bool addProjectUnit(const std::filesystem::path&, bool embedded = false, bool openEditor = true);
     bool initializeCircuitProject();
     Emu51Project captureBuildProject();
     void installProjectSources(const Emu51ProjectBuild&);
@@ -253,6 +270,9 @@ public:
 				InternalRamMonitor,
 				Monitor,
 				Peripherals,
+				Project,
+				Debugger,
+				SerialTerminal,
 		};
 
 		Kind kind = Kind::Registers;
@@ -445,7 +465,8 @@ private:
 	void browseProjectDirectory(const std::filesystem::path& path);
 	void drawOpenProjectBrowser();
 #endif
-	bool saveProjectToPath(const std::filesystem::path& path);
+	bool saveProjectToPath(const std::filesystem::path& path, bool saveFiles = false);
+	bool saveProjectSources();
 	bool openProjectFromPath(const std::filesystem::path& path);
 	bool confirmAssemblyEditorChanges();
 	bool saveAssemblyEditorChanges();
@@ -466,6 +487,10 @@ private:
 		ImVec2 size = ImVec2(0.0f, 0.0f);
 		bool hasSize = false;
 		bool restorePending = false;
+		std::optional<ImVec2> position = {};
+		bool restorePositionPending = false;
+		bool collapsed = false;
+		bool restoreCollapsePending = false;
 	};
 
 	struct SnappedPaneRect {
@@ -528,6 +553,7 @@ private:
 	std::vector<SnappedPaneRect> snappedPaneRects_;
 	std::vector<SnapSplitter> snapSplitters_;
 	SnapLayoutPreferences snapLayoutPreferences_{};
+	std::array<bool, 4> collapsedEdgeDocks_{};
 	PaneKey activePane_{};
 	PaneKey draggingPane_{};
 	bool hasActivePane_ = false;
@@ -579,8 +605,10 @@ private:
 	void applyWindowPlacement(const PaneKey& pane, const ImVec2& defaultSize, ImGuiWindowFlags* flags);
 	void notePaneActivity(const PaneKey& pane, bool active);
 	void registerPaneWindow(const PaneKey& pane);
-	void captureFloatingPaneState(const PaneKey& pane);
+	void capturePanePlacement(const PaneKey& pane);
 	void drawPaneSnapContextMenu(const PaneKey& pane);
+	bool paneHiddenByCollapsedDock(const PaneKey& pane) const;
+	void edgeDockVisibilityChanged();
 	bool paneExists(const PaneKey& pane) const;
 	bool paneFromWindowId(ImGuiID windowId, PaneKey* pane) const;
 	Emu51ImguiSnapTarget snapTargetForPane(const PaneKey& pane) const;
@@ -596,6 +624,8 @@ private:
     bool saveState() const;
     Emu51UiState captureUiState() const;
     void applyUiState(const Emu51UiState& state);
+    Emu51UiLayout captureUiLayout() const;
+    void applyUiLayout(const Emu51UiLayout& layout, bool restoreWorkspace = false);
 	void rememberRecentProgramPath(const std::filesystem::path& path);
 	void snapPane(const PaneKey& pane, Emu51ImguiSnapTarget target);
 	void setPaneSnapTarget(const PaneKey& pane, Emu51ImguiSnapTarget target);

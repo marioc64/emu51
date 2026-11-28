@@ -35,6 +35,8 @@ NSString* nsString(const std::string& value)
 - (IBAction)openRecentProject:(id)sender;
 - (IBAction)clearRecentProjects:(id)sender;
 - (IBAction)openProject:(id)sender;
+- (IBAction)addProjectFiles:(id)sender;
+- (IBAction)newProjectAssemblyFile:(id)sender;
 - (IBAction)saveProject:(id)sender;
 - (IBAction)saveProjectAs:(id)sender;
 - (IBAction)openProgram:(id)sender;
@@ -54,13 +56,16 @@ NSString* nsString(const std::string& value)
 - (IBAction)compileAssemblyEditor:(id)sender;
 - (IBAction)loadCompiledAssemblyEditorOutput:(id)sender;
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender;
+- (IBAction)performProjectBuild:(NSMenuItem*)sender;
 - (IBAction)showDebugger:(id)sender;
 - (IBAction)showSerialTerminal:(id)sender;
 - (IBAction)showHardwareModule:(id)sender;
 - (IBAction)showPeripherals:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
 - (IBAction)toggleRegisters:(id)sender;
+- (IBAction)setEdgeDocksCollapsed:(NSMenuItem*)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
+- (IBAction)toggleProjectPanel:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
 - (IBAction)newDataMemoryMonitor:(id)sender;
 - (IBAction)newProgramMemoryMonitor:(id)sender;
@@ -84,6 +89,8 @@ NSString* nsString(const std::string& value)
 @interface Emu51AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, assign) Emu51AppViewController* viewController;
 - (IBAction)openProject:(id)sender;
+- (IBAction)addProjectFiles:(id)sender;
+- (IBAction)newProjectAssemblyFile:(id)sender;
 - (IBAction)saveProject:(id)sender;
 - (IBAction)saveProjectAs:(id)sender;
 - (IBAction)openProgram:(id)sender;
@@ -103,13 +110,16 @@ NSString* nsString(const std::string& value)
 - (IBAction)compileAssemblyEditor:(id)sender;
 - (IBAction)loadCompiledAssemblyEditorOutput:(id)sender;
 - (IBAction)compileAndLoadAssemblyEditor:(id)sender;
+- (IBAction)performProjectBuild:(NSMenuItem*)sender;
 - (IBAction)showDebugger:(id)sender;
 - (IBAction)showSerialTerminal:(id)sender;
 - (IBAction)showHardwareModule:(id)sender;
 - (IBAction)showPeripherals:(id)sender;
 - (IBAction)newDisassemblyView:(id)sender;
 - (IBAction)toggleRegisters:(id)sender;
+- (IBAction)setEdgeDocksCollapsed:(NSMenuItem*)sender;
 - (IBAction)toggleAssemblyEditor:(id)sender;
+- (IBAction)toggleProjectPanel:(id)sender;
 - (IBAction)toggleInternalRamMonitor:(id)sender;
 - (IBAction)newDataMemoryMonitor:(id)sender;
 - (IBAction)newProgramMemoryMonitor:(id)sender;
@@ -153,6 +163,8 @@ NSString* nsString(const std::string& value)
 @property(nonatomic, strong) NSMenuItem* buildCompileMenuItem;
 @property(nonatomic, strong) NSMenuItem* buildLoadMenuItem;
 @property(nonatomic, strong) NSMenuItem* buildCompileAndLoadMenuItem;
+@property(nonatomic, strong) NSMenuItem* buildProjectMenuItem;
+@property(nonatomic, strong) NSMenuItem* buildAndLoadProjectMenuItem;
 @property(nonatomic, strong) NSMenuItem* unifiedModeMenuItem;
 @property(nonatomic, strong) NSMenuItem* clearMemoryMenuItem;
 @property(nonatomic, strong) NSMenuItem* clearDataMemoryMenuItem;
@@ -162,6 +174,7 @@ NSString* nsString(const std::string& value)
 @property(nonatomic, strong) NSMenuItem* runMenuItem;
 @property(nonatomic, strong) NSMenuItem* setProgramCounterMenuItem;
 @property(nonatomic, strong) NSMenuItem* assemblyEditorMenuItem;
+@property(nonatomic, strong) NSMenuItem* projectPanelMenuItem;
 @property(nonatomic, strong) NSMenuItem* registersMenuItem;
 @property(nonatomic, strong) NSMenuItem* internalRamMonitorMenuItem;
 @property(nonatomic, strong) NSMenuItem* externalMemoryMonitorMenuItem;
@@ -255,6 +268,9 @@ NSString* nsString(const std::string& value)
 	self.buildCompileMenuItem.enabled = self.app->access()->hasAssemblyEditorSource();
 	self.buildLoadMenuItem.enabled = self.app->access()->hasCompiledAssemblyEditorOutput();
 	self.buildCompileAndLoadMenuItem.enabled = self.app->access()->hasAssemblyEditorSource();
+	const BOOL hasProjectFiles = self.app->access()->hasProjectFiles();
+	self.buildProjectMenuItem.enabled = hasProjectFiles;
+	self.buildAndLoadProjectMenuItem.enabled = hasProjectFiles;
 }
 
 - (void)updateMemoryMenuItems
@@ -273,6 +289,7 @@ NSString* nsString(const std::string& value)
     self.registersMenuItem.state = self.app->access()->registersVisible() ? NSControlStateValueOn : NSControlStateValueOff;
 	const BOOL unifiedMode = self.app->access()->unifiedMode();
 	self.assemblyEditorMenuItem.state = self.app->access()->assemblyEditorVisible() ? NSControlStateValueOn : NSControlStateValueOff;
+	self.projectPanelMenuItem.state = self.app->access()->projectPanelVisible() ? NSControlStateValueOn : NSControlStateValueOff;
 	self.internalRamMonitorMenuItem.state = self.app->access()->internalRamMonitorVisible() ? NSControlStateValueOn : NSControlStateValueOff;
 	self.externalMemoryMonitorMenuItem.hidden = !unifiedMode;
 	self.dataMemoryMonitorMenuItem.hidden = unifiedMode;
@@ -353,6 +370,24 @@ NSString* nsString(const std::string& value)
 	[self updateEditMenuItems];
 	[self updateBuildMenuItems];
 	[self updateWindowTitle];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)addProjectFiles:(id)sender
+{
+	self.app->access()->requestAddProjectFiles();
+	[self updateBuildMenuItems];
+	[self updateWindowMenuItems];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)newProjectAssemblyFile:(id)sender
+{
+	self.app->access()->newProjectAssemblyFile();
+	[self updateFileMenuItems];
+	[self updateEditMenuItems];
+	[self updateBuildMenuItems];
+	[self updateWindowMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
 }
 
@@ -508,6 +543,14 @@ NSString* nsString(const std::string& value)
 	[self.mtkView setNeedsDisplay:YES];
 }
 
+- (IBAction)performProjectBuild:(NSMenuItem*)sender
+{
+	self.app->access()->performProjectBuild(static_cast<Emu51ProjectBuildAction>(sender.tag));
+	[self updateBuildMenuItems];
+	[self updateWindowMenuItems];
+	[self.mtkView setNeedsDisplay:YES];
+}
+
 - (IBAction)showPeripherals:(id)sender
 {
     self.app->access()->showPeripherals();
@@ -545,6 +588,12 @@ NSString* nsString(const std::string& value)
     [self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 }
 
+- (IBAction)setEdgeDocksCollapsed:(NSMenuItem*)sender
+{
+	self.app->access()->setAllEdgeDocksCollapsed(sender.tag != 0);
+	[self requestInteractiveRedrawForDuration:kInputRedrawDuration];
+}
+
 - (IBAction)toggleAssemblyEditor:(id)sender
 {
 	self.app->access()->setAssemblyEditorVisible(!self.app->access()->assemblyEditorVisible());
@@ -552,6 +601,13 @@ NSString* nsString(const std::string& value)
 	[self updateBuildMenuItems];
 	[self updateWindowMenuItems];
 	[self.mtkView setNeedsDisplay:YES];
+}
+
+- (IBAction)toggleProjectPanel:(id)sender
+{
+	{ auto app = self.app->access(); app->setProjectPanelVisible(!app->projectPanelVisible()); }
+	[self updateWindowMenuItems];
+	[self requestInteractiveRedrawForDuration:kInputRedrawDuration];
 }
 
 - (IBAction)toggleInternalRamMonitor:(id)sender
@@ -835,6 +891,16 @@ NSString* nsString(const std::string& value)
 	[self.viewController openProject:sender];
 }
 
+- (IBAction)addProjectFiles:(id)sender
+{
+	[self.viewController addProjectFiles:sender];
+}
+
+- (IBAction)newProjectAssemblyFile:(id)sender
+{
+	[self.viewController newProjectAssemblyFile:sender];
+}
+
 - (IBAction)saveProject:(id)sender
 {
 	[self.viewController saveProject:sender];
@@ -930,6 +996,11 @@ NSString* nsString(const std::string& value)
 	[self.viewController compileAndLoadAssemblyEditor:sender];
 }
 
+- (IBAction)performProjectBuild:(NSMenuItem*)sender
+{
+	[self.viewController performProjectBuild:sender];
+}
+
 - (IBAction)showPeripherals:(id)sender
 {
     [self.viewController showPeripherals:sender];
@@ -960,9 +1031,19 @@ NSString* nsString(const std::string& value)
     [self.viewController toggleRegisters:sender];
 }
 
+- (IBAction)setEdgeDocksCollapsed:(NSMenuItem*)sender
+{
+	[self.viewController setEdgeDocksCollapsed:sender];
+}
+
 - (IBAction)toggleAssemblyEditor:(id)sender
 {
 	[self.viewController toggleAssemblyEditor:sender];
+}
+
+- (IBAction)toggleProjectPanel:(id)sender
+{
+	[self.viewController toggleProjectPanel:sender];
 }
 
 - (IBAction)toggleInternalRamMonitor:(id)sender
@@ -1084,13 +1165,21 @@ int main()
 		[recentProjectsItem setSubmenu:recentProjectsMenu];
 		[fileMenu addItem:recentProjectsItem];
 		NSMenuItem* saveProjectItem = [[NSMenuItem alloc] initWithTitle:@"Save project"
-			action:@selector(saveProject:) keyEquivalent:@""];
+			action:@selector(saveProject:) keyEquivalent:@"s"];
 		saveProjectItem.target = appDelegate;
 		[fileMenu addItem:saveProjectItem];
 		NSMenuItem* saveProjectAsItem = [[NSMenuItem alloc] initWithTitle:@"Save project as..."
 			action:@selector(saveProjectAs:) keyEquivalent:@""];
 		saveProjectAsItem.target = appDelegate;
 		[fileMenu addItem:saveProjectAsItem];
+		NSMenuItem* addProjectFilesItem = [[NSMenuItem alloc] initWithTitle:@"Add file..."
+			action:@selector(addProjectFiles:) keyEquivalent:@""];
+		addProjectFilesItem.target = appDelegate;
+		[fileMenu addItem:addProjectFilesItem];
+		NSMenuItem* newProjectAssemblyFileItem = [[NSMenuItem alloc] initWithTitle:@"New ASM File"
+			action:@selector(newProjectAssemblyFile:) keyEquivalent:@""];
+		newProjectAssemblyFileItem.target = appDelegate;
+		[fileMenu addItem:newProjectAssemblyFileItem];
 		[fileMenu addItem:[NSMenuItem separatorItem]];
 		NSMenuItem* openProgramItem = [[NSMenuItem alloc] initWithTitle:@"Open program..."
 			action:@selector(openProgram:) keyEquivalent:@"o"];
@@ -1114,15 +1203,15 @@ int main()
 		[openRecentItem setSubmenu:recentProgramsMenu];
 		[fileMenu addItem:openRecentItem];
 		[fileMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* saveAssemblyItem = [[NSMenuItem alloc] initWithTitle:@"Save"
+		NSMenuItem* saveAssemblyItem = [[NSMenuItem alloc] initWithTitle:@"Save source"
 			action:@selector(saveAssemblyEditor:) keyEquivalent:@"s"];
 		saveAssemblyItem.target = appDelegate;
+		saveAssemblyItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 		viewController.saveAssemblyMenuItem = saveAssemblyItem;
 		[fileMenu addItem:saveAssemblyItem];
-		NSMenuItem* saveAsAssemblyItem = [[NSMenuItem alloc] initWithTitle:@"Save As..."
-			action:@selector(saveAssemblyEditorAs:) keyEquivalent:@"s"];
+		NSMenuItem* saveAsAssemblyItem = [[NSMenuItem alloc] initWithTitle:@"Save source as..."
+			action:@selector(saveAssemblyEditorAs:) keyEquivalent:@""];
 		saveAsAssemblyItem.target = appDelegate;
-		saveAsAssemblyItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 		viewController.saveAsAssemblyMenuItem = saveAsAssemblyItem;
 		[fileMenu addItem:saveAsAssemblyItem];
 		[fileMenu addItem:[NSMenuItem separatorItem]];
@@ -1234,6 +1323,18 @@ int main()
 		compileAndLoadItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 		viewController.buildCompileAndLoadMenuItem = compileAndLoadItem;
 		[buildMenu addItem:compileAndLoadItem];
+		[buildMenu addItem:[NSMenuItem separatorItem]];
+		const auto addBuildAction = [&](NSString* title, Emu51ProjectBuildAction action) {
+			NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
+				action:@selector(performProjectBuild:) keyEquivalent:@""];
+			item.target = appDelegate;
+			item.tag = static_cast<NSInteger>(action);
+			[buildMenu addItem:item];
+			return item;
+		};
+		viewController.buildProjectMenuItem = addBuildAction(@"Build Project", Emu51ProjectBuildAction::Build);
+		viewController.buildAndLoadProjectMenuItem = addBuildAction(@"Build and Load", Emu51ProjectBuildAction::BuildAndLoad);
+		addBuildAction(@"Power Cycle", Emu51ProjectBuildAction::PowerCycle);
 		[viewController updateBuildMenuItems];
 		[buildMenuItem setSubmenu:buildMenu];
 
@@ -1314,6 +1415,11 @@ int main()
 		assemblyEditorItem.target = appDelegate;
 		viewController.assemblyEditorMenuItem = assemblyEditorItem;
 		[windowMenu addItem:assemblyEditorItem];
+		NSMenuItem* projectPanelItem = [[NSMenuItem alloc] initWithTitle:@"Project"
+			action:@selector(toggleProjectPanel:) keyEquivalent:@""];
+		projectPanelItem.target = appDelegate;
+		viewController.projectPanelMenuItem = projectPanelItem;
+		[windowMenu addItem:projectPanelItem];
 		NSMenuItem* internalRamMonitorItem = [[NSMenuItem alloc] initWithTitle:@"Internal RAM Monitor"
 			action:@selector(toggleInternalRamMonitor:) keyEquivalent:@""];
 		internalRamMonitorItem.target = appDelegate;
@@ -1334,6 +1440,16 @@ int main()
 		newProgramMemoryMonitorItem.target = appDelegate;
 		viewController.programMemoryMonitorMenuItem = newProgramMemoryMonitorItem;
 		[windowMenu addItem:newProgramMemoryMonitorItem];
+		[windowMenu addItem:[NSMenuItem separatorItem]];
+		NSMenuItem* collapseDocksItem = [[NSMenuItem alloc] initWithTitle:@"Collapse All Edge Docks"
+			action:@selector(setEdgeDocksCollapsed:) keyEquivalent:@""];
+		collapseDocksItem.target = appDelegate;
+		collapseDocksItem.tag = 1;
+		[windowMenu addItem:collapseDocksItem];
+		NSMenuItem* expandDocksItem = [[NSMenuItem alloc] initWithTitle:@"Expand All Edge Docks"
+			action:@selector(setEdgeDocksCollapsed:) keyEquivalent:@""];
+		expandDocksItem.target = appDelegate;
+		[windowMenu addItem:expandDocksItem];
 		[viewController updateWindowMenuItems];
 		[windowMenuItem setSubmenu:windowMenu];
 

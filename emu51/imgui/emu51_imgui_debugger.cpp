@@ -310,7 +310,7 @@ void Emu51ImguiApp::showSource(std::uint16_t address)
         if (peripherals_->resolve(true,address,physical)) {
             const auto byte = projectBuild_.writes.find({physical.device,physical.offset});
             if (byte != projectBuild_.writes.end() && std::any_of(projectUnits_.begin(),projectUnits_.end(),[&](const auto& u) { return u.id == byte->second.unit; }))
-                if (!switchProjectUnit(byte->second.unit)) return;
+                if (!openProjectUnit(byte->second.unit)) return;
         }
     }
     const auto found = sourceLines_.find(address);
@@ -341,8 +341,11 @@ void Emu51ImguiApp::drawDebugger()
 {
     if (!debuggerOpen_)
         return;
-    ImGui::SetNextWindowSize(ImVec2(620, 510), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Debugger", &debuggerOpen_)) {
+    const PaneKey pane{PaneKey::Kind::Debugger, 0};
+    applyWindowPlacement(pane, ImVec2(620, 510), nullptr);
+    const bool visible = ImGui::Begin("Debugger", &debuggerOpen_);
+    capturePanePlacement(pane);
+    if (!visible) {
         ImGui::End();
         return;
     }
