@@ -1,0 +1,379 @@
+{
+  "version": 2,
+  "unified_memory": false,
+  "debugger_open": false,
+  "trace_enabled": false,
+  "serial_terminal_open": true,
+  "hardware_module": "",
+  "circuit_bus": true,
+  "cycle_exact": true,
+  "crystal_mhz": 11.0592,
+  "instructions_per_frame": 500,
+  "programs": [],
+  "reload_program": "",
+  "reload_binary_address": 0,
+  "editor": {
+    "present": false,
+    "open": false,
+    "draft": false,
+    "path": "",
+    "name": "untitled.asm",
+    "base_directory": "",
+    "text": "",
+    "line": 0,
+    "column": 0
+  },
+  "breakpoints": [],
+  "watchpoints": [],
+  "watches": [],
+  "peripheral_analog_wires": [],
+  "cpu_model": "8052",
+  "serial_input_ending": 0,
+  "serial_file_ending": 2,
+  "serial_file_line_delay_ms": 20,
+  "peripheral_devices": [
+    {
+      "id": "monitor_rom",
+      "kind": 26,
+      "memory_capacity": 8192,
+      "memory_fill": 255
+    },
+    {
+      "id": "program_ram",
+      "kind": 25,
+      "memory_capacity": 8192,
+      "memory_fill": 255
+    },
+    {
+      "id": "address_decode",
+      "kind": 28,
+      "decoder_bits": 3
+    },
+    {
+      "id": "ram_read",
+      "kind": 28,
+      "decoder_bits": 2
+    },
+    {
+      "id": "clock",
+      "kind": 27,
+      "clock_hz": 11059200
+    },
+    {
+      "id": "led",
+      "kind": 6,
+      "active_low": true
+    },
+    {
+      "id": "eeprom",
+      "kind": 38,
+      "storage_path": "program_slot.bin"
+    }
+  ],
+  "decoder_outputs": [
+    {
+      "device": "address_decode",
+      "id": "ROM",
+      "name": "/ROM",
+      "active_low": true
+    },
+    {
+      "device": "address_decode",
+      "id": "RAM",
+      "name": "/RAM",
+      "active_low": true
+    },
+    {
+      "device": "ram_read",
+      "id": "READ",
+      "name": "/READ",
+      "active_low": true
+    }
+  ],
+  "decoder_values": [
+    {
+      "device": "address_decode",
+      "output": "ROM",
+      "value": 0
+    },
+    {
+      "device": "address_decode",
+      "output": "RAM",
+      "value": 1
+    },
+    {
+      "device": "ram_read",
+      "output": "READ",
+      "value": 0
+    },
+    {
+      "device": "ram_read",
+      "output": "READ",
+      "value": 1
+    },
+    {
+      "device": "ram_read",
+      "output": "READ",
+      "value": 2
+    }
+  ],
+  "peripheral_digital_wires": [
+    {
+      "a": "cpu.ADDR",
+      "b": "address_decode.IN",
+      "a_bit": 13,
+      "b_bit": 0,
+      "width": 3
+    },
+    {
+      "a": "address_decode.ROM",
+      "b": "monitor_rom.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "address_decode.RAM",
+      "b": "program_ram.CS",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "monitor_rom.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 13
+    },
+    {
+      "a": "cpu.ADDR",
+      "b": "program_ram.ADDR",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 13
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "monitor_rom.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.DATA",
+      "b": "program_ram.DATA",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 8
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "monitor_rom.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.PSEN",
+      "b": "ram_read.IN",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.RD",
+      "b": "ram_read.IN",
+      "a_bit": 0,
+      "b_bit": 1,
+      "width": 1
+    },
+    {
+      "a": "ram_read.READ",
+      "b": "program_ram.OE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.WR",
+      "b": "program_ram.WE",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "clock.OUT",
+      "b": "cpu.CLK",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "led.in",
+      "a_bit": 0,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "eeprom.SDA",
+      "a_bit": 2,
+      "b_bit": 0,
+      "width": 1
+    },
+    {
+      "a": "cpu.P1",
+      "b": "eeprom.SCL",
+      "a_bit": 3,
+      "b_bit": 0,
+      "width": 1
+    }
+  ],
+  "peripheral_layout": [
+    {
+      "id": "cpu",
+      "x": 105.0,
+      "y": 11.0,
+      "name": "Intel 8052"
+    },
+    {
+      "id": "address_decode",
+      "x": 275.0,
+      "y": 120.0,
+      "name": "Address decoder"
+    },
+    {
+      "id": "ram_read",
+      "x": 275.0,
+      "y": 167.0,
+      "name": "RAM read control"
+    },
+    {
+      "id": "monitor_rom",
+      "x": 458.0,
+      "y": 84.0,
+      "name": "PAULMON2 ROM"
+    },
+    {
+      "id": "program_ram",
+      "x": 458.0,
+      "y": 170.0,
+      "name": "Shared program RAM"
+    },
+    {
+      "id": "clock",
+      "x": 0.0,
+      "y": 14.0,
+      "name": "11.0592 MHz"
+    },
+    {
+      "id": "led",
+      "x": 275.0,
+      "y": 0.0,
+      "name": "P1.0 LED"
+    },
+    {
+      "id": "eeprom",
+      "x": 275.0,
+      "y": 34.0,
+      "name": "24LC256 program slot"
+    }
+  ],
+  "assembly_units": [
+    {
+      "id": "monitor",
+      "path": "upstream/pm21_2.hex",
+      "build_only": true,
+      "editor": {
+        "present": false,
+        "open": false,
+        "draft": false,
+        "path": "",
+        "name": "untitled.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    },
+    {
+      "id": "fixed_baud",
+      "path": "fixed_baud.asm",
+      "editor": {
+        "present": true,
+        "open": false,
+        "draft": false,
+        "path": "fixed_baud.asm",
+        "name": "fixed_baud.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    },
+    {
+      "id": "eeprom_slot",
+      "path": "eeprom_slot.asm",
+      "editor": {
+        "present": true,
+        "open": false,
+        "draft": false,
+        "path": "eeprom_slot.asm",
+        "name": "eeprom_slot.asm",
+        "base_directory": "",
+        "text": "",
+        "line": 0,
+        "column": 0
+      }
+    }
+  ],
+  "load_mappings": [
+    {
+      "id": "monitor_image",
+      "unit": "monitor",
+      "device": "monitor_rom",
+      "source_start": 0,
+      "source_end": 8192,
+      "destination": 0,
+      "order": 0
+    },
+    {
+      "id": "baud_image",
+      "unit": "fixed_baud",
+      "device": "program_ram",
+      "source_start": 16128,
+      "source_end": 16384,
+      "destination": 7936,
+      "order": 1
+    },
+    {
+      "id": "eeprom_extension",
+      "unit": "eeprom_slot",
+      "device": "program_ram",
+      "source_start": 15104,
+      "source_end": 16128,
+      "destination": 6912,
+      "order": 2
+    }
+  ],
+  "active_unit": "eeprom_slot",
+  "peripheral_live_layout": [
+    {
+      "id": "led",
+      "x": 12,
+      "y": 46,
+      "width": 164,
+      "height": 72,
+      "momentary_keys": false
+    }
+  ],
+  "peripheral_live_labels": [
+    {
+      "text": "Send B to save. Power cycle restores the EEPROM slot.",
+      "x": 12,
+      "y": 12
+    }
+  ]
+}

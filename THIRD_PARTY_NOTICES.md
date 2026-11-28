@@ -130,3 +130,13 @@ Paths described here refer to the source repository unless explicitly marked as
 installed locations. GNUInstallDirs settings can change installation directories.
 Upstream example documentation and source notices remain part of the vendored
 source tree; they describe those components, not additional emu51 frontends.
+
+## PAULMON2
+
+Paul Stoffregen released the PAULMON2 8051 monitor into the public domain.
+The source distribution includes the published PAULMON2 2.1 firmware and
+assembly sources for the [PAULMON2 trainer](progs/boards/paulmon2/README.md).
+Upstream notices remain in the assembly sources.
+
+- [Upstream firmware and terms](https://www.pjrc.com/tech/8051/paulmon2.html)
+- [Upstream manual](https://www.pjrc.com/tech/8051/pm2_docs/)

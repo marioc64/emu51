@@ -176,6 +176,88 @@ struct Emu51ImguiAppTestAccess {
         Emu51PeripheralConfig sparseConfig; sparseConfig.devices.push_back(sparse); emu51ValidatePeripheralConfig(sparseConfig);
         check(emu51KeyCount(sparse) == 20,"A 5x4 electrical matrix can leave two panel contacts unused");
     }
+    static void paulmon2(const fs::path& board, bool persistent) {
+        auto app = create();
+        const auto path = board/(persistent ? "paulmon2_eeprom.emu51" : "paulmon2.emu51");
+        const bool opened = app->openProjectFromPath(path);
+        check(opened,"Open the bundled PAULMON2 project: "+app->statusMessage_);
+        check(app->cpu_.model()==Emu51Model::i8052 && app->serialTerminalOpen_ && app->crystalMHz_==11.0592,
+            "Project restores the CPU, terminal and crystal");
+        const auto rom = emu51_asm::prepare_program_file(board/"upstream/pm21_2.hex");
+        check(rom.result.success && !rom.image.bytes.empty(),"The upstream monitor HEX is readable");
+        for (const auto& [addr,byte] : rom.image.bytes)
+            check(app->readProgramByte(addr)==byte,"The loaded monitor retains the published firmware bytes");
+
+        const auto wait = [&](const std::string& text) {
+            const auto until = app->cycleCount_+1200000;
+            while (app->cycleCount_ < until) {
+                runFor(*app,256);
+                if (!app->cpu_.serialTransmitBusy() && app->serialTerminalDisplay().find(text)!=std::string::npos) return;
+            }
+            check(false,"PAULMON2 expected "+text+" in terminal output: "+app->serialTerminalDisplay());
+        };
+        const auto send = [&](const char* input) {
+            app->serialTerminalOutput_.clear();
+            std::snprintf(app->serialTerminalInput_,sizeof(app->serialTerminalInput_),"%s",input);
+            check(app->sendSerialTerminalInput(),"Queue monitor input from the serial terminal");
+        };
+
+        wait("Loc:2000 >");
+        check(app->cpu_.TH1==0xfa && app->cpu_.readData(0x2000)==0xff,
+            "Unmodified monitor boots at 9600 baud with empty shared program RAM");
+        send("D");
+        wait("or ESC to abort\n\n");
+        runFor(*app,2048);
+        check(app->startSerialFileSend(board/"hello.hex"),"Send the sample Intel HEX over the simulated UART");
+        wait("Download completed");
+        wait("Loc:2000 >");
+        check(app->serialTerminalDisplay().find("No errors detected")!=std::string::npos &&
+            !app->serialFileStream_.is_open() && app->cpu_.serialReceiveOverruns()==0,
+            "The real monitor accepts the transfer without checksum errors or receive overruns: "+app->serialTerminalDisplay()+
+            " overruns="+std::to_string(app->cpu_.serialReceiveOverruns()));
+        const auto demo = emu51_asm::prepare_program_file(board/"hello.hex");
+        check(demo.result.success && !demo.image.bytes.empty(),"The sample Intel HEX is readable");
+        for (const auto& [addr,byte] : demo.image.bytes)
+            check(app->readProgramByte(addr)==byte && app->cpu_.readData(addr)==byte,
+                "Monitor writes executable RAM through XDATA");
+
+        send("J");
+        wait("ESC to quit: ");
+        runFor(*app,2048);
+        send("2000");
+        wait("Hello from RAM. Send a key to return.");
+        bool defined = false;
+        check(app->peripherals_->ledState("led",defined) && defined,"The uploaded program drives the P1.0 LED");
+        send("X");
+        wait("Loc:2000 >");
+        check(!app->peripherals_->ledState("led",defined) && defined,"The uploaded program returns to the monitor");
+        app->resetCpuState(true);
+        check(app->readProgramByte(0x2000)==demo.image.bytes.at(0x2000),"CPU reset preserves downloaded RAM");
+        if (persistent) {
+            wait("Loc:2000 >");
+            send("B");
+            wait("Slot saved.");
+            wait("Loc:2000 >");
+            check(app->flushPeripheralStorage(),"Save EEPROM through the desktop image path");
+            const auto image = Emu51PeripheralSession::readBinary(board/"program_slot.bin",32768);
+            check(image[0]==0xa5 && image[0x100]==demo.image.bytes.at(0x2000),"The 32 KiB image contains the committed program slot");
+        }
+        check(app->buildProjectUnits(true,true) && app->readProgramByte(0x2000)==0xff &&
+            app->readProgramByte(0x3f00)==0xa5,"Power cycle clears downloaded RAM and restores the baud initializer");
+        if (persistent) {
+            app->serialTerminalOutput_.clear();
+            wait("Slot restored.");
+            wait("Loc:2000 >");
+            for (const auto& [addr,byte] : demo.image.bytes)
+                check(app->readProgramByte(addr)==byte,"Power-up restores the saved program to executable RAM");
+            app.reset(); app = create();
+            check(app->openProjectFromPath(path),"Reopen the EEPROM trainer using its saved image");
+            wait("Slot restored.");
+            wait("Loc:2000 >");
+            for (const auto& [addr,byte] : demo.image.bytes)
+                check(app->readProgramByte(addr)==byte,"A fresh session loads the persisted program");
+        }
+    }
     static void monitor(const fs::path& path, const fs::path& serialInput) {
         auto app = create(); check(app->openProjectFromPath(path),"Open locally supplied monitor project: "+app->statusMessage_);
         runFor(*app,50000);
@@ -211,9 +293,17 @@ int main(int argc, char** argv) {
     ImGui::CreateContext(); ImGui::GetIO().IniFilename = nullptr; ImGui::GetIO().Fonts->AddFontDefault(); ImGui::GetIO().Fonts->Build();
     const auto root = fs::temp_directory_path()/("emu51-trainer-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directories(root); Emu51ImguiAppTestAccess::circuit(root);
+    const auto programs = fs::path(EMU51_REPO_ROOT)/"progs";
+    const auto board = programs/"boards/paulmon2", copy = root/"progs/boards/paulmon2";
+    Emu51ImguiAppTestAccess::paulmon2(board,false);
+    fs::create_directories(copy.parent_path());
+    fs::copy(board,copy,fs::copy_options::recursive);
+    fs::create_directories(root/"progs/asm/demo");
+    fs::copy_file(programs/"asm/demo/serial_i2c.inc",root/"progs/asm/demo/serial_i2c.inc");
+    Emu51ImguiAppTestAccess::paulmon2(copy,true);
     if ((argc == 3 || argc == 5) && std::string(argv[1]) == "--monitor-project") {
         check(argc != 5 || std::string(argv[3]) == "--serial-input","Expected --serial-input HEX");
         Emu51ImguiAppTestAccess::monitor(argv[2],argc == 5 ? fs::path(argv[4]) : fs::path{});
     } else check(argc == 1,"Usage: emu51_trainer_tests [--monitor-project PROJECT [--serial-input HEX]]");
-    fs::remove_all(root); ImGui::DestroyContext(); std::puts("Public trainer circuit, bus latches, scanned keys, ROM recipes and lifecycle passed.");
+    fs::remove_all(root); ImGui::DestroyContext(); std::puts("Public trainer circuits, ROM recipes, serial upload and lifecycle passed.");
 }

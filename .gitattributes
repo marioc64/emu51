@@ -15,3 +15,6 @@
 # Preserve the pinned upstream miniaudio bytes, including its trailing spaces.
 /third_party/miniaudio/miniaudio.h -text -whitespace
 /third_party/miniaudio/LICENSE -text
+
+# Preserve the published PAULMON2 firmware and source files verbatim.
+/progs/boards/paulmon2/upstream/* -text -whitespace

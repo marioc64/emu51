@@ -70,6 +70,35 @@ See [SDK component contracts](peripheral-sdk/COMPONENTS.md) for modeled interfac
 and limits, and [SID/reSID assessment](SID.md) for the separate GPL integration
 proposal. SID is not currently an available block.
 
+## OLED, RTC, GPIO expander, SPI flash, and logic analyzer
+
+Open these projects and run in Cycle exact mode. Their wired devices and the
+analyzer are available from the Graph **Add** menu.
+
+| Project | What to try |
+| --- | --- |
+| [OLED and RTC](progs/asm/demo/oled_rtc.emu51) | In **Live**, watch the SSD1306 scroll a plot under the title while the DS1307 rolls from February 29 to March 1. Both devices share I²C. Firmware copies the clock's BCD seconds, minutes and hours to IRAM 28h–2Ah. |
+| [GPIO expander keypad](progs/asm/demo/mcp23017_keypad.emu51) | Press a key in **Live**. The MCP23017 asserts INT0, the CPU scans all four rows, and the expander lights the LED. IRAM 24h–27h hold the detected column mask for each row. |
+| [SPI flash](progs/asm/demo/w25q64_flash.emu51) | Copy the project and assembly source to a writable folder first. The demo reads the JEDEC ID, erases sector zero, writes `EMU51`, and reads it back into IRAM 28h–2Ch. The optional 8 MiB image is saved on Pause or exit. Clear the image path for in-memory storage. |
+
+Copy [serial_i2c.inc](progs/asm/demo/serial_i2c.inc) alongside either I²C
+example when moving it. The RTC starts from the time set in its Graph
+inspector. Its date and time follow the emulated clock and freeze on Pause.
+
+Each example wires the analyzer. In **Live**, pick **Immediate** or an input
+and edge, then select **Arm**. Use **Stop** to freeze the capture without
+pausing the CPU. The **Waveforms**, **I2C**, and **SPI** tabs show the captured
+signals and decoded traffic. For the keypad, arm on a falling edge on D2 before
+pressing a key to capture the interrupt. See the
+[SDK device profiles](peripheral-sdk/SERIAL_DEVICES.md) for pin assignments and
+supported commands.
+
+## 8051 lab examples
+
+The [lab peripheral projects](progs/asm/demo/LAB_PERIPHERALS.md) demonstrate a
+ULN2003-driven stepper, an eight-channel ADC0809 scan, and a PAULMON2 trainer
+that saves executable RAM to a 24LC256 EEPROM and restores it on power-up.
+
 ## Build and try the board
 
 From the public source root:
@@ -294,6 +323,11 @@ The underlying SDK defaults remain 4,096/480 frames for hosts with tighter pacin
 ## Configure a graph
 
 ### Live device layout
+
+With **Edit layout** enabled, right-click empty canvas space and choose
+**Add label**. Enter a short description and choose **Add**. Drag the label to
+position it. Right-click a label for **Edit label** or **Remove label**.
+Labels are saved with the project and remain visible when the layout is locked.
 
 **Live** is the hardware front panel: LCD/segment displays, bargraphs, LEDs,
 switches, pushbuttons and keypads. Audio and adjustable voltage/digital sources
