@@ -133,7 +133,7 @@ void pretrigger() {
     for (unsigned i = 0; i < 1100; ++i) { c.advance(1); c.set(0,(i&1)==0); }
     std::array<e51p_logic_sample,E51P_LOGIC_CAPACITY> samples{};
     e51p_logic_status status{};
-    check(e51p_logic_read(c.chip,&status,samples.data(),samples.size())==E51P_OK &&
+    check(e51p_logic_read(c.chip,&status,samples.data(),E51P_LOGIC_CAPACITY)==E51P_OK &&
         status.armed && !status.triggered && status.count==1024 && samples.front().tick==77 &&
         samples[1023].tick==1100,"Pre-trigger ring retains the latest 1024 transitions");
     check(e51p_logic_arm(c.chip,0,1)==E51P_OK,"Arm on a connected channel");

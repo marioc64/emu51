@@ -101,7 +101,7 @@ compilation database with Ninja, then pass the files you want to inspect.
 
 ```sh
 cmake -S . -B build-lint -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-clang-tidy -p build-lint --checks='-*,clang-analyzer-*,bugprone-narrowing-conversions' peripheral-sdk/src/serial_devices.cpp
+clang-tidy -p build-lint peripheral-sdk/src/serial_devices.cpp
 ```
 
 `clang-format` is the corresponding tool for whitespace and style checks when
@@ -111,12 +111,12 @@ argument to a byte. Use a byte-typed fill value such as `uint8_t{0xFF}` when the
 destination stores bytes.
 
 The [source lint workflow](.github/workflows/source-lint.yml) also builds the
-peripheral host library and SDK component tests with MSVC in Release mode and
-warnings treated as errors. That job checks for MSVC diagnostics such as
-`C4389` when comparing an SDK enum conditional with a `uint32_t` and `C4838`
-when using one to initialize an unsigned field. Use an explicitly typed
-`uint32_t` value at those boundaries. The full compiler matrix still checks
-all targets.
+peripheral host library and the SDK component, serial-device, and UI test
+targets with MSVC in Release mode and warnings treated as errors. The UI test
+target compiles the shared peripheral editor and logic analyzer. This job
+covers `C4389` and `C4838` for SDK enum conditionals, `C4244` for integer
+expressions passed as floats, and `C4267` for `size_t` passed to SDK APIs that
+take `uint32_t`. The full compiler matrix still checks all targets.
 
 ## Source layout and targets
 

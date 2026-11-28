@@ -2089,9 +2089,9 @@ fi
         e51p_logic_status capture{};
         const auto decode = [&](unsigned protocol) {
             auto* analyzer = app->peripherals_->serialDevice("capture");
-            check(e51p_logic_read(analyzer,&capture,samples.data(),samples.size())==E51P_OK && capture.count>1,
+            check(e51p_logic_read(analyzer,&capture,samples.data(),E51P_LOGIC_CAPACITY)==E51P_OK && capture.count>1,
                 "Logic analyzer captures firmware bus edges");
-            return e51p_logic_decode(samples.data(),capture.count,protocol,events.data(),events.size());
+            return e51p_logic_decode(samples.data(),capture.count,protocol,events.data(),E51P_LOGIC_CAPACITY);
         };
         if (!open("oled_rtc")) return;
         run(800000);
@@ -2140,7 +2140,7 @@ fi
         check(app->cpu_.IRAM[0x26]==2 && app->peripherals_->ledState("led",defined) && defined,
             "Expander interrupts the CPU, firmware scans the correct row/column, and lights the LED");
         check(e51p_logic_stop(analyzer)==E51P_OK &&
-            e51p_logic_read(analyzer,&capture,samples.data(),samples.size())==E51P_OK &&
+            e51p_logic_read(analyzer,&capture,samples.data(),E51P_LOGIC_CAPACITY)==E51P_OK &&
             capture.triggered && !capture.armed && capture.trigger_tick<=capture.end_tick,
             "Edge-triggered capture records the interrupt timestamp and stops");
         app->peripherals_->setKeys("keypad",0);

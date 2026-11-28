@@ -566,7 +566,7 @@ void drawLogicTrace(const e51p_logic_status& state,const e51p_logic_sample* samp
 void drawLogicDecoded(const e51p_logic_sample* samples,unsigned count,unsigned protocol)
 {
     std::array<e51p_logic_event,E51P_LOGIC_CAPACITY> events;
-    const auto decoded = e51p_logic_decode(samples,count,protocol,events.data(),events.size());
+    const auto decoded = e51p_logic_decode(samples,count,protocol,events.data(),E51P_LOGIC_CAPACITY);
     if (ImGui::BeginChild("decoded",ImGui::GetContentRegionAvail())) {
         for (unsigned i = 0; i < decoded; ++i) {
             const auto& e = events[i];
@@ -590,7 +590,7 @@ void drawAnalyzer(e51p_serial_device* device,float scale)
 {
     e51p_logic_status state{};
     std::array<e51p_logic_sample,E51P_LOGIC_CAPACITY> samples;
-    if (e51p_logic_read(device,&state,samples.data(),samples.size())!=E51P_OK) return;
+    if (e51p_logic_read(device,&state,samples.data(),E51P_LOGIC_CAPACITY)!=E51P_OK) return;
     auto* settings = ImGui::GetStateStorage();
     const auto channelId = ImGui::GetID("trigger-channel"), edgeId = ImGui::GetID("trigger-edge");
     int channel = settings->GetInt(channelId), edge = settings->GetInt(edgeId);

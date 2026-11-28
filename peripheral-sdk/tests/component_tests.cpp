@@ -149,12 +149,13 @@ void eeprom256() {
         "24LC256 receives a two-byte word address and page data");
     i.stop();
     i.start(); check(!i.send(0xa0),"24LC256 NACKs during programming"); i.stop();
-    std::array<uint8_t,32768> image{};
+    constexpr uint32_t imageSize = 32768;
+    std::array<uint8_t,imageSize> image{};
     const auto revision = e51p_component_eeprom_revision(i.device);
-    ok(e51p_component_eeprom_export(i.device,image.data(),image.size()));
+    ok(e51p_component_eeprom_export(i.device,image.data(),imageSize));
     check(image[0x7fff]==255,"Host snapshots exclude uncommitted data");
     i.g.advance(5000);
-    ok(e51p_component_eeprom_export(i.device,image.data(),image.size()));
+    ok(e51p_component_eeprom_export(i.device,image.data(),imageSize));
     check(image[0x7fff]==0x12 && image[0x7fc0]==0x34 && image[0]==255 &&
         e51p_component_eeprom_revision(i.device)>revision,"A 64-byte write wraps inside its page and increments the storage revision");
     i.start(); check(i.send(0xa0) && i.send(0x7f) && i.send(0xff),"Select the last address");
@@ -164,7 +165,7 @@ void eeprom256() {
     i.g.drive(i.wp,1);
     i.start(); check(i.send(0xa0) && i.send(0) && i.send(0) && i.send(0x78),"Write-protected data is acknowledged");
     i.stop(); i.start(); check(i.send(0xa0),"Write protection skips the busy cycle"); i.stop();
-    ok(e51p_component_eeprom_export(i.device,image.data(),image.size()));
+    ok(e51p_component_eeprom_export(i.device,image.data(),imageSize));
     check(image[0]==255,"24LC256 WP protects data at STOP");
 }
 void stepper() {

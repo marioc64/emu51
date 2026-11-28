@@ -888,7 +888,7 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
         dl->AddRectFilled(plus(lo,{3,4}),plus(hi,{3,4}),IM_COL32(0,0,0,65),6*zoom_);
         dl->AddRectFilled(lo,hi,IM_COL32(39,46,59,255),6*zoom_);
         dl->AddRectFilled(lo,screen(plus(b.position,{b.size.x,headerHeight})),b.id == "cpu" ? IM_COL32(43,65,87,255) : IM_COL32(52,64,83,255),6*zoom_);
-        dl->AddRect(lo,hi,b.id == selected_ ? IM_COL32(239,243,255,255) : IM_COL32(83,102,126,255),6*zoom_,0,b.id == selected_ ? 2 : 1);
+        dl->AddRect(lo,hi,b.id == selected_ ? IM_COL32(239,243,255,255) : IM_COL32(83,102,126,255),6*zoom_,0,b.id == selected_ ? 2.0f : 1.0f);
         // Keep long IDs inside the block title instead of covering neighbours.
         const float headerInset = headerPadding*zoom_;
         dl->PushClipRect(plus(lo,{headerInset,0}),minus(hi,{headerInset,0}),true);
@@ -922,7 +922,7 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
             else dl->AddCircleFilled(center,connectorHalf.x,c);
             for (std::size_t bit = 0; bit < p.bits.size(); ++bit) {
                 const auto number = std::to_string(bit);
-                const float size = bit < 10 ? 20 : 18;
+                const float size = bit < 10 ? 20.0f : 18.0f;
                 const auto numberExtent = ImGui::GetFont()->CalcTextSizeA(size*zoom_,FLT_MAX,0,number.c_str());
                 const auto bitCenter = screen(p.bits[bit]);
                 const auto half = scale(bitHalf,zoom_);
