@@ -46,6 +46,47 @@ local settings.
 The source audit checks tracked content and paths in reachable Git history; it
 is not a complete secret scanner or license audit.
 
+## Before pushing to GitHub
+
+Check the exact revision intended for GitHub against the
+[GitHub Actions matrix](.github/workflows/ci.yml). Build every default target
+in Release mode with warnings treated as errors, then run the full CTest
+suite on each platform. Configure a fresh build directory when changing
+compilers so CMake selects the intended toolchain.
+
+| Runner | Configure |
+| --- | --- |
+| Linux, GCC | `CC=gcc CXX=g++ cmake -S . -B build-prepush-gcc -DCMAKE_BUILD_TYPE=Release -DEMU51_WERROR=ON` |
+| Linux, Clang | `CC=clang CXX=clang++ cmake -S . -B build-prepush-clang -DCMAKE_BUILD_TYPE=Release -DEMU51_WERROR=ON` |
+| macOS, AppleClang | `CC=/usr/bin/clang CXX=/usr/bin/clang++ cmake -S . -B build-prepush-macos -DCMAKE_BUILD_TYPE=Release -DEMU51_WERROR=ON -DEMU51_CODESIGN_IDENTITY=- -DEMU51_PERIPHERAL_HOST_AUDIO=ON` |
+| Windows, MSVC | From a Visual Studio developer shell, run `cmake -S . -B build-prepush-msvc -DCMAKE_BUILD_TYPE=Release -DEMU51_WERROR=ON` and verify CMake selected MSVC. |
+
+For each configured build directory, substitute it for `build-prepush-macos`
+in these commands.
+
+```sh
+cmake --build build-prepush-macos --config Release --parallel
+ctest --test-dir build-prepush-macos -C Release --output-on-failure --no-tests=error
+```
+
+Run the Linux Clang ASan/UBSan job in a separate build with `-DEMU51_ASAN=ON`.
+Record strict build results for each compiler even when the sanitizer run passes.
+Review changed C++ for partially initialized aggregates, mixed signed and
+unsigned comparisons, enum/integer conditionals, narrowing conversions,
+shadowed members, and indentation that obscures a control statement.
+
+On macOS, also repeat the callback and recovery tests serially. Keep host audio
+enabled so these tests exercise the NULL playback backend.
+
+```sh
+ctest --test-dir build-prepush-macos -C Release -j 1 --output-on-failure --no-tests=error --repeat until-fail:3 -R '^emu51_(covox_duet_null|ui_tests|execution_worker_tests)$'
+```
+
+Treat the first failed attempt as a finding and retain its output. Check missing
+playback, underruns, and post-pause recovery before publishing. Record any
+unavailable toolchain or runner as unverified. Run
+`python3 scripts/check_public_sources.py` from the public checkout before pushing.
+
 ## Source layout and targets
 
 | Location | Responsibility |
