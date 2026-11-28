@@ -69,7 +69,8 @@ struct Max {
     }
     void words(uint16_t a,uint16_t b,bool selected=true) { if (selected) g.drive(load,0);const uint32_t stream=(uint32_t(b)<<16)|a;
         for (int bit=31;bit>=0;--bit) { g.drive(din,(stream>>bit)&1);g.drive(clk,1);g.drive(clk,0); }
-        if (!selected) g.drive(load,0);g.drive(load,1);
+        if (!selected) g.drive(load,0);
+        g.drive(load,1);
     }
     void both(unsigned reg,unsigned value) { words(uint16_t((reg<<8)|value),uint16_t((reg<<8)|value)); }
 };

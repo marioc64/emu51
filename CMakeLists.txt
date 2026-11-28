@@ -27,7 +27,7 @@ add_library(emu51_warnings INTERFACE)
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
 	target_compile_options(emu51_warnings INTERFACE
 		-Wall -Wextra -Wpedantic
-		-Wnon-virtual-dtor -Wnull-dereference
+		$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wnon-virtual-dtor> -Wnull-dereference
 	)
 	if (EMU51_WERROR)
 		target_compile_options(emu51_warnings INTERFACE -Werror)

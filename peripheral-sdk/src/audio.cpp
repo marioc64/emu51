@@ -225,7 +225,7 @@ extern "C" uint32_t e51p_audio_capture(e51p_audio_stream* s, const float* input,
 }
 extern "C" uint32_t e51p_audio_playback(e51p_audio_stream* s, float* output, uint32_t frames) {
     if (!output) return 0;
-    if (!s || !(s->config.directions & E51P_AUDIO_PLAYBACK)) { std::fill_n(output, frames, 0); return 0; }
+    if (!s || !(s->config.directions & E51P_AUDIO_PLAYBACK)) { std::fill_n(output, frames, 0.0f); return 0; }
     uint32_t used = 0, budget = s->config.capacity_frames;
     for (uint32_t i = 0; i < frames; ++i) {
         output[i] = 0;

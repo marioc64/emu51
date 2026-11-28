@@ -325,8 +325,8 @@ struct e51p_serial_device {
         bool level = (control&128)!=0;
         if ((control&16) && !(rtc.reg[0]&128)) {
             constexpr unsigned rates[]{1,4096,8192,32768};
-            const auto phase = static_cast<long double>(rtc.fraction)*rates[control&3]*2/hz;
-            level = (static_cast<unsigned>(phase)&1)==0;
+            const auto halfCycles = static_cast<long double>(rtc.fraction)*rates[control&3]*2/hz;
+            level = (static_cast<unsigned>(halfCycles)&1)==0;
         }
         drive(2,level,1,1);
     }
@@ -403,7 +403,7 @@ struct e51p_serial_device {
         if (index!=255 && reg!=Expander::Flags && reg!=Expander::Capture) {
             auto& r = expander.reg;
             if (reg==Expander::Config) r[reg].fill(value&0xfe);
-            else r[reg==Expander::Gpio ? Expander::Latch : reg][port] = value;
+            else r[reg==Expander::Gpio ? unsigned{Expander::Latch} : reg][port] = value;
             expanderOutputs();
             if (reg==Expander::Enable || reg==Expander::Control || reg==Expander::Compare) gpioChanged(port);
         }
@@ -422,7 +422,7 @@ struct e51p_serial_device {
                 rx = static_cast<uint8_t>((rx<<1)|unsigned(data));
                 if (++bits==8) {
                     if (phase==Phase::Address) {
-                        ack = (rx>>1)==config.address && !expander.resetHeld &&
+                        ack = (unsigned(rx)>>1)==config.address && !expander.resetHeld &&
                             (!(rx&1) || config.kind!=E51P_SSD1306);
                         afterAck = !ack ? Phase::Idle : (rx&1) ? Phase::Send : Phase::Receive;
                         wantsPointer = true; oled.wantsControl = true;
@@ -680,14 +680,16 @@ uint32_t e51p_logic_decode(const e51p_logic_sample* samples, uint32_t count, uin
         const auto tick = samples[i].tick;
         if (startStop) {
             active = !(now.value&(i2c ? 2u : 8u));
-            out[written++] = {tick,active ? E51P_LOGIC_BEGIN : E51P_LOGIC_END,0,0,0};
+            const auto kind = active ? E51P_LOGIC_BEGIN : E51P_LOGIC_END;
+            out[written++] = {tick,static_cast<uint32_t>(kind),0,0,0};
             address = active && i2c;
             bits = a = b = 0; valid = 3;
         } else if (active && (bad&(i2c ? 3u : 9u))) {
             active = false;
         } else if (active && scl && (changed&1) && !(unstable&1)) {
             if (i2c && bits==8) {
-                out[written++] = {tick,address ? E51P_LOGIC_ADDRESS : E51P_LOGIC_BYTE,a,0,unsigned(!(now.value&2))};
+                const auto kind = address ? E51P_LOGIC_ADDRESS : E51P_LOGIC_BYTE;
+                out[written++] = {tick,static_cast<uint32_t>(kind),a,0,unsigned(!(now.value&2))};
                 address = false;
                 bits = a = 0;
             } else {

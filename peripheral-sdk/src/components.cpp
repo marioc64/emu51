@@ -208,7 +208,7 @@ struct e51p_component {
     void received() {
         ack = false; nextPhase = 0;
         if (phase == 1) {
-            selected = (rx>>1) == config.i2c_address && now() >= writeUntil;
+            selected = (unsigned(rx)>>1) == config.i2c_address && now() >= writeUntil;
             ack = selected; nextPhase = selected ? ((rx&1) ? 4 : 2) : 0;
             wordBytes = 0;
         } else if (phase == 2) {
@@ -278,15 +278,15 @@ struct e51p_component {
         if (coils==motor.coils && defined==motorDefined) return;
         motorDefined = defined;
         motor.coils = coils;
-        const int phase = phases[coils];
-        motor.valid = defined && (!coils || phase>=0);
-        if (phase<0) {
+        const int coilPhase = phases[coils];
+        motor.valid = defined && (!coils || coilPhase>=0);
+        if (coilPhase<0) {
             if (!motor.valid && motor.invalid_transitions<UINT32_MAX) ++motor.invalid_transitions;
             previousPhase = -1; motor.direction = 0;
             return;
         }
         if (previousPhase>=0) {
-            int step = (phase-previousPhase+8)%8;
+            int step = (coilPhase-previousPhase+8)%8;
             if (step>4) step -= 8;
             if (step!=0 && std::abs(step)<=2) {
                 constexpr int turn = E51P_STEPPER_HALF_STEPS_PER_TURN;
@@ -297,7 +297,7 @@ struct e51p_component {
                 motor.direction = 0;
             }
         }
-        previousPhase = phase;
+        previousPhase = coilPhase;
     }
     void adcOutputs() {
         drive(4,adcEoc,1);

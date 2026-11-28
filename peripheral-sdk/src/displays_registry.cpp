@@ -46,7 +46,10 @@ const e51p_factory_desc* const* e51p_display_factories(std::size_t& count) {
         }
         return result;
     }();
-    static const auto pointers=[] { std::array<const e51p_factory_desc*,E51P_DISPLAY_COUNT> result{};
-        for (uint32_t i=0;i<E51P_DISPLAY_COUNT;++i) result[i]=&descriptors[i]; return result; }();
+    static const auto pointers=[] {
+        std::array<const e51p_factory_desc*,E51P_DISPLAY_COUNT> result{};
+        for (uint32_t i=0;i<E51P_DISPLAY_COUNT;++i) result[i]=&descriptors[i];
+        return result;
+    }();
     count=pointers.size(); return pointers.data();
 }

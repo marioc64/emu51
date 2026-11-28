@@ -213,7 +213,7 @@ e51p_status e51p_wired_bus_access(e51p_wired_bus* b, uint32_t kind, uint32_t add
             const auto csStatus = sample(*b,t.pins.cs,cs);
             if (csStatus == E51P_OK && ((cs != 0) == t.cs_low)) continue;
             const auto oeStatus = sample(*b,t.pins.oe,oe);
-            const auto weStatus = t.pins.we == E51P_INVALID_ID ? E51P_OK : sample(*b,t.pins.we,we);
+            const auto weStatus = t.pins.we == E51P_INVALID_ID ? e51p_status{E51P_OK} : sample(*b,t.pins.we,we);
             // A disabled read and write cannot affect this transaction, even
             // when the chip-select decoder has an unresolved external input.
             if (oeStatus == E51P_OK && weStatus == E51P_OK &&

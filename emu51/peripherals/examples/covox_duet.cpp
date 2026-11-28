@@ -94,10 +94,20 @@ int main(int argc, char** argv) {
             }
         }
         const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
-        check(graph->syncAudio(false, error), error);
+        // A short emulation can finish before the host's initial playback
+        // latency has elapsed. Let the callback consume the queued audio.
         e51p_audio_stats stats{};
+        const auto playbackDeadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(static_cast<int>(graph->audioLatencyMs()) + 1000);
+        do {
+            check(graph->audioStats(stats) && stats.status == E51P_OK, "Cannot read playback statistics");
+            if (stats.playback_used) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } while (std::chrono::steady_clock::now() < playbackDeadline);
+        check(graph->syncAudio(false, error), error);
         check(graph->audioStats(stats) && stats.status == E51P_OK && stats.playback_used && !stats.captured_frames && samples,
-            "Playback-only host did not deliver generated audio");
+            "Playback-only host did not deliver generated audio (queued " + std::to_string(stats.playback_queued) +
+            ", missed " + std::to_string(stats.playback_misses) + " frames)");
         std::printf("%s: %llu samples (%.1f Hz), Covox %02X..%02X, %.1f%% real-time\n"
             "IRAM: row=%u ticks=%u pitch/gate=%u/%u + %u/%u loops=%u\n"
             "Playback used=%llu misses=%llu dropped=%llu; capture frames=%llu\n",

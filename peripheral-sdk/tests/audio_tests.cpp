@@ -188,6 +188,21 @@ void gaps_latency_and_pause() {
     check(e51p_audio_playback(latency.audio, output, 3) == 1 && output[0] == 0 && output[1] == 0 && output[2] == 0.5f,
         "playback startup latency is explicit silence");
 }
+void playback_reserve() {
+    constexpr uint32_t rate = 48000, latency = 6144;
+    constexpr uint32_t warmup = rate / 5, gap = rate * 80 / 1000;
+    Graph g(rate, rate, 16384, latency);
+    g.start();
+    ok(g.api->analog_write(g.c, g.output, 3.75));
+    float output[warmup];
+    g.advance(warmup);
+    check(e51p_audio_playback(g.audio, output, warmup) == warmup - latency, "Playback builds its configured reserve");
+    check(e51p_audio_playback(g.audio, output, gap) == gap && g.stats().playback_misses == 0,
+        "Playback reserve absorbs an 80 ms simulation gap without underrun");
+    g.advance(gap);
+    check(e51p_audio_playback(g.audio, output, gap) == gap && g.stats().playback_misses == 0,
+        "Playback continues after the simulation catches up");
+}
 void adc_dac_bridge() {
     Graph g(12, 4, 8, 0, false);
     e51p_adc0804_endpoints adc{}; adc.struct_size = sizeof(adc);
@@ -269,6 +284,7 @@ void callback_concurrency() {
 }
 }
 int main() {
-    scaling_and_fractional_time(); live_gain_and_scope(); configurable_buffering(); gaps_latency_and_pause(); adc_dac_bridge(); bounds_and_ownership(); callback_concurrency();
+    scaling_and_fractional_time(); live_gain_and_scope(); configurable_buffering(); gaps_latency_and_pause(); playback_reserve();
+    adc_dac_bridge(); bounds_and_ownership(); callback_concurrency();
     std::puts("Audio scaling, clocks, gaps, epochs, ADC/DAC wiring, lifetime and concurrent callback checks passed.");
 }

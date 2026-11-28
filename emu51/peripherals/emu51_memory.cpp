@@ -15,7 +15,7 @@ bool Emu51PeripheralSession::circuitAccess(unsigned kind, std::uint16_t address,
         if (!peek) {
             // Electrical contention in a memory transaction is a fatal bus
             // fault, unlike an advisory unresolved front-panel GPIO signal.
-            busStatus_ = status == E51P_CONTENTION ? E51P_DEVICE_ERROR : status;
+            busStatus_ = status == E51P_CONTENTION ? e51p_status{E51P_DEVICE_ERROR} : status;
             char location[64]; std::snprintf(location,sizeof(location),"%s %04X: ",kind == E51P_CODE_READ ? "CODE" : "XDATA",address);
             busError_ = std::string(location) + e51p_wired_bus_error(wiredBus_);
         }

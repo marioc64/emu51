@@ -88,7 +88,7 @@ void run(bool table, bool invalidPitch = false) {
         if (pc == sym("NOTES_PUBLISHED")) {
             ++records;
             const auto row = cpu.IRAM[0x33];
-            check(row >= 1 && row <= rows && word(cpu, 0x48) == sym("SONG") + 5 * row,
+            check(row >= 1 && row <= rows && word(cpu, 0x48) == sym("SONG") + 5u * row,
                 "Player status exposes current row and next code-memory record");
             const auto data = sym("SONG") + (row - 1) * 5;
             check(musicTicks == nextRecordTick, "Each score record holds for exactly its duration in music interrupts");

@@ -572,7 +572,7 @@ e51p_status e51p_target_read(e51p_context* c, e51p_endpoint id, uint32_t address
             const auto propagated = settle(*c);
             if (status == E51P_OK) status = propagated;
         }
-        if (status != E51P_OK) return status == E51P_NOT_FOUND ? E51P_DEVICE_ERROR : status;
+        if (status != E51P_OK) return status == E51P_NOT_FOUND ? e51p_status{E51P_DEVICE_ERROR} : status;
         if (result & ~mask(e.desc.width)) return E51P_DEVICE_ERROR;
         *value = result;
         return E51P_OK;

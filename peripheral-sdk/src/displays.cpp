@@ -190,7 +190,7 @@ struct e51p_display {
     }
     void received() {
         ack=true; nextPhase=3;
-        if (ht()&&phase==1) { ack=(rx>>1)==cfg.i2c_address; nextPhase=ack ? ((rx&1) ? 4 : 2) : 0; }
+        if (ht()&&phase==1) { ack=(unsigned(rx)>>1)==cfg.i2c_address; nextPhase=ack ? ((rx&1) ? 4 : 2) : 0; }
         else if (ht()&&phase==2) htCommand(rx);
         else if (ht()&&phase==3) { if (pointer<16) { ram[pointer]=rx; pointer=(pointer+1)&15; scanOutput(now()); } }
         else if (tm()) {

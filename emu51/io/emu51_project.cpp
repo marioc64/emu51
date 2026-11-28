@@ -101,7 +101,11 @@ struct StoredProject {
     emu51_ui_layout::StoredLayout workspace;
 };
 
-constexpr emu51_ui_layout::StoredLayout kNoWorkspace{.leftWidth = -1};
+constexpr auto kNoWorkspace = [] {
+    emu51_ui_layout::StoredLayout layout{};
+    layout.leftWidth = -1;
+    return layout;
+}();
 
 const kason_schema* projectSchema()
 {
