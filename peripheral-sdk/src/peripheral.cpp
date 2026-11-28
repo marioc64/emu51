@@ -332,6 +332,19 @@ e51p_status drive(e51p_context* c, e51p_endpoint id, uint32_t value,
     if (c->busy) return E51P_OK;
     return protect(c, [&]() -> e51p_status { Busy busy(*c); return settle(*c); });
 }
+e51p_status setPulls(e51p_context* c, e51p_endpoint id, uint32_t up, uint32_t down) noexcept {
+    if (!live(c) || c->peek) return E51P_INVALID_STATE;
+    if (!endpoint(c, id, E51P_DIGITAL)) return E51P_INVALID_ARGUMENT;
+    auto& e = c->endpoints[id];
+    if (((up | down) & ~mask(e.desc.width)) || (up & down)) return E51P_INVALID_ARGUMENT;
+    if (e.desc.pull_up != up || e.desc.pull_down != down) {
+        e.desc.pull_up = up;
+        e.desc.pull_down = down;
+        c->dirty = true;
+    }
+    if (c->busy) return E51P_OK;
+    return protect(c, [&]() -> e51p_status { Busy busy(*c); return settle(*c); });
+}
 e51p_status sample(const e51p_context* c, e51p_endpoint id, e51p_digital_state* state) noexcept {
     if (!live(c)) return E51P_INVALID_STATE;
     if (!state || !endpoint(c, id, E51P_DIGITAL)) return E51P_INVALID_ARGUMENT;
@@ -586,4 +599,9 @@ e51p_status e51p_target_write(e51p_context* c, e51p_endpoint id, uint32_t addres
         return status == E51P_OK ? propagated : status;
     });
 }
+}
+
+// Internal entry point for devices with programmable pull resistors.
+e51p_status e51p_set_device_pulls(e51p_context* c, e51p_endpoint id, uint32_t up, uint32_t down) noexcept {
+    return setPulls(c, id, up, down);
 }

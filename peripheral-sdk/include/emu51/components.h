@@ -12,6 +12,7 @@ enum {
     E51P_COMPONENT_LCD, E51P_COMPONENT_KEYPAD, E51P_COMPONENT_595,
     E51P_COMPONENT_165, E51P_COMPONENT_EEPROM, E51P_COMPONENT_AY,
     E51P_COMPONENT_BUS_LATCH, E51P_COMPONENT_BUS_BUFFER, E51P_COMPONENT_MATRIX,
+    E51P_COMPONENT_24LC256, E51P_COMPONENT_ULN2003, E51P_COMPONENT_STEPPER, E51P_COMPONENT_ADC0809,
     E51P_COMPONENT_COUNT
 };
 typedef struct e51p_component_config {
@@ -46,10 +47,21 @@ e51p_status e51p_component_set_latch_pulse_ticks(e51p_component*, uint64_t ticks
 e51p_status e51p_component_set_matrix_direct_keys(e51p_component*, uint32_t count);
 e51p_status e51p_component_get_led(const e51p_component*, int* on, int* defined);
 e51p_status e51p_component_get_lcd(const e51p_component*, e51p_lcd_snapshot*);
-/* Exactly 256 bytes. Import before the first time advance; exports include committed bytes.
+typedef struct e51p_stepper_snapshot {
+    uint32_t coils, position_half_steps, invalid_transitions;
+    int direction; /* -1 reverse, +1 forward, 0 no direction */
+    int valid;
+} e51p_stepper_snapshot;
+enum { E51P_STEPPER_HALF_STEPS_PER_TURN = 400 };
+e51p_status e51p_component_get_stepper(const e51p_component*, e51p_stepper_snapshot*);
+/* ADC0809 only, before start. References are fixed at 0 V and full_scale_volts. */
+e51p_status e51p_component_set_adc0809(e51p_component*, uint64_t conversion_ticks, double full_scale_volts);
+/* Image length is 256 bytes for 24C02 or 32768 bytes for 24LC256.
+ * Import before the first time advance. Exports include committed bytes.
  * EEPROM contents survive context reset. File persistence belongs to the host. */
 e51p_status e51p_component_eeprom_import(e51p_component*, const uint8_t*, uint32_t size);
 e51p_status e51p_component_eeprom_export(const e51p_component*, uint8_t*, uint32_t size);
+uint64_t e51p_component_eeprom_revision(const e51p_component*);
 #ifdef __cplusplus
 }
 #endif

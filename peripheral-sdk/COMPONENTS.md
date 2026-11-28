@@ -123,6 +123,22 @@ time zero). Export is a passive committed-memory snapshot. The GPL host owns
 path resolution, atomic disk saves and error reporting. No file I/O occurs from
 SCL/SDA callbacks or the time-advance callback.
 
+## Additional lab devices
+
+The same EEPROM API supports `emu51.24lc256`. Import/export transfers a
+32,768-byte committed image. The device uses two address bytes, 64-byte page
+wrap and a 5 ms write cycle. Hosts can query the image revision to avoid
+copying an unchanged image.
+
+`emu51.uln2003` is a seven-channel open-collector sink. `emu51.stepper`
+accepts four active-low coil inputs and exposes a passive position, coil and
+direction snapshot in half-step units. `emu51.adc0809` provides three
+address bits, ALE/START/OE/EOC, an eight-bit tri-state output, and eight
+analog inputs. Its full-scale voltage and conversion duration can be set
+before context start. See the
+[lab device profiles](../progs/asm/demo/LAB_PERIPHERALS.md) for board examples
+and wiring.
+
 ## AY-3-8910
 
 The chip clock is independent of the CPU tick frequency. The profile generates

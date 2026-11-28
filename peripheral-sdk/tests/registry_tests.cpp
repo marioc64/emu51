@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 // Copyright (C) 2026 Mariusz Kasolik
 #include "emu51/registry.h"
+#include "emu51/components.h"
+#include "emu51/serial_devices.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -90,7 +92,14 @@ void validation_and_ownership() {
     check(e51p_registry_instantiate(g.registry, saved->type_id, g.api, g.context, "duplicate", duplicate, 2, nullptr, 0) == E51P_INVALID_ARGUMENT && probe.calls == before,
         "Duplicate parameter keys are rejected before creation");
     uint32_t count = 0; ok(e51p_registry_count(g.registry, &count));
-    check(count == 26, "Built-ins append to a user registry");
+    check(count == 14+E51P_COMPONENT_COUNT+E51P_SERIAL_DEVICE_COUNT, "Built-ins append to a user registry");
+    for (unsigned kind = 0; kind < E51P_SERIAL_DEVICE_COUNT; ++kind) {
+        const e51p_factory_desc* device = nullptr;
+        ok(e51p_registry_find(g.registry,e51p_serial_type_id(kind),&device));
+        std::vector<e51p_endpoint> pins(device->pin_count);
+        ok(e51p_registry_instantiate(g.registry,device->type_id,g.api,g.context,device->type_id,
+            nullptr,0,pins.data(),device->pin_count));
+    }
     uint32_t cleared = 42;
     check(e51p_registry_count(nullptr, &cleared) == E51P_INVALID_ARGUMENT && cleared == 0,
         "Invalid count queries clear their output");

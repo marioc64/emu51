@@ -106,10 +106,10 @@ void lcd() {
 struct I2c {
     Graph g; std::array<e51p_endpoint,16> pins{}; e51p_component* device;
     e51p_endpoint scl,sda,wp;
-    I2c() : device(g.add(E51P_COMPONENT_EEPROM,pins)),scl(g.pin()),sda(g.pin()),wp(g.pin()) {
+    explicit I2c(unsigned kind=E51P_COMPONENT_EEPROM) : device(g.add(kind,pins)),scl(g.pin()),sda(g.pin()),wp(g.pin()) {
         g.wire(scl,pins[0]); g.wire(sda,pins[1]); g.wire(wp,pins[2]);
         std::array<uint8_t,256> image{}; image.fill(255); image[0x40]=0x96; image[0x41]=0x35;
-        ok(e51p_component_eeprom_import(device,image.data(),256));
+        if (kind==E51P_COMPONENT_EEPROM) ok(e51p_component_eeprom_import(device,image.data(),256));
         ok(g.api->start(g.c)); lineSda(1); lineScl(1); g.drive(wp,0);
     }
     void lineSda(bool high) { g.drive(sda,high,1,1); g.advance(5); }
@@ -140,6 +140,80 @@ void eeprom() {
     ok(i.g.api->reset(i.g.c)); ok(e51p_component_eeprom_export(i.device,image.data(),256)); check(image[7]==0x12,"EEPROM survives CPU/graph reset");
     i.g.time=0; i.g.advance(1);
     check(e51p_component_eeprom_import(i.device,image.data(),256)==E51P_INVALID_STATE,"A running EEPROM cannot be replaced behind the simulated bus");
+}
+void eeprom256() {
+    I2c i(E51P_COMPONENT_24LC256);
+    i.start();
+    check(i.send(0xa0) && i.send(0x7f) && i.send(0xff) && i.send(0x12) && i.send(0x34),
+        "24LC256 receives a two-byte word address and page data");
+    i.stop();
+    i.start(); check(!i.send(0xa0),"24LC256 NACKs during programming"); i.stop();
+    std::array<uint8_t,32768> image{};
+    const auto revision = e51p_component_eeprom_revision(i.device);
+    ok(e51p_component_eeprom_export(i.device,image.data(),image.size()));
+    check(image[0x7fff]==255,"Host snapshots exclude uncommitted data");
+    i.g.advance(5000);
+    ok(e51p_component_eeprom_export(i.device,image.data(),image.size()));
+    check(image[0x7fff]==0x12 && image[0x7fc0]==0x34 && image[0]==255 &&
+        e51p_component_eeprom_revision(i.device)>revision,"A 64-byte write wraps inside its page and increments the storage revision");
+    i.start(); check(i.send(0xa0) && i.send(0x7f) && i.send(0xff),"Select the last address");
+    i.start(); check(i.send(0xa1),"Random read uses repeated START");
+    check(i.read(true)==0x12 && i.read(false)==255,"Sequential read wraps across the end of the array"); i.stop();
+
+    i.g.drive(i.wp,1);
+    i.start(); check(i.send(0xa0) && i.send(0) && i.send(0) && i.send(0x78),"Write-protected data is acknowledged");
+    i.stop(); i.start(); check(i.send(0xa0),"Write protection skips the busy cycle"); i.stop();
+    ok(e51p_component_eeprom_export(i.device,image.data(),image.size()));
+    check(image[0]==255,"24LC256 WP protects data at STOP");
+}
+void stepper() {
+    Graph g; std::array<e51p_endpoint,16> driver{},motor{};
+    g.add(E51P_COMPONENT_ULN2003,driver,nullptr,"driver");
+    const auto handle = g.add(E51P_COMPONENT_STEPPER,motor,nullptr,"motor");
+    const auto inputs = g.pin(7);
+    g.wire(inputs,driver[0],7); g.wire(driver[1],motor[0],4);
+    ok(g.api->start(g.c));
+    e51p_digital_state outputs{};
+    ok(g.api->sample(g.c,driver[1],&outputs));
+    check(outputs.floating==0x70 && outputs.value==15,"ULN2003 releases outputs and the coil load pulls its four inputs high");
+    const auto state = [&]() { e51p_stepper_snapshot s{}; ok(e51p_component_get_stepper(handle,&s)); return s; };
+    g.drive(inputs,1,127); g.drive(inputs,3,127); g.drive(inputs,2,127);
+    check(state().valid && state().position_half_steps==2 && state().direction==1 && state().coils==2,
+        "Adjacent phases advance by one half-step");
+    g.drive(inputs,8,127);
+    check(state().invalid_transitions==1 && state().position_half_steps==2,"A nonadjacent phase counts a missed transition");
+    g.drive(inputs,4,127);
+    check(state().direction==-1 && !state().position_half_steps,"Reverse wave steps decrement by two half-steps");
+    g.drive(inputs,15,127);
+    check(!state().valid && state().invalid_transitions==2,"Unsupported coil patterns are visible");
+    g.drive(inputs,0,127);
+    check(state().valid && state().coils==0 && state().direction==0,"Releasing coils leaves position unchanged");
+}
+void adc0809() {
+    Graph g; std::array<e51p_endpoint,16> adc{};
+    const auto handle = g.add(E51P_COMPONENT_ADC0809,adc);
+    ok(e51p_component_set_adc0809(handle,100,5));
+    const auto addr = g.pin(3), ale = g.pin(), start = g.pin(), oe = g.pin();
+    g.wire(addr,adc[0],3); g.wire(ale,adc[1]); g.wire(start,adc[2]); g.wire(oe,adc[3]);
+    e51p_endpoint_desc source{sizeof(source),"voltage",E51P_ANALOG,E51P_OUTPUT,1,0,0,0};
+    e51p_endpoint signal;
+    ok(g.api->add_endpoint(g.c,g.host,&source,&signal));
+    ok(g.api->connect_analog(g.c,signal,adc[9]));
+    ok(g.api->start(g.c));
+    g.drive(addr,3,7); g.drive(ale,1); g.drive(ale,0);
+    g.drive(addr,5,7);
+    ok(g.api->analog_write(g.c,signal,2.5));
+    g.drive(start,1); check(g.sample(adc[4])==0,"START asserts busy");
+    g.advance(200); check(g.sample(adc[4])==0,"A held START does not complete a conversion");
+    g.drive(start,0);
+    ok(g.api->analog_write(g.c,signal,3.75));
+    g.advance(99); check(g.sample(adc[4])==0,"Conversion stays busy for the configured interval");
+    g.advance(1); check(g.sample(adc[4])==1,"EOC rises on completion");
+    e51p_digital_state out{};
+    ok(g.api->sample(g.c,adc[5],&out)); check(out.floating==255,"OE low releases all data pins");
+    g.drive(oe,1); check(g.sample(adc[5])==128,"ADC uses the ALE-selected channel sampled on START falling");
+    g.drive(ale,1); g.drive(ale,0); g.drive(start,1); g.drive(start,0); g.advance(100);
+    ok(g.api->sample(g.c,adc[5],&out)); check(out.floating==255,"An unwired analog input yields an undefined result");
 }
 void ay() {
     Graph g; std::array<e51p_endpoint,16> p{}; g.add(E51P_COMPONENT_AY,p);
@@ -180,7 +254,7 @@ void ay() {
 void registry() {
     e51p_registry* r=nullptr; ok(e51p_registry_create(E51P_REGISTRY_ABI_VERSION,&r)); ok(e51p_registry_add_builtins(r));
     const char* ids[]{"emu51.led","emu51.switch","emu51.button","emu51.hd44780","emu51.keypad4x4","emu51.74hc595","emu51.74hc165","emu51.24c02","emu51.ay38910",
-        "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix"};
+        "emu51.bus-latch8","emu51.bus-buffer8","emu51.key-matrix","emu51.24lc256","emu51.uln2003","emu51.stepper","emu51.adc0809"};
     for (const auto* id : ids) {
         Graph g; const e51p_factory_desc* desc=nullptr; ok(e51p_registry_find(r,id,&desc)); std::array<e51p_endpoint,16> pins{};
         ok(e51p_registry_instantiate(r,id,g.api,g.c,"device",nullptr,0,pins.data(),16)); ok(g.api->start(g.c));
@@ -239,4 +313,4 @@ void directKeys() {
     check(e51p_component_set_keys(keys,1u<<18) == E51P_INVALID_ARGUMENT,"Unconfigured independent key bits are rejected");
 }
 }
-int main() { std::puts("Front panel"); frontPanel(); std::puts("Shift registers"); shiftRegisters(); std::puts("LCD"); lcd(); std::puts("EEPROM"); eeprom(); std::puts("AY"); ay(); registry(); busAndMatrix(); directKeys(); std::puts("Component protocol tests passed"); }
+int main() { std::puts("Front panel"); frontPanel(); std::puts("Shift registers"); shiftRegisters(); std::puts("LCD"); lcd(); std::puts("EEPROM"); eeprom(); eeprom256(); stepper(); adc0809(); std::puts("AY"); ay(); registry(); busAndMatrix(); directKeys(); std::puts("Component protocol tests passed"); }

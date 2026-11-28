@@ -9,7 +9,7 @@ include(CMakePackageConfigHelpers)
 
 # Explicitly static for this initial ABI; shared-library discovery comes later.
 add_library(emu51_peripheral_sdk STATIC src/peripheral.cpp src/memory.cpp src/decoder.cpp src/wired_bus.cpp src/parallel_dac.c
-    src/i8255.c src/adc0804.c src/components.cpp src/displays.cpp src/displays_registry.cpp src/audio.cpp src/registry.cpp src/registry_builtins.cpp)
+    src/i8255.c src/adc0804.c src/components.cpp src/displays.cpp src/displays_registry.cpp src/serial_devices.cpp src/audio.cpp src/registry.cpp src/registry_builtins.cpp)
 add_library(emu51::peripheral ALIAS emu51_peripheral_sdk)
 set_target_properties(emu51_peripheral_sdk PROPERTIES
     CXX_STANDARD 17 CXX_STANDARD_REQUIRED TRUE CXX_EXTENSIONS FALSE
@@ -102,6 +102,14 @@ if(EMU51_PERIPHERAL_BUILD_TESTS)
         target_link_libraries(emu51_memory_bus_tests PRIVATE emu51_warnings)
     endif()
     add_test(NAME emu51_memory_bus_tests COMMAND emu51_memory_bus_tests)
+    add_executable(emu51_serial_device_tests tests/serial_device_tests.cpp)
+    target_compile_features(emu51_serial_device_tests PRIVATE cxx_std_17)
+    target_link_libraries(emu51_serial_device_tests PRIVATE emu51_peripheral_sdk)
+    if(TARGET emu51_warnings)
+        target_link_libraries(emu51_serial_device_tests PRIVATE emu51_warnings)
+    endif()
+    add_test(NAME emu51_serial_device_tests COMMAND emu51_serial_device_tests)
+
     add_executable(emu51_peripheral_display_tests tests/display_tests.cpp)
     target_compile_features(emu51_peripheral_display_tests PRIVATE cxx_std_17)
     target_link_libraries(emu51_peripheral_display_tests PRIVATE emu51_peripheral_sdk)
@@ -188,11 +196,11 @@ write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/emu51PeripheralsCo
     VERSION 0.1.0 COMPATIBILITY ExactVersion)
 install(TARGETS emu51_peripheral_sdk EXPORT emu51PeripheralsTargets
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-install(FILES include/emu51/peripheral.h include/emu51/memory.h include/emu51/decoder.h include/emu51/snapshot.h include/emu51/wired_bus.h include/emu51/devices.h include/emu51/components.h include/emu51/displays.h include/emu51/audio.h include/emu51/audio_host.h include/emu51/registry.h
+install(FILES include/emu51/peripheral.h include/emu51/memory.h include/emu51/decoder.h include/emu51/snapshot.h include/emu51/wired_bus.h include/emu51/devices.h include/emu51/components.h include/emu51/displays.h include/emu51/serial_devices.h include/emu51/audio.h include/emu51/audio_host.h include/emu51/registry.h
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/emu51")
 install(EXPORT emu51PeripheralsTargets NAMESPACE emu51::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/emu51Peripherals")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/emu51PeripheralsConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/emu51PeripheralsConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/emu51Peripherals")
-install(FILES LICENSE COPYING README.md AUDIO.md MEMORY_BUS.md REGISTRY.md COMPONENTS.md DISPLAYS.md DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/emu51-peripheral-sdk")
+install(FILES LICENSE COPYING README.md AUDIO.md MEMORY_BUS.md REGISTRY.md COMPONENTS.md DISPLAYS.md SERIAL_DEVICES.md DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/emu51-peripheral-sdk")

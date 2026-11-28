@@ -14,6 +14,9 @@ when distributing the library or linked binaries. The surrounding emulator and
 its host adapter remain GPL-2.0-only. The SDK license does not provide a linking
 exception for the GPL application or change the license of existing code.
 
+See the [serial devices and logic analyzer](SERIAL_DEVICES.md) for the SSD1306,
+DS1307, MCP23017, W25Q64 and capture APIs.
+
 ## Build and use
 
 ```sh
