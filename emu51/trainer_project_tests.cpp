@@ -135,7 +135,7 @@ struct Emu51ImguiAppTestAccess {
             const auto spacing = ImGui::GetStyle().ItemSpacing;
             const auto line = ImGui::GetFrameHeightWithSpacing();
             const float w = (available.x-4*spacing.x)/5, h = (available.y-2*line-3*spacing.y)/4;
-            return ImVec2{origin.x+(cell%5)*(w+spacing.x)+w/2,origin.y+line+(cell/5)*(h+spacing.y)+h/2};
+            return ImVec2{origin.x+static_cast<float>(cell%5)*(w+spacing.x)+w/2,origin.y+line+static_cast<float>(cell/5)*(h+spacing.y)+h/2};
         };
         for (unsigned cell = 0; cell < 20; ++cell) {
             app.peripherals_->setKeys("keypad",0);

@@ -682,19 +682,19 @@ void emu51::exec_opcode(std::uint8_t fetched)
 		_op_xchd_a_indirect(1);
 		break;
 	case 0xe2:  // movx A,@R0
-		Acc = readData(static_cast<std::uint16_t>(R[0]) | (static_cast<std::uint16_t>(P2) << 8));
+		Acc = readData(static_cast<std::uint16_t>(R[0] | (P2 << 8)));
 		++PC;
 		break;
 	case 0xe3:  // movx A,@R1
-		Acc = readData(static_cast<std::uint16_t>(R[1]) | (static_cast<std::uint16_t>(P2) << 8));
+		Acc = readData(static_cast<std::uint16_t>(R[1] | (P2 << 8)));
 		++PC;
 		break;
 	case 0xf2:  // movx @R0,A
-		writeData(static_cast<std::uint16_t>(R[0]) | (static_cast<std::uint16_t>(P2) << 8), Acc);
+		writeData(static_cast<std::uint16_t>(R[0] | (P2 << 8)), Acc);
 		++PC;
 		break;
 	case 0xf3:  // movx @R1,A
-		writeData(static_cast<std::uint16_t>(R[1]) | (static_cast<std::uint16_t>(P2) << 8), Acc);
+		writeData(static_cast<std::uint16_t>(R[1] | (P2 << 8)), Acc);
 		++PC;
 		break;
 	}

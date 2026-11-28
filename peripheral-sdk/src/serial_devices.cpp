@@ -160,7 +160,7 @@ struct Oled {
         out.contrast = static_cast<uint8_t>(contrast);
         if (!on) return;
         constexpr unsigned frames[]{5,64,128,256,3,4,25,2};
-        const auto scrollSteps = (static_cast<long double>(tick-scrollTick)/hz)*60/frames[scrollRate];
+        const auto scrollSteps = (static_cast<long double>(tick-scrollTick)/static_cast<long double>(hz))*60/frames[scrollRate];
         const auto step = scroll ? static_cast<unsigned>(std::fmod(scrollSteps,128*scrollRows)) : 0;
         for (unsigned y = 0; y < mux; ++y) {
             unsigned row = ((reverse ? mux-1-y : y)+line+64-offset)&63;
@@ -250,7 +250,7 @@ struct Flash {
             for (unsigned i = 0; i < page.size(); ++i) data[base+i] &= page[i];
         } else {
             const unsigned size = pending==0x20 ? 4096 : pending==0x52 ? 32768 : pending==0xd8 ? 65536 : E51P_FLASH_SIZE;
-            std::fill_n(data.begin()+(pendingAddress&~(size-1)),size,255);
+            std::fill_n(data.begin()+(pendingAddress&~(size-1)),size,uint8_t{0xFF});
         }
         pending = 0;
         ++revision;
@@ -325,7 +325,7 @@ struct e51p_serial_device {
         bool level = (control&128)!=0;
         if ((control&16) && !(rtc.reg[0]&128)) {
             constexpr unsigned rates[]{1,4096,8192,32768};
-            const auto halfCycles = static_cast<long double>(rtc.fraction)*rates[control&3]*2/hz;
+            const auto halfCycles = static_cast<long double>(rtc.fraction)*rates[control&3]*2/static_cast<long double>(hz);
             level = (static_cast<unsigned>(halfCycles)&1)==0;
         }
         drive(2,level,1,1);

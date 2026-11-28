@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <queue>
 #include <utility>
 
@@ -76,7 +77,7 @@ std::optional<Terminal> terminal(ImVec2 edge, bool left, const std::vector<Bound
         available = std::min(available,near-clearance);
     }
     if (available < clearance) return std::nullopt;
-    return Terminal{edge,plus(edge,{outward*available,0}),outward};
+    return Terminal{edge,plus(edge,{static_cast<float>(outward)*available,0}),outward};
 }
 
 std::vector<ImVec2> roundCorners(const std::vector<ImVec2>& route)
@@ -93,7 +94,7 @@ std::vector<ImVec2> roundCorners(const std::vector<ImVec2>& route)
         const auto b = plus(corner,scale(minus(after,corner),radius/outgoing));
         curve.push_back(a);
         for (int step = 1; step <= 5; ++step) {
-            const float t = step/5.0f, u = 1-t;
+            const float t = static_cast<float>(step)/5.0f, u = 1-t;
             curve.push_back(plus(plus(scale(a,u*u),scale(corner,2*u*t)),scale(b,t*t)));
         }
     }
@@ -104,7 +105,7 @@ std::vector<ImVec2> roundCorners(const std::vector<ImVec2>& route)
 TerminalPair routedTerminals(ImVec2 a, bool aLeft, float aLength,
     ImVec2 b, bool bLeft, float bLength, const std::vector<Bounds>& boxes)
 {
-    const float gap = (b.x-a.x)*(aLeft ? -1 : 1);
+    const float gap = (b.x-a.x)*(aLeft ? -1.0f : 1.0f);
     if (aLeft != bLeft && gap >= 2*clearance && gap < aLength+bLength) {
         // Share the tight space above the minimum clearance in proportion to
         // each terminal's preferred length.
@@ -201,7 +202,7 @@ public:
                 if (usage < 0) continue;
                 const auto point = coordinates(next);
                 const float length = manhattan(coordinates(here),point);
-                float cost = current.cost + length*(1+3*usage);
+                float cost = current.cost + length*static_cast<float>(1+3*usage);
                 if (axis != current.state%2) cost += bendCost;
                 const int perpendicular = axis == 0 ? columns_ : 1;
                 if ((axis == 0 ? next/columns_ > 0 : next%columns_ > 0) &&
@@ -277,7 +278,7 @@ float bitEscapeY(ImVec2 port, unsigned bit, unsigned width, bool left)
 {
     const unsigned index = bit%bitsPerRow;
     const unsigned lane = left ? index : bitsInRow(width,bit)-1-index;
-    return port.y+bitHalf.y+bitLeadGap+lane*bitLaneGap;
+    return port.y+bitHalf.y+bitLeadGap+static_cast<float>(lane)*bitLaneGap;
 }
 
 std::string range(const std::string& name, int bit, int width)
@@ -329,25 +330,25 @@ void Emu51PeripheralEditor::rebuild(const Emu51PeripheralConfig& config, Emu51Mo
             const int side = p.left ? 0 : 1;
             const float row = headerHeight+heights[side];
             const unsigned bitRows = d.kind == E51P_DIGITAL && d.width > 1 ? (d.width+bitsPerRow-1)/bitsPerRow : 0;
-            heights[side] += rowHeight+bitRowHeight*bitRows;
+            heights[side] += rowHeight+bitRowHeight*static_cast<float>(bitRows);
             p.position = {0,row+rowHeight/2};
             const float labelWidth = std::min(235.0f,pinPadding+layoutTextWidth(font,pinFontSize,p.label)+4);
             auto& width = b.pinWidths[side];
             width = std::max(width,labelWidth);
             if (bitRows) {
-                const float bitWidth = bitInset+(bitsInRow(d.width,0)-1)*bitStep+bitHalf.x;
+                const float bitWidth = bitInset+static_cast<float>(bitsInRow(d.width,0)-1)*bitStep+bitHalf.x;
                 halfWidthForBits = std::max(halfWidthForBits,bitWidth);
                 for (unsigned bit = 0; bit < d.width; ++bit) {
                     const unsigned index = bit%bitsPerRow;
                     const unsigned column = p.left ? index : bitsInRow(d.width,bit)-1-index;
-                    const float x = (p.left ? 1 : -1)*(bitInset+bitStep*column);
-                    p.bits.push_back({x,row+rowHeight+bitHalf.y+bitRowHeight*(bit/bitsPerRow)});
+                    const float x = (p.left ? 1.0f : -1.0f)*(bitInset+bitStep*static_cast<float>(column));
+                    p.bits.push_back({x,row+rowHeight+bitHalf.y+bitRowHeight*static_cast<float>(bit/bitsPerRow)});
                 }
             }
             b.pins.push_back(std::move(p));
         }
         const float heading = std::min(384.0f,std::max(layoutTextWidth(font,titleSize,b.title),layoutTextWidth(font,pinFontSize,b.subtitle)));
-        const float labels = b.pinWidths[0] && b.pinWidths[1] ? 2*std::max(b.pinWidths[0],b.pinWidths[1]) :
+        const float labels = b.pinWidths[0] > 0 && b.pinWidths[1] > 0 ? 2*std::max(b.pinWidths[0],b.pinWidths[1]) :
             b.pinWidths[0]+b.pinWidths[1];
         b.size = {std::max(heading+2*headerPadding,std::max(labels,2*halfWidthForBits)+pinColumnGap),
             headerHeight+std::max(heights[0],heights[1])+3};
@@ -497,7 +498,7 @@ void Emu51PeripheralEditor::arrange(const Emu51PeripheralConfig& config)
                     continue;
                 }
                 const int distance = other-col;
-                cost += 140*std::abs(distance-neighbor.offset);
+                cost += static_cast<float>(140*std::abs(distance-neighbor.offset));
                 if (neighbor.offset && distance*neighbor.offset <= 0) cost += 180;
             }
             if (cost < bestCost) { bestCost = cost; best = col; }
@@ -521,7 +522,7 @@ void Emu51PeripheralEditor::arrange(const Emu51PeripheralConfig& config)
                 for (const auto& neighbor : neighbors[node])
                     if (column[neighbor.node] != col) aligned.push_back(tops[neighbor.node]-neighbor.pinDelta);
                 if (aligned.empty()) { desired[node] = tops[node]; continue; }
-                const auto middle = aligned.begin()+aligned.size()/2;
+                const auto middle = aligned.begin()+std::ssize(aligned)/2;
                 std::nth_element(aligned.begin(),middle,aligned.end());
                 desired[node] = *middle;
             }
@@ -758,10 +759,18 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
     dl->PushClipRect(origin_,plus(origin_,canvasSize_),true);
     dl->AddRectFilled(origin_,plus(origin_,canvasSize_),IM_COL32(21,26,35,255));
     const float grid = std::max(8.0f,32*zoom_);
-    for (float x = std::fmod(pan_.x,grid); x < canvasSize_.x; x+=grid)
+    const float gridStartX = std::fmod(pan_.x,grid);
+    const float gridStartY = std::fmod(pan_.y,grid);
+    for (unsigned column = 0; ; ++column) {
+        const float x = gridStartX + static_cast<float>(column)*grid;
+        if (!(x < canvasSize_.x)) break;
         dl->AddLine(plus(origin_,{x,0}),plus(origin_,{x,canvasSize_.y}),IM_COL32(36,43,54,255));
-    for (float y = std::fmod(pan_.y,grid); y < canvasSize_.y; y+=grid)
+    }
+    for (unsigned row = 0; ; ++row) {
+        const float y = gridStartY + static_cast<float>(row)*grid;
+        if (!(y < canvasSize_.y)) break;
         dl->AddLine(plus(origin_,{0,y}),plus(origin_,{canvasSize_.x,y}),IM_COL32(36,43,54,255));
+    }
     Connector hoverPin; std::string hoverBlock; bool header = false;
     if (hovered) for (auto it = blocks_.rbegin(); it != blocks_.rend(); ++it) {
         const auto& b = *it;
@@ -914,12 +923,12 @@ void Emu51PeripheralEditor::canvas(Emu51PeripheralConfig& config, std::string& m
             for (std::size_t bit = 0; bit < p.bits.size(); ++bit) {
                 const auto number = std::to_string(bit);
                 const float size = bit < 10 ? 20 : 18;
-                const auto extent = ImGui::GetFont()->CalcTextSizeA(size*zoom_,FLT_MAX,0,number.c_str());
-                const auto center = screen(p.bits[bit]);
+                const auto numberExtent = ImGui::GetFont()->CalcTextSizeA(size*zoom_,FLT_MAX,0,number.c_str());
+                const auto bitCenter = screen(p.bits[bit]);
                 const auto half = scale(bitHalf,zoom_);
-                dl->AddRectFilled(minus(center,half),plus(center,half),IM_COL32(27,35,46,255),2);
-                dl->AddRect(minus(center,half),plus(center,half),c,2);
-                dl->AddText(ImGui::GetFont(),size*zoom_,minus(center,scale(extent,0.5f)),c,number.c_str());
+                dl->AddRectFilled(minus(bitCenter,half),plus(bitCenter,half),IM_COL32(27,35,46,255),2);
+                dl->AddRect(minus(bitCenter,half),plus(bitCenter,half),c,2);
+                dl->AddText(ImGui::GetFont(),size*zoom_,minus(bitCenter,scale(numberExtent,0.5f)),c,number.c_str());
             }
         }
     }

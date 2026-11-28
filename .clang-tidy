@@ -1,0 +1,20 @@
+# Use the same Clang compilation database locally and in the source lint job.
+# From the public checkout: clang-tidy -p build-lint peripheral-sdk/src/serial_devices.cpp
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  clang-diagnostic-*,
+  bugprone-narrowing-conversions,
+  readability-misleading-indentation
+HeaderFilterRegex: '[/\\](emu51[/\\](asm|core|imgui|io|peripherals|tests)|peripheral-sdk[/\\](include|src|tests|examples))[/\\]|[/\\](__algorithm[/\\]fill(_n)?\.h|bits[/\\]stl_algobase\.h|xutility)$'
+SystemHeaders: true
+ExtraArgs:
+  # Include template conversions in standard-library fill implementations.
+  - -Wsystem-headers
+  - -Wimplicit-int-conversion
+  - -Wsign-compare
+  - -Wmissing-field-initializers
+  - -Wshadow
+  - -Wno-error
+CheckOptions:
+  bugprone-narrowing-conversions.WarnWithinTemplateInstantiation: true

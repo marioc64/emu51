@@ -1136,11 +1136,11 @@ end
                 const auto baseline = render(state,style,instantaneous,false,width);
                 auto second = state, third = state;
                 const unsigned right = style == 16 ? 2 : 1, left = style == 16 ? 7 : 5;
-                second.instantaneous[1] = 1u<<right; second.brightness[1][right] = 1.0f/digits;
-                third.instantaneous[2] = 1u<<left; third.brightness[2][left] = 1.0f/digits;
+                second.instantaneous[1] = 1u<<right; second.brightness[1][right] = 1.0f/static_cast<float>(digits);
+                third.instantaneous[2] = 1u<<left; third.brightness[2][left] = 1.0f/static_cast<float>(digits);
                 const auto rightVertices = difference(render(second,style,instantaneous,false,width),baseline);
                 const auto leftVertices = difference(render(third,style,instantaneous,false,width),baseline);
-                state.colon = 3; state.colon_brightness[0] = state.colon_brightness[1] = 1.0f/digits;
+                state.colon = 3; state.colon_brightness[0] = state.colon_brightness[1] = 1.0f/static_cast<float>(digits);
                 const auto colonVertices = difference(render(state,style,instantaneous,true,width),baseline);
                 check(!rightVertices.empty() && !leftVertices.empty() && !colonVertices.empty(),
                     "Rendered digit edges and both colon dots are present");
@@ -1239,7 +1239,7 @@ end
             restored->peripherals_->gpio()->advance(32); // crosses a 48 kHz boundary at 12 MHz
             e51p_audio_scope_frame frame{}; uint32_t count = 0, rate = 0;
             check(restored->peripherals_->audioScope(&frame, 1, count, rate) && count == 1 && rate == 48000 &&
-                frame.output == (static_cast<int>(code) - 128) / 128.0f,
+                frame.output == static_cast<float>(static_cast<int>(code) - 128) / 128.0f,
                 "Desktop Covox uses full-scale offset-binary playback without hidden attenuation");
         }
         check(restored->peripherals_->syncAudio(false, error), "Stop full-scale NULL playback fixture");
@@ -2096,7 +2096,6 @@ fi
         if (!open("oled_rtc")) return;
         run(800000);
         auto* oled = app->peripherals_->serialDevice("oled");
-        auto* rtc = app->peripherals_->serialDevice("rtc");
         e51p_oled_snapshot screen{};
         e51p_rtc_snapshot clock{};
         check(app->cpu_.IRAM[0x23]==0x55 && app->cpu_.IRAM[0x28]==0x58 &&
@@ -2113,7 +2112,7 @@ fi
         if (!open("roundtrip")) return;
         check(app->peripherals_->config()==graph,"Serial device settings round trip");
         run(24800000);
-        rtc = app->peripherals_->serialDevice("rtc");
+        auto* rtc = app->peripherals_->serialDevice("rtc");
         check(e51p_rtc_state(rtc,&clock)==E51P_OK && clock.year==2000 && clock.month==3 &&
             clock.day==1 && clock.hour==0 && clock.minute==0 && clock.second==0,
             "RTC advances across leap day and midnight using emulated time");
@@ -2660,9 +2659,9 @@ fi
         app->cpu_.IRAM[0x30] = 0xab;
         app->cpu_.IRAM[0x20] = 0x80;
         app->cpu_.SFR[0x90] = 1;
-        check(app->symbolValue("COUNTER") == 0xab && app->symbolValue("FLAG") == 1 &&
-            app->symbolValue("READY") == 1 && app->symbolValue("LIMIT") == 0x1234 &&
-            app->symbolValue("START") == 0x74 && !app->symbolValue("MISSING"),
+        check(app->symbolValue("COUNTER") == 0xabu && app->symbolValue("FLAG") == 1u &&
+            app->symbolValue("READY") == 1u && app->symbolValue("LIMIT") == 0x1234u &&
+            app->symbolValue("START") == 0x74u && !app->symbolValue("MISSING"),
             "Symbol watches distinguish RAM, bit RAM, SFR bits, constants and program bytes");
         app->instructionExecuting_ = true;
         app->watchpoints_ = {{Emu51ImguiApp::WatchSpace::Program, 0x100, true, false, true}};
@@ -2907,7 +2906,7 @@ fi
             const auto& style = ImGui::GetStyle();
             const float size = ImGui::GetFrameHeight();
             const float x = toolbar->Pos.x + toolbar->Size.x - style.WindowPadding.x -
-                size * 0.5f - (4 - index) * (size + style.ItemSpacing.x);
+                size * 0.5f - static_cast<float>(4 - index) * (size + style.ItemSpacing.x);
             const float y = toolbar->Pos.y + style.WindowPadding.y + size * 0.5f;
             io.AddMousePosEvent(x, y); frame();
             io.AddMouseButtonEvent(ImGuiMouseButton_Left, true); frame();

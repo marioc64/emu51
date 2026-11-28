@@ -44,7 +44,7 @@ std::optional<std::uint16_t> Emu51ImguiApp::resolveDebugAddress(const char* text
     const auto name = debugName(text);
     if (const auto symbol = loadedSymbols_.find(name); symbol != loadedSymbols_.end())
         return symbol->second.value;
-    if (const auto address = emu51ParseHexInput(name.c_str(), 0xffff))
+    if (const auto address = emu51ParseHexInput(name, 0xffff))
         return static_cast<std::uint16_t>(*address);
     return std::nullopt;
 }

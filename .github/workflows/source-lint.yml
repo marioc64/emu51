@@ -1,0 +1,30 @@
+name: source lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang tools and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tidy ninja-build libglfw3-dev libgl1-mesa-dev
+
+      - name: Generate a Release compilation database
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-lint -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Check project sources
+        # Report existing warnings while treating configuration and tooling errors as failures.
+        run: |
+          clang-tidy --verify-config --config-file=.clang-tidy
+          run-clang-tidy -p build-lint -config-file=.clang-tidy -j 2 -quiet "^$GITHUB_WORKSPACE/(emu51|peripheral-sdk)/"

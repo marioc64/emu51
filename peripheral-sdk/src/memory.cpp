@@ -3,6 +3,7 @@
 #include "emu51/memory.h"
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <limits>
 #include <memory>
 #include <new>
@@ -67,7 +68,7 @@ e51p_status e51p_memory_write(e51p_memory* m, uint64_t offset, uint8_t value) {
 e51p_status e51p_memory_program(e51p_memory* m, uint64_t offset, const uint8_t* data, size_t length) {
     if ((!data && length) || !range(m, offset, length)) return E51P_INVALID_ARGUMENT;
     if (length) {
-        auto first = m->bytes.begin() + static_cast<size_t>(offset);
+        auto first = m->bytes.begin() + static_cast<std::ptrdiff_t>(offset);
         if (!std::equal(data, data + length, first)) {
             std::copy(data, data + length, first);
             changed(m,offset,length);
@@ -77,8 +78,8 @@ e51p_status e51p_memory_program(e51p_memory* m, uint64_t offset, const uint8_t* 
 }
 e51p_status e51p_memory_fill(e51p_memory* m, uint64_t offset, uint64_t length, uint8_t value) {
     if (!range(m, offset, length)) return E51P_INVALID_ARGUMENT;
-    auto first = m->bytes.begin() + static_cast<size_t>(offset);
-    auto last = first + static_cast<size_t>(length);
+    auto first = m->bytes.begin() + static_cast<std::ptrdiff_t>(offset);
+    auto last = first + static_cast<std::ptrdiff_t>(length);
     if (std::any_of(first, last, [value](uint8_t b) { return b != value; })) {
         std::fill(first, last, value);
         changed(m,offset,length);
@@ -87,7 +88,7 @@ e51p_status e51p_memory_fill(e51p_memory* m, uint64_t offset, uint64_t length, u
 }
 e51p_status e51p_memory_copy(const e51p_memory* m, uint64_t offset, uint8_t* data, size_t length) {
     if ((!data && length) || !range(m, offset, length)) return E51P_INVALID_ARGUMENT;
-    if (length) std::copy_n(m->bytes.begin() + static_cast<size_t>(offset), length, data);
+    if (length) std::copy_n(m->bytes.begin() + static_cast<std::ptrdiff_t>(offset), length, data);
     return E51P_OK;
 }
 }

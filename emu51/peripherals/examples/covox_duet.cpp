@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
         std::printf("%s: %llu samples (%.1f Hz), Covox %02X..%02X, %.1f%% real-time\n"
             "IRAM: row=%u ticks=%u pitch/gate=%u/%u + %u/%u loops=%u\n"
             "Playback used=%llu misses=%llu dropped=%llu; capture frames=%llu\n",
-            null ? "NULL" : "Native", static_cast<unsigned long long>(samples), samples / seconds, minimum, maximum, 100 * seconds / wall,
+            null ? "NULL" : "Native", static_cast<unsigned long long>(samples), static_cast<double>(samples) / seconds, minimum, maximum, 100 * seconds / wall,
             cpu.IRAM[0x33], cpu.IRAM[0x31] + 256u * cpu.IRAM[0x32], cpu.IRAM[0x3c], cpu.IRAM[0x3d], cpu.IRAM[0x44], cpu.IRAM[0x45], cpu.IRAM[0x37],
             static_cast<unsigned long long>(stats.playback_used), static_cast<unsigned long long>(stats.playback_misses),
             static_cast<unsigned long long>(stats.playback_dropped), static_cast<unsigned long long>(stats.captured_frames));

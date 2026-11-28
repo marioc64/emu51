@@ -12,6 +12,11 @@ proprietary includes, private history, and local settings must remain excluded.
 
 ## Build and test
 
+Run the [pre-push checks](CONTRIBUTING.md#before-pushing-to-github) on the exact
+release commit before tagging. Check the four strict compiler jobs, the separate
+Linux sanitizer job, the repeated macOS tests, and the source and history audit.
+Use the candidate branch's CI run to verify the commit SHA and build results.
+
 From the repository root, use a Release build and compile every default target:
 
 ```sh

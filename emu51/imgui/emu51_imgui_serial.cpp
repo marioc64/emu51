@@ -314,7 +314,7 @@ void Emu51ImguiApp::drawSerialTerminal()
         ImGui::Text("File: %s", serialFilePath_.filename().string().c_str());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", serialFilePath_.string().c_str());
         const std::string progress = std::to_string(serialFileQueued_) + " / " + std::to_string(serialFileSize_) + " source bytes queued";
-        ImGui::ProgressBar(serialFileSize_ ? static_cast<float>(static_cast<double>(serialFileQueued_) / serialFileSize_) : 1.0f,
+        ImGui::ProgressBar(serialFileSize_ ? static_cast<float>(static_cast<double>(serialFileQueued_) / static_cast<double>(serialFileSize_)) : 1.0f,
             ImVec2(-1, 0), progress.c_str());
     }
     if (ImGui::Button("Clear pending input")) {

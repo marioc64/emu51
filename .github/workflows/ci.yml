@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -54,7 +55,11 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -C Release
+        run: ctest --test-dir build --output-on-failure --no-tests=error -C Release
+
+      - name: Repeat macOS audio and UI tests serially
+        if: runner.os == 'macOS'
+        run: ctest --test-dir build -C Release -j 1 --output-on-failure --no-tests=error --repeat until-fail:3 -R '^emu51_(covox_duet_null|ui_tests|execution_worker_tests)$'
 
       - name: Package and verify relocation
         run: python scripts/check_release.py --build build --output dist --config Release
@@ -90,4 +95,4 @@ jobs:
       - name: Build
         run: cmake --build build-asan --parallel
       - name: Test
-        run: ctest --test-dir build-asan --output-on-failure
+        run: ctest --test-dir build-asan --output-on-failure --no-tests=error

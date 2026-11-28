@@ -1056,7 +1056,7 @@ std::string Emu51ImguiApp::executionTimingStatus() const
 		std::snprintf(buffer, sizeof(buffer), "Cycle exact | %.9g MHz", crystalMHz_);
 	} else {
 		const double cyclesPerSecond = cycleTiming_.cyclesPerSecond();
-		const double targetCyclesPerSecond = std::llround(crystalMHz_ * 1'000'000.0) / 12.0;
+		const double targetCyclesPerSecond = static_cast<double>(std::llround(crystalMHz_ * 1'000'000.0)) / 12.0;
 		std::snprintf(buffer, sizeof(buffer), "Cycle exact | %.9g MHz | %.3f Mcycles/s | %.1f%%",
 			crystalMHz_, cyclesPerSecond / 1'000'000.0, 100.0 * cyclesPerSecond / targetCyclesPerSecond);
 	}
@@ -1766,9 +1766,9 @@ void Emu51ImguiApp::resetMachine()
 	instructionCount_ = 0;
 	cycleCount_ = 0;
 	statusMessage_.clear();
-	std::fill(ramMemory_.begin(), ramMemory_.end(), 0);
-	std::fill(romMemory_.begin(), romMemory_.end(), 0);
-	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
+	ramMemory_.fill(0);
+	romMemory_.fill(0);
+	unifiedMemory_.fill(0);
 	invalidateInstructionCache();
 	resetCpuAndPeripherals();
 	if (hardware_) hardware_->reset();
@@ -2214,9 +2214,9 @@ void Emu51ImguiApp::clearMemory()
 	loadedProgramPath_.clear();
 	loadedProgramBinaryAddress_ = 0;
 	statusMessage_ = unifiedMode_ ? "cleared memory" : "cleared data and program memory";
-	std::fill(ramMemory_.begin(), ramMemory_.end(), 0);
-	std::fill(romMemory_.begin(), romMemory_.end(), 0);
-	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
+	ramMemory_.fill(0);
+	romMemory_.fill(0);
+	unifiedMemory_.fill(0);
 	invalidateInstructionCache();
 	cancelSerialFileSend();
 	resetCpuAndPeripherals();
@@ -2233,8 +2233,8 @@ void Emu51ImguiApp::clearRam()
 	instructionCount_ = 0;
 	cycleCount_ = 0;
 	statusMessage_ = unifiedMode_ ? "cleared memory" : "cleared data memory";
-	std::fill(ramMemory_.begin(), ramMemory_.end(), 0);
-	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
+	ramMemory_.fill(0);
+	unifiedMemory_.fill(0);
 	if (unifiedMode_)
 		invalidateInstructionCache();
 	cancelSerialFileSend();
@@ -2254,8 +2254,8 @@ void Emu51ImguiApp::clearRom()
 	loadedProgramPath_.clear();
 	loadedProgramBinaryAddress_ = 0;
 	statusMessage_ = unifiedMode_ ? "cleared memory" : "cleared program memory";
-	std::fill(romMemory_.begin(), romMemory_.end(), 0);
-	std::fill(unifiedMemory_.begin(), unifiedMemory_.end(), 0);
+	romMemory_.fill(0);
+	unifiedMemory_.fill(0);
 	invalidateInstructionCache();
 	if (unifiedMode_) {
 		cancelSerialFileSend();

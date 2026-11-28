@@ -1886,6 +1886,13 @@ void test_parse_hex_input_helper() {
               "parse_hex_accepts_max_inclusive",
               "expected 0xff at max boundary");
     }
+    {
+        const char full[] = {'F', 'F'};
+        const char whitespace[] = {' ', '\t'};
+        check(emu51ParseHexInput(full, 0xff) == 0xfful && !emu51ParseHexInput(whitespace, 0xff),
+              "parse_hex_bounded_arrays",
+              "expected full non-terminated arrays to be parsed within their bounds");
+    }
 }
 
 bool diagnostics_contain(const std::vector<emu51_asm::Diagnostic>& diags, const char* fragment) {

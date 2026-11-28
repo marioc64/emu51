@@ -24,9 +24,10 @@ NSString* functionKeyEquivalent(unichar key)
 	return [NSString stringWithCharacters:&key length:1];
 }
 
-NSString* nsString(const std::string& value)
+NSString* _Nonnull nsString(const std::string& value)
 {
-	return [NSString stringWithUTF8String:value.c_str()];
+	NSString* result = [NSString stringWithUTF8String:value.c_str()];
+	return result != nil ? result : @"";
 }
 
 }  // namespace
@@ -200,7 +201,7 @@ NSString* nsString(const std::string& value)
 	self.openRecentMenuItem.enabled = recentCount > 0;
 	[self.recentProgramsMenu removeAllItems];
 	if (recentCount == 0) {
-		NSMenuItem* emptyItem = [[NSMenuItem alloc] initWithTitle:@"No Recent Files"
+		NSMenuItem* emptyItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"No Recent Files", @"Cocoa menu label")
 			action:nil keyEquivalent:@""];
 		emptyItem.enabled = NO;
 		[self.recentProgramsMenu addItem:emptyItem];
@@ -216,7 +217,7 @@ NSString* nsString(const std::string& value)
 			[self.recentProgramsMenu addItem:item];
 		}
 		[self.recentProgramsMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* clearItem = [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
+		NSMenuItem* clearItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Clear Menu", @"Cocoa menu label")
 			action:@selector(clearRecentPrograms:) keyEquivalent:@""];
 		clearItem.target = self;
 		[self.recentProgramsMenu addItem:clearItem];
@@ -225,7 +226,7 @@ NSString* nsString(const std::string& value)
 	self.openRecentProjectsMenuItem.enabled = recentProjectCount > 0;
 	[self.recentProjectsMenu removeAllItems];
 	if (recentProjectCount == 0) {
-		NSMenuItem* emptyItem = [[NSMenuItem alloc] initWithTitle:@"No Recent Projects"
+		NSMenuItem* emptyItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"No Recent Projects", @"Cocoa menu label")
 			action:nil keyEquivalent:@""];
 		emptyItem.enabled = NO;
 		[self.recentProjectsMenu addItem:emptyItem];
@@ -241,7 +242,7 @@ NSString* nsString(const std::string& value)
 			[self.recentProjectsMenu addItem:item];
 		}
 		[self.recentProjectsMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* clearItem = [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
+		NSMenuItem* clearItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Clear Menu", @"Cocoa menu label")
 			action:@selector(clearRecentProjects:) keyEquivalent:@""];
 		clearItem.target = self;
 		[self.recentProjectsMenu addItem:clearItem];
@@ -280,7 +281,7 @@ NSString* nsString(const std::string& value)
 	self.clearMemoryMenuItem.hidden = !unifiedMode;
 	self.clearDataMemoryMenuItem.hidden = unifiedMode;
 	self.clearProgramMemoryMenuItem.hidden = unifiedMode;
-	self.fillMemoryMenuItem.title = unifiedMode ? @"Fill memory range" : @"Fill data memory range";
+	self.fillMemoryMenuItem.title = unifiedMode ? NSLocalizedString(@"Fill memory range", @"Cocoa menu label") : NSLocalizedString(@"Fill data memory range", @"Cocoa menu label");
 	self.fillProgramMemoryMenuItem.hidden = unifiedMode;
 }
 
@@ -836,14 +837,16 @@ NSString* nsString(const std::string& value)
 - (void)drawInMTKView:(MTKView*)view
 {
 	ImGuiIO& io = ImGui::GetIO();
-	io.DisplaySize = ImVec2(view.bounds.size.width, view.bounds.size.height);
+	io.DisplaySize = ImVec2(static_cast<float>(view.bounds.size.width), static_cast<float>(view.bounds.size.height));
 	const CGFloat windowScale = view.window.screen.backingScaleFactor;
 	const CGFloat scale = windowScale != 0 ? windowScale : NSScreen.mainScreen.backingScaleFactor;
-	io.DisplayFramebufferScale = ImVec2(scale, scale);
+	const auto framebufferScale = static_cast<float>(scale);
+	io.DisplayFramebufferScale = ImVec2(framebufferScale, framebufferScale);
 
 	id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
 	MTLRenderPassDescriptor* renderPassDescriptor = view.currentRenderPassDescriptor;
-	if (renderPassDescriptor == nil) {
+	id<CAMetalDrawable> drawable = view.currentDrawable;
+	if (renderPassDescriptor == nil || drawable == nil) {
 		[commandBuffer commit];
 		return;
 	}
@@ -869,7 +872,7 @@ NSString* nsString(const std::string& value)
 	id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
 	ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer, renderEncoder);
 	[renderEncoder endEncoding];
-	[commandBuffer presentDrawable:view.currentDrawable];
+	[commandBuffer presentDrawable:drawable];
 	[commandBuffer commit];
 }
 
@@ -1152,70 +1155,70 @@ int main()
 
 		NSMenuItem* fileMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:fileMenuItem];
-		NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-		NSMenuItem* openProjectItem = [[NSMenuItem alloc] initWithTitle:@"Open project..."
+		NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"File", @"Cocoa menu label")];
+		NSMenuItem* openProjectItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open project...", @"Cocoa menu label")
 			action:@selector(openProject:) keyEquivalent:@""];
 		openProjectItem.target = appDelegate;
 		[fileMenu addItem:openProjectItem];
-		NSMenuItem* recentProjectsItem = [[NSMenuItem alloc] initWithTitle:@"Open Recent Projects"
+		NSMenuItem* recentProjectsItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open Recent Projects", @"Cocoa menu label")
 			action:nil keyEquivalent:@""];
-		NSMenu* recentProjectsMenu = [[NSMenu alloc] initWithTitle:@"Open Recent Projects"];
+		NSMenu* recentProjectsMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Open Recent Projects", @"Cocoa menu label")];
 		viewController.openRecentProjectsMenuItem = recentProjectsItem;
 		viewController.recentProjectsMenu = recentProjectsMenu;
 		[recentProjectsItem setSubmenu:recentProjectsMenu];
 		[fileMenu addItem:recentProjectsItem];
-		NSMenuItem* saveProjectItem = [[NSMenuItem alloc] initWithTitle:@"Save project"
+		NSMenuItem* saveProjectItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Save project", @"Cocoa menu label")
 			action:@selector(saveProject:) keyEquivalent:@"s"];
 		saveProjectItem.target = appDelegate;
 		[fileMenu addItem:saveProjectItem];
-		NSMenuItem* saveProjectAsItem = [[NSMenuItem alloc] initWithTitle:@"Save project as..."
+		NSMenuItem* saveProjectAsItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Save project as...", @"Cocoa menu label")
 			action:@selector(saveProjectAs:) keyEquivalent:@""];
 		saveProjectAsItem.target = appDelegate;
 		[fileMenu addItem:saveProjectAsItem];
-		NSMenuItem* addProjectFilesItem = [[NSMenuItem alloc] initWithTitle:@"Add file..."
+		NSMenuItem* addProjectFilesItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Add file...", @"Cocoa menu label")
 			action:@selector(addProjectFiles:) keyEquivalent:@""];
 		addProjectFilesItem.target = appDelegate;
 		[fileMenu addItem:addProjectFilesItem];
-		NSMenuItem* newProjectAssemblyFileItem = [[NSMenuItem alloc] initWithTitle:@"New ASM File"
+		NSMenuItem* newProjectAssemblyFileItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"New ASM File", @"Cocoa menu label")
 			action:@selector(newProjectAssemblyFile:) keyEquivalent:@""];
 		newProjectAssemblyFileItem.target = appDelegate;
 		[fileMenu addItem:newProjectAssemblyFileItem];
 		[fileMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* openProgramItem = [[NSMenuItem alloc] initWithTitle:@"Open program..."
+		NSMenuItem* openProgramItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open program...", @"Cocoa menu label")
 			action:@selector(openProgram:) keyEquivalent:@"o"];
 		openProgramItem.target = appDelegate;
 		[fileMenu addItem:openProgramItem];
-		NSMenuItem* loadProgramItem = [[NSMenuItem alloc] initWithTitle:@"Load program..."
+		NSMenuItem* loadProgramItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Load program...", @"Cocoa menu label")
 			action:@selector(loadProgram:) keyEquivalent:@"l"];
 		loadProgramItem.target = appDelegate;
 		[fileMenu addItem:loadProgramItem];
-		NSMenuItem* reloadProgramItem = [[NSMenuItem alloc] initWithTitle:@"Reload program"
+		NSMenuItem* reloadProgramItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Reload program", @"Cocoa menu label")
 			action:@selector(reloadProgram:) keyEquivalent:@"r"];
 		reloadProgramItem.target = appDelegate;
 		reloadProgramItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
 		viewController.reloadProgramMenuItem = reloadProgramItem;
 		[fileMenu addItem:reloadProgramItem];
-		NSMenuItem* openRecentItem = [[NSMenuItem alloc] initWithTitle:@"Open Recent"
+		NSMenuItem* openRecentItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open Recent", @"Cocoa menu label")
 			action:nil keyEquivalent:@""];
-		NSMenu* recentProgramsMenu = [[NSMenu alloc] initWithTitle:@"Open Recent"];
+		NSMenu* recentProgramsMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Open Recent", @"Cocoa menu label")];
 		viewController.openRecentMenuItem = openRecentItem;
 		viewController.recentProgramsMenu = recentProgramsMenu;
 		[openRecentItem setSubmenu:recentProgramsMenu];
 		[fileMenu addItem:openRecentItem];
 		[fileMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* saveAssemblyItem = [[NSMenuItem alloc] initWithTitle:@"Save source"
+		NSMenuItem* saveAssemblyItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Save source", @"Cocoa menu label")
 			action:@selector(saveAssemblyEditor:) keyEquivalent:@"s"];
 		saveAssemblyItem.target = appDelegate;
 		saveAssemblyItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 		viewController.saveAssemblyMenuItem = saveAssemblyItem;
 		[fileMenu addItem:saveAssemblyItem];
-		NSMenuItem* saveAsAssemblyItem = [[NSMenuItem alloc] initWithTitle:@"Save source as..."
+		NSMenuItem* saveAsAssemblyItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Save source as...", @"Cocoa menu label")
 			action:@selector(saveAssemblyEditorAs:) keyEquivalent:@""];
 		saveAsAssemblyItem.target = appDelegate;
 		viewController.saveAsAssemblyMenuItem = saveAsAssemblyItem;
 		[fileMenu addItem:saveAsAssemblyItem];
 		[fileMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* fileQuitItem = [[NSMenuItem alloc] initWithTitle:@"Quit"
+		NSMenuItem* fileQuitItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Quit", @"Cocoa menu label")
 			action:@selector(terminate:) keyEquivalent:@"q"];
 		[fileMenu addItem:fileQuitItem];
 		[viewController updateFileMenuItems];
@@ -1223,41 +1226,41 @@ int main()
 
 		NSMenuItem* editMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:editMenuItem];
-		NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
-		NSMenuItem* undoItem = [[NSMenuItem alloc] initWithTitle:@"Undo"
+		NSMenu* editMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Edit", @"Cocoa menu label")];
+		NSMenuItem* undoItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Undo", @"Cocoa menu label")
 			action:@selector(editUndo:) keyEquivalent:@"z"];
 		undoItem.target = appDelegate;
 		viewController.editUndoMenuItem = undoItem;
 		[editMenu addItem:undoItem];
-		NSMenuItem* redoItem = [[NSMenuItem alloc] initWithTitle:@"Redo"
+		NSMenuItem* redoItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Redo", @"Cocoa menu label")
 			action:@selector(editRedo:) keyEquivalent:@"z"];
 		redoItem.target = appDelegate;
 		redoItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 		viewController.editRedoMenuItem = redoItem;
 		[editMenu addItem:redoItem];
 		[editMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* cutItem = [[NSMenuItem alloc] initWithTitle:@"Cut"
+		NSMenuItem* cutItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Cut", @"Cocoa menu label")
 			action:@selector(editCut:) keyEquivalent:@"x"];
 		cutItem.target = appDelegate;
 		viewController.editCutMenuItem = cutItem;
 		[editMenu addItem:cutItem];
-		NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy"
+		NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Copy", @"Cocoa menu label")
 			action:@selector(editCopy:) keyEquivalent:@"c"];
 		copyItem.target = appDelegate;
 		viewController.editCopyMenuItem = copyItem;
 		[editMenu addItem:copyItem];
-		NSMenuItem* pasteItem = [[NSMenuItem alloc] initWithTitle:@"Paste"
+		NSMenuItem* pasteItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Paste", @"Cocoa menu label")
 			action:@selector(editPaste:) keyEquivalent:@"v"];
 		pasteItem.target = appDelegate;
 		viewController.editPasteMenuItem = pasteItem;
 		[editMenu addItem:pasteItem];
-		NSMenuItem* selectAllItem = [[NSMenuItem alloc] initWithTitle:@"Select All"
+		NSMenuItem* selectAllItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Select All", @"Cocoa menu label")
 			action:@selector(editSelectAll:) keyEquivalent:@"a"];
 		selectAllItem.target = appDelegate;
 		viewController.editSelectAllMenuItem = selectAllItem;
 		[editMenu addItem:selectAllItem];
 		[editMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* formatCodeItem = [[NSMenuItem alloc] initWithTitle:@"Format Code"
+		NSMenuItem* formatCodeItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Format Code", @"Cocoa menu label")
 			action:@selector(formatCode:) keyEquivalent:@""];
 		formatCodeItem.target = appDelegate;
 		viewController.editFormatCodeMenuItem = formatCodeItem;
@@ -1267,35 +1270,35 @@ int main()
 
 		NSMenuItem* memoryMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:memoryMenuItem];
-		NSMenu* memoryMenu = [[NSMenu alloc] initWithTitle:@"Memory"];
-		NSMenuItem* unifiedModeItem = [[NSMenuItem alloc] initWithTitle:@"Unified mode"
+		NSMenu* memoryMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Memory", @"Cocoa menu label")];
+		NSMenuItem* unifiedModeItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Unified mode", @"Cocoa menu label")
 			action:@selector(toggleUnifiedMode:) keyEquivalent:@""];
 		unifiedModeItem.target = appDelegate;
 		viewController.unifiedModeMenuItem = unifiedModeItem;
 		[memoryMenu addItem:unifiedModeItem];
 		[memoryMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* clearMemoryItem = [[NSMenuItem alloc] initWithTitle:@"Clear memory"
+		NSMenuItem* clearMemoryItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Clear memory", @"Cocoa menu label")
 			action:@selector(clearMemory:) keyEquivalent:@""];
 		clearMemoryItem.target = appDelegate;
 		viewController.clearMemoryMenuItem = clearMemoryItem;
 		[memoryMenu addItem:clearMemoryItem];
-		NSMenuItem* clearRamItem = [[NSMenuItem alloc] initWithTitle:@"Clear data memory"
+		NSMenuItem* clearRamItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Clear data memory", @"Cocoa menu label")
 			action:@selector(clearRam:) keyEquivalent:@""];
 		clearRamItem.target = appDelegate;
 		viewController.clearDataMemoryMenuItem = clearRamItem;
 		[memoryMenu addItem:clearRamItem];
-		NSMenuItem* clearRomItem = [[NSMenuItem alloc] initWithTitle:@"Clear program memory"
+		NSMenuItem* clearRomItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Clear program memory", @"Cocoa menu label")
 			action:@selector(clearRom:) keyEquivalent:@""];
 		clearRomItem.target = appDelegate;
 		viewController.clearProgramMemoryMenuItem = clearRomItem;
 		[memoryMenu addItem:clearRomItem];
 		[memoryMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* fillRamItem = [[NSMenuItem alloc] initWithTitle:@"Fill memory range"
+		NSMenuItem* fillRamItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Fill memory range", @"Cocoa menu label")
 			action:@selector(fillRamRange:) keyEquivalent:@""];
 		fillRamItem.target = appDelegate;
 		viewController.fillMemoryMenuItem = fillRamItem;
 		[memoryMenu addItem:fillRamItem];
-		NSMenuItem* fillRomItem = [[NSMenuItem alloc] initWithTitle:@"Fill program memory range"
+		NSMenuItem* fillRomItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Fill program memory range", @"Cocoa menu label")
 			action:@selector(fillRomRange:) keyEquivalent:@""];
 		fillRomItem.target = appDelegate;
 		viewController.fillProgramMemoryMenuItem = fillRomItem;
@@ -1305,19 +1308,19 @@ int main()
 
 		NSMenuItem* buildMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:buildMenuItem];
-		NSMenu* buildMenu = [[NSMenu alloc] initWithTitle:@"Build"];
-		NSMenuItem* compileItem = [[NSMenuItem alloc] initWithTitle:@"Compile"
+		NSMenu* buildMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Build", @"Cocoa menu label")];
+		NSMenuItem* compileItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Compile", @"Cocoa menu label")
 			action:@selector(compileAssemblyEditor:) keyEquivalent:@"b"];
 		compileItem.target = appDelegate;
 		viewController.buildCompileMenuItem = compileItem;
 		[buildMenu addItem:compileItem];
-		NSMenuItem* loadCompiledItem = [[NSMenuItem alloc] initWithTitle:@"Load"
+		NSMenuItem* loadCompiledItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Load", @"Cocoa menu label")
 			action:@selector(loadCompiledAssemblyEditorOutput:) keyEquivalent:@"l"];
 		loadCompiledItem.target = appDelegate;
 		loadCompiledItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 		viewController.buildLoadMenuItem = loadCompiledItem;
 		[buildMenu addItem:loadCompiledItem];
-		NSMenuItem* compileAndLoadItem = [[NSMenuItem alloc] initWithTitle:@"Compile and Load"
+		NSMenuItem* compileAndLoadItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Compile and Load", @"Cocoa menu label")
 			action:@selector(compileAndLoadAssemblyEditor:) keyEquivalent:@"b"];
 		compileAndLoadItem.target = appDelegate;
 		compileAndLoadItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
@@ -1332,56 +1335,56 @@ int main()
 			[buildMenu addItem:item];
 			return item;
 		};
-		viewController.buildProjectMenuItem = addBuildAction(@"Build Project", Emu51ProjectBuildAction::Build);
-		viewController.buildAndLoadProjectMenuItem = addBuildAction(@"Build and Load", Emu51ProjectBuildAction::BuildAndLoad);
-		addBuildAction(@"Power Cycle", Emu51ProjectBuildAction::PowerCycle);
+		viewController.buildProjectMenuItem = addBuildAction(NSLocalizedString(@"Build Project", @"Cocoa menu label"), Emu51ProjectBuildAction::Build);
+		viewController.buildAndLoadProjectMenuItem = addBuildAction(NSLocalizedString(@"Build and Load", @"Cocoa menu label"), Emu51ProjectBuildAction::BuildAndLoad);
+		addBuildAction(NSLocalizedString(@"Power Cycle", @"Cocoa menu label"), Emu51ProjectBuildAction::PowerCycle);
 		[viewController updateBuildMenuItems];
 		[buildMenuItem setSubmenu:buildMenu];
 
 		NSMenuItem* executionMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:executionMenuItem];
-		NSMenu* executionMenu = [[NSMenu alloc] initWithTitle:@"Execution"];
-		NSMenuItem* debuggerItem = [[NSMenuItem alloc] initWithTitle:@"Debugger"
+		NSMenu* executionMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Execution", @"Cocoa menu label")];
+		NSMenuItem* debuggerItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Debugger", @"Cocoa menu label")
 			action:@selector(showDebugger:) keyEquivalent:@""];
 		debuggerItem.target = appDelegate;
 		[executionMenu addItem:debuggerItem];
-		NSMenuItem* serialItem = [[NSMenuItem alloc] initWithTitle:@"Serial terminal"
+		NSMenuItem* serialItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Serial terminal", @"Cocoa menu label")
 			action:@selector(showSerialTerminal:) keyEquivalent:@""];
 		serialItem.target = appDelegate;
 		[executionMenu addItem:serialItem];
-		NSMenuItem* runItem = [[NSMenuItem alloc] initWithTitle:@"Run"
+		NSMenuItem* runItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Run", @"Cocoa menu label")
 			action:@selector(toggleRun:) keyEquivalent:functionKeyEquivalent(NSF9FunctionKey)];
 		runItem.target = appDelegate;
 		runItem.keyEquivalentModifierMask = 0;
 		viewController.runMenuItem = runItem;
 		[executionMenu addItem:runItem];
-		NSMenuItem* resetItem = [[NSMenuItem alloc] initWithTitle:@"Reset"
+		NSMenuItem* resetItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Reset", @"Cocoa menu label")
 			action:@selector(resetExecution:) keyEquivalent:@"r"];
 		resetItem.target = appDelegate;
 		resetItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
 		[executionMenu addItem:resetItem];
-		NSMenuItem* setProgramCounterItem = [[NSMenuItem alloc] initWithTitle:@"Set PC..."
+		NSMenuItem* setProgramCounterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Set PC...", @"Cocoa menu label")
 			action:@selector(setProgramCounter:) keyEquivalent:@""];
 		setProgramCounterItem.target = appDelegate;
 		viewController.setProgramCounterMenuItem = setProgramCounterItem;
 		[executionMenu addItem:setProgramCounterItem];
-		NSMenuItem* stepOverItem = [[NSMenuItem alloc] initWithTitle:@"Step over"
+		NSMenuItem* stepOverItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Step over", @"Cocoa menu label")
 			action:@selector(stepOver:) keyEquivalent:functionKeyEquivalent(NSF8FunctionKey)];
 		stepOverItem.target = appDelegate;
 		stepOverItem.keyEquivalentModifierMask = 0;
 		[executionMenu addItem:stepOverItem];
-		NSMenuItem* stepInItem = [[NSMenuItem alloc] initWithTitle:@"Step in"
+		NSMenuItem* stepInItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Step in", @"Cocoa menu label")
 			action:@selector(stepIn:) keyEquivalent:functionKeyEquivalent(NSF7FunctionKey)];
 		stepInItem.target = appDelegate;
 		stepInItem.keyEquivalentModifierMask = 0;
 		[executionMenu addItem:stepInItem];
-		NSMenuItem* stepOutItem = [[NSMenuItem alloc] initWithTitle:@"Step out"
+		NSMenuItem* stepOutItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Step out", @"Cocoa menu label")
 			action:@selector(stepOut:) keyEquivalent:functionKeyEquivalent(NSF8FunctionKey)];
 		stepOutItem.target = appDelegate;
 		stepOutItem.keyEquivalentModifierMask = NSEventModifierFlagShift;
 		[executionMenu addItem:stepOutItem];
 		[executionMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* executionSettingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings..."
+		NSMenuItem* executionSettingsItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Settings...", @"Cocoa menu label")
 			action:@selector(openExecutionSettings:) keyEquivalent:@""];
 		executionSettingsItem.target = appDelegate;
 		[executionMenu addItem:executionSettingsItem];
@@ -1390,13 +1393,13 @@ int main()
 
 		NSMenuItem* windowMenuItem = [[NSMenuItem alloc] init];
 		[menubar addItem:windowMenuItem];
-		NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
-        NSMenuItem* registersItem = [[NSMenuItem alloc] initWithTitle:@"Registers"
+		NSMenu* windowMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Window", @"Cocoa menu label")];
+        NSMenuItem* registersItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Registers", @"Cocoa menu label")
             action:@selector(toggleRegisters:) keyEquivalent:@""];
         registersItem.target = appDelegate;
         viewController.registersMenuItem = registersItem;
         [windowMenu addItem:registersItem];
-        NSMenuItem* peripheralsItem = [[NSMenuItem alloc] initWithTitle:@"Peripherals"
+        NSMenuItem* peripheralsItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Peripherals", @"Cocoa menu label")
             action:@selector(showPeripherals:) keyEquivalent:@""];
         peripheralsItem.target = appDelegate;
         [windowMenu addItem:peripheralsItem];
@@ -1406,47 +1409,47 @@ int main()
 			hardwareItem.target = appDelegate;
 			[windowMenu addItem:hardwareItem];
 		}
-		NSMenuItem* newDisassemblyItem = [[NSMenuItem alloc] initWithTitle:@"New Disassembly View"
+		NSMenuItem* newDisassemblyItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"New Disassembly View", @"Cocoa menu label")
 			action:@selector(newDisassemblyView:) keyEquivalent:@"d"];
 		newDisassemblyItem.target = appDelegate;
 		[windowMenu addItem:newDisassemblyItem];
-		NSMenuItem* assemblyEditorItem = [[NSMenuItem alloc] initWithTitle:@"Assembly Editor"
+		NSMenuItem* assemblyEditorItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Assembly Editor", @"Cocoa menu label")
 			action:@selector(toggleAssemblyEditor:) keyEquivalent:@""];
 		assemblyEditorItem.target = appDelegate;
 		viewController.assemblyEditorMenuItem = assemblyEditorItem;
 		[windowMenu addItem:assemblyEditorItem];
-		NSMenuItem* projectPanelItem = [[NSMenuItem alloc] initWithTitle:@"Project"
+		NSMenuItem* projectPanelItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Project", @"Cocoa menu label")
 			action:@selector(toggleProjectPanel:) keyEquivalent:@""];
 		projectPanelItem.target = appDelegate;
 		viewController.projectPanelMenuItem = projectPanelItem;
 		[windowMenu addItem:projectPanelItem];
-		NSMenuItem* internalRamMonitorItem = [[NSMenuItem alloc] initWithTitle:@"Internal RAM Monitor"
+		NSMenuItem* internalRamMonitorItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Internal RAM Monitor", @"Cocoa menu label")
 			action:@selector(toggleInternalRamMonitor:) keyEquivalent:@""];
 		internalRamMonitorItem.target = appDelegate;
 		viewController.internalRamMonitorMenuItem = internalRamMonitorItem;
 		[windowMenu addItem:internalRamMonitorItem];
-		NSMenuItem* newExternalMemoryMonitorItem = [[NSMenuItem alloc] initWithTitle:@"New External Memory Monitor"
+		NSMenuItem* newExternalMemoryMonitorItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"New External Memory Monitor", @"Cocoa menu label")
 			action:@selector(newDataMemoryMonitor:) keyEquivalent:@""];
 		newExternalMemoryMonitorItem.target = appDelegate;
 		viewController.externalMemoryMonitorMenuItem = newExternalMemoryMonitorItem;
 		[windowMenu addItem:newExternalMemoryMonitorItem];
-		NSMenuItem* newDataMemoryMonitorItem = [[NSMenuItem alloc] initWithTitle:@"New Data Memory Monitor"
+		NSMenuItem* newDataMemoryMonitorItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"New Data Memory Monitor", @"Cocoa menu label")
 			action:@selector(newDataMemoryMonitor:) keyEquivalent:@""];
 		newDataMemoryMonitorItem.target = appDelegate;
 		viewController.dataMemoryMonitorMenuItem = newDataMemoryMonitorItem;
 		[windowMenu addItem:newDataMemoryMonitorItem];
-		NSMenuItem* newProgramMemoryMonitorItem = [[NSMenuItem alloc] initWithTitle:@"New Program Memory Monitor"
+		NSMenuItem* newProgramMemoryMonitorItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"New Program Memory Monitor", @"Cocoa menu label")
 			action:@selector(newProgramMemoryMonitor:) keyEquivalent:@""];
 		newProgramMemoryMonitorItem.target = appDelegate;
 		viewController.programMemoryMonitorMenuItem = newProgramMemoryMonitorItem;
 		[windowMenu addItem:newProgramMemoryMonitorItem];
 		[windowMenu addItem:[NSMenuItem separatorItem]];
-		NSMenuItem* collapseDocksItem = [[NSMenuItem alloc] initWithTitle:@"Collapse All Edge Docks"
+		NSMenuItem* collapseDocksItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Collapse All Edge Docks", @"Cocoa menu label")
 			action:@selector(setEdgeDocksCollapsed:) keyEquivalent:@""];
 		collapseDocksItem.target = appDelegate;
 		collapseDocksItem.tag = 1;
 		[windowMenu addItem:collapseDocksItem];
-		NSMenuItem* expandDocksItem = [[NSMenuItem alloc] initWithTitle:@"Expand All Edge Docks"
+		NSMenuItem* expandDocksItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Expand All Edge Docks", @"Cocoa menu label")
 			action:@selector(setEdgeDocksCollapsed:) keyEquivalent:@""];
 		expandDocksItem.target = appDelegate;
 		[windowMenu addItem:expandDocksItem];
@@ -1457,7 +1460,7 @@ int main()
 			styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
 			backing:NSBackingStoreBuffered
 			defer:NO];
-		[window setTitle:@"emu51"];
+		[window setTitle:NSLocalizedString(@"emu51", @"Default application window title")];
 		[window center];
 		[window setContentViewController:viewController];
 		[window makeKeyAndOrderFront:nil];

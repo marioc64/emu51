@@ -98,17 +98,17 @@ void drawLcd(const e51p_lcd_snapshot& lcd,float scale)
     const float cellW=14*scale, cellH=23*scale, pixel=2*scale;
     const auto origin=ImGui::GetCursorScreenPos();
     auto* draw=ImGui::GetWindowDrawList();
-    draw->AddRectFilled(origin,{origin.x+lcd.columns*cellW+12*scale,origin.y+lcd.rows*cellH+12*scale},IM_COL32(24,55,28,255),4*scale);
+    draw->AddRectFilled(origin,{origin.x+static_cast<float>(lcd.columns)*cellW+12*scale,origin.y+static_cast<float>(lcd.rows)*cellH+12*scale},IM_COL32(24,55,28,255),4*scale);
     const auto ink=IM_COL32(168,236,134,255);
     for (unsigned row=0; row<lcd.rows; ++row) for (unsigned col=0; col<lcd.columns; ++col) {
         const auto index=row*lcd.columns+col;
-        const auto at=ImVec2(origin.x+6*scale+col*cellW,origin.y+6*scale+row*cellH);
+        const auto at=ImVec2(origin.x+6*scale+static_cast<float>(col)*cellW,origin.y+6*scale+static_cast<float>(row)*cellH);
         const auto code=lcd.cells[index];
         if (lcd.display_on) {
             if (code<16) {
                 for (unsigned y=0; y<8; ++y) for (unsigned x=0; x<5; ++x)
                     if (lcd.cgram[(code&7)*8+y]&(16u>>x))
-                        draw->AddRectFilled({at.x+x*pixel,at.y+y*pixel},{at.x+(x+1)*pixel-.3f*scale,at.y+(y+1)*pixel-.3f*scale},ink);
+                        draw->AddRectFilled({at.x+static_cast<float>(x)*pixel,at.y+static_cast<float>(y)*pixel},{at.x+static_cast<float>(x+1)*pixel-.3f*scale,at.y+static_cast<float>(y+1)*pixel-.3f*scale},ink);
             } else {
                 char text[]{code>=32 && code<127 ? static_cast<char>(code) : '?',0};
                 draw->AddText(ImGui::GetFont(),18*scale,at,ink,text);
@@ -120,7 +120,7 @@ void drawLcd(const e51p_lcd_snapshot& lcd,float scale)
             }
         }
     }
-    ImGui::Dummy({lcd.columns*cellW+12*scale,lcd.rows*cellH+12*scale});
+    ImGui::Dummy({static_cast<float>(lcd.columns)*cellW+12*scale,static_cast<float>(lcd.rows)*cellH+12*scale});
 }
 
 bool pinCombo(const char* label, std::string& selected, const std::vector<Emu51PeripheralPin>& pins,
@@ -427,8 +427,8 @@ void Emu51ImguiApp::drawPeripheralKeys(const Emu51PeripheralDevice& d,unsigned c
     const unsigned slots = custom ? static_cast<unsigned>(d.keyLayout.size()) : count;
     const unsigned rows = (slots+columns-1)/columns;
     const auto available = ImGui::GetContentRegionAvail(), spacing = ImGui::GetStyle().ItemSpacing;
-    const ImVec2 keySize{std::max(4.0f,(available.x-(columns-1)*spacing.x)/columns),
-        std::max(4.0f,(available.y-ImGui::GetFrameHeightWithSpacing()-(rows-1)*spacing.y)/rows)};
+    const ImVec2 keySize{std::max(4.0f,(available.x-static_cast<float>(columns-1)*spacing.x)/static_cast<float>(columns)),
+        std::max(4.0f,(available.y-ImGui::GetFrameHeightWithSpacing()-static_cast<float>(rows-1)*spacing.y)/static_cast<float>(rows))};
     for (unsigned slot = 0; slot < slots; ++slot) {
         const int assigned = custom ? d.keyLayout[slot] : static_cast<int>(slot);
         if (assigned < 0) {
@@ -488,7 +488,7 @@ void drawStepper(const e51p_stepper_snapshot& motor,float scale)
         draw->AddText({coil.x-size.x/2,coil.y-size.y/2},color,labels[i]);
     }
     constexpr float turn = static_cast<float>(E51P_STEPPER_HALF_STEPS_PER_TURN);
-    const float angle = motor.position_half_steps*(6.2831853f/turn);
+    const float angle = static_cast<float>(motor.position_half_steps)*(6.2831853f/turn);
     draw->AddLine(center,{center.x+radius*0.82f*std::sin(angle),center.y-radius*0.82f*std::cos(angle)},accent,2*scale);
     draw->AddCircleFilled(center,3*scale,accent);
     ImGui::Dummy({available.x,height});
@@ -511,8 +511,8 @@ void drawOled(const e51p_oled_snapshot& oled)
             if (!lit(x)) { ++x; continue; }
             const unsigned start = x;
             do { ++x; } while (x<128 && lit(x));
-            draw->AddRectFilled({origin.x+start*pixel,origin.y+y*pixel},
-                {origin.x+x*pixel,origin.y+(y+1)*pixel},on);
+            draw->AddRectFilled({origin.x+static_cast<float>(start)*pixel,origin.y+static_cast<float>(y)*pixel},
+                {origin.x+static_cast<float>(x)*pixel,origin.y+static_cast<float>(y+1)*pixel},on);
         }
     }
     ImGui::Dummy(available);
@@ -526,10 +526,10 @@ void drawLogicTrace(const e51p_logic_status& state,const e51p_logic_sample* samp
     const float left = at.x+24*scale, width = std::max(1.0f,available.x-24*scale);
     const auto start = samples[0].tick;
     const auto span = std::max<uint64_t>(1,state.end_tick-start);
-    const auto xAt = [&](uint64_t tick) { return left+width*static_cast<float>(static_cast<double>(tick-start)/span); };
+    const auto xAt = [&](uint64_t tick) { return left+width*static_cast<float>(static_cast<double>(tick-start)/static_cast<double>(span)); };
     auto* draw = ImGui::GetWindowDrawList();
     for (unsigned channel = 0; channel < 8; ++channel) {
-        const float top = at.y+channel*lane;
+        const float top = at.y+static_cast<float>(channel)*lane;
         draw->AddText({at.x,top},ImGui::GetColorU32(ImGuiCol_TextDisabled),("D"+std::to_string(channel)).c_str());
         draw->AddLine({left,top+lane},{left+width,top+lane},ImGui::GetColorU32(ImGuiCol_Border));
         const unsigned bit = 1u<<channel;
@@ -561,7 +561,7 @@ void drawLogicTrace(const e51p_logic_status& state,const e51p_logic_sample* samp
         draw->AddLine({x,at.y},{x,at.y+8*lane},IM_COL32(255,186,84,255));
     }
     ImGui::Dummy({available.x,8*lane});
-    ImGui::Text("%.3f ms",1000.0*static_cast<double>(state.end_tick-start)/state.tick_hz);
+    ImGui::Text("%.3f ms",1000.0*static_cast<double>(state.end_tick-start)/static_cast<double>(state.tick_hz));
 }
 void drawLogicDecoded(const e51p_logic_sample* samples,unsigned count,unsigned protocol)
 {
@@ -720,10 +720,10 @@ void Emu51ImguiApp::drawPeripheralAudio(const Emu51PeripheralDevice& d,float sca
             if (d.audioDirections & E51P_AUDIO_CAPTURE) for (uint32_t i = 0; i < count; ++i)
                 inputPeak = std::max(inputPeak,std::abs(samples[i].adc));
             const unsigned channels = ((d.audioDirections & E51P_AUDIO_CAPTURE) ? 1u : 0u)+((d.audioDirections & E51P_AUDIO_PLAYBACK) ? 1u : 0u);
-            const float reserved = channels*ImGui::GetTextLineHeightWithSpacing()+
+            const float reserved = static_cast<float>(channels)*ImGui::GetTextLineHeightWithSpacing()+
                 ((d.audioDirections & E51P_AUDIO_PLAYBACK) ? ImGui::GetFrameHeightWithSpacing() : 0)+
                 (inputPeak >= 1 ? ImGui::GetTextLineHeightWithSpacing() : 0)+3*ImGui::GetStyle().ItemSpacing.y;
-            const float plotHeight = std::max(24*scale,(ImGui::GetContentRegionAvail().y-reserved)/std::max(1u,channels));
+            const float plotHeight = std::max(24*scale,(ImGui::GetContentRegionAvail().y-reserved)/static_cast<float>(std::max(1u,channels)));
             const auto plot = [&](const char* label, int channel, float zoom) {
                 std::array<float, 4096> values{};
                 float peak = 0;
@@ -835,13 +835,13 @@ void Emu51ImguiApp::drawPeripheralLive(const Emu51PeripheralConfig& active)
             const auto rows = d.keyLayoutRows ? d.keyLayoutRows : (emu51KeyCount(d)+columns-1)/columns;
             const bool legends = std::any_of(d.keyLegends.begin(),d.keyLegends.end(),[](const auto& s) { return !s.empty(); });
             size = d.kind == Emu51PeripheralKind::Keypad && d.keyLayout.empty() && !legends ? ImVec2{196,226} :
-                ImVec2{std::max(196.0f,columns*64.0f+20),rows*(legends ? 58.0f : 38.0f)+86};
+                ImVec2{std::max(196.0f,static_cast<float>(columns)*64.0f+20),static_cast<float>(rows)*(legends ? 58.0f : 38.0f)+86};
             minimum = {120,140};
         }
         else if (emu51PeripheralDisplayKind(d.kind) >= 0) {
-            size = {std::max(160.0f,d.displayDigits*58.0f+32),150}; minimum = {100,80};
+            size = {std::max(160.0f,static_cast<float>(d.displayDigits)*58.0f+32),150}; minimum = {100,80};
             if (d.kind == Emu51PeripheralKind::Ht16k33 || d.kind == Emu51PeripheralKind::Tm1637) size.y = 180;
-            if (d.kind == Emu51PeripheralKind::Bargraph) { size = {std::max(160.0f,d.barSegments*18.0f+24),100}; minimum = {140,90}; }
+            if (d.kind == Emu51PeripheralKind::Bargraph) { size = {std::max(160.0f,static_cast<float>(d.barSegments)*18.0f+24),100}; minimum = {140,90}; }
         }
         devices.push_back({d.id,title(d.id),emu51PeripheralKindName(d.kind),size,minimum});
     }

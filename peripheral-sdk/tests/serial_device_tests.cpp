@@ -23,7 +23,7 @@ public:
         check(e51p_get_api(E51P_ABI_VERSION,&api)==E51P_OK,"Load SDK");
         check(api->create(1000000,&context)==E51P_OK,"Create 1 MHz circuit");
         const auto cfg = e51p_serial_config_init(kind);
-        check(e51p_add_serial_device(api,context,"chip",&cfg,&chip,pins.data(),pins.size())==E51P_OK,"Add chip");
+        check(e51p_add_serial_device(api,context,"chip",&cfg,&chip,pins.data(),static_cast<uint32_t>(pins.size()))==E51P_OK,"Add chip");
         e51p_device_desc desc{};
         desc.struct_size = sizeof(desc); desc.instance_id = "master";
         e51p_device device;

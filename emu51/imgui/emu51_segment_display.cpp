@@ -34,33 +34,33 @@ void emu51DrawSegmentDisplay(const e51p_segment_snapshot& state,int style,int co
 {
     zoom=std::clamp(zoom,.1f,16.0f);
     const auto origin=ImGui::GetCursorScreenPos();auto* draw=ImGui::GetWindowDrawList();
-    const auto level=[&](unsigned digit,unsigned bit) { return instantaneous ? ((state.instantaneous[digit]&(1u<<bit)) ? 1.0f : 0.0f) : state.brightness[digit][bit]*state.digits; };
+    const auto level=[&](unsigned digit,unsigned bit) { return instantaneous ? ((state.instantaneous[digit]&(1u<<bit)) ? 1.0f : 0.0f) : state.brightness[digit][bit]*static_cast<float>(state.digits); };
     if (!style) {
-        const float scale=zoom*std::min(1.0f,std::max(.25f,(ImGui::GetContentRegionAvail().x/zoom-12)/(state.segments*18.0f)));
-        const float width=state.segments*18*scale+12*zoom,height=55*scale+12*zoom;
+        const float scale=zoom*std::min(1.0f,std::max(.25f,(ImGui::GetContentRegionAvail().x/zoom-12)/(static_cast<float>(state.segments)*18.0f)));
+        const float width=static_cast<float>(state.segments*18)*scale+12*zoom,height=55*scale+12*zoom;
         draw->AddRectFilled(origin,{origin.x+width,origin.y+height},IM_COL32(12,14,18,255),4*zoom);
-        for (unsigned s=0;s<state.segments;++s) draw->AddRectFilled({origin.x+6*zoom+s*18*scale,origin.y+6*zoom},
-            {origin.x+6*zoom+(s*18+14)*scale,origin.y+height-6*zoom},shade(color,level(0,s)),2*zoom);
+        for (unsigned s=0;s<state.segments;++s) draw->AddRectFilled({origin.x+6*zoom+static_cast<float>(s*18)*scale,origin.y+6*zoom},
+            {origin.x+6*zoom+static_cast<float>(s*18+14)*scale,origin.y+height-6*zoom},shade(color,level(0,s)),2*zoom);
         ImGui::Dummy({width,height});return;
     }
     const unsigned count=std::clamp(state.digits,1u,8u), bits=style==14 ? 14u : style==16 ? 16u : 7u;
     // Wrap long displays on narrow docks, preserving a readable minimum digit size.
     const float available=std::max(70.0f,ImGui::GetContentRegionAvail().x/zoom);
     const unsigned columns=std::max(1u,std::min(count,static_cast<unsigned>(available/62)));
-    const float scale=zoom*std::min(35.0f,(available-16)/(columns*1.65f));
-    const float width=columns*1.65f*scale+16*zoom,height=((count+columns-1)/columns)*2.8f*scale+16*zoom;
+    const float scale=zoom*std::min(35.0f,(available-16)/(static_cast<float>(columns)*1.65f));
+    const float width=static_cast<float>(columns)*1.65f*scale+16*zoom,height=static_cast<float>((count+columns-1)/columns)*2.8f*scale+16*zoom;
     draw->AddRectFilled(origin,{origin.x+width,origin.y+height},IM_COL32(12,14,18,255),4*zoom);
     for (unsigned d=0;d<count;++d) {
-        const ImVec2 at(origin.x+10*zoom+(d%columns)*1.65f*scale,origin.y+10*zoom+(d/columns)*2.8f*scale);
+        const ImVec2 at(origin.x+10*zoom+static_cast<float>(d%columns)*1.65f*scale,origin.y+10*zoom+static_cast<float>(d/columns)*2.8f*scale);
         for (unsigned bit=0;bit<bits;++bit) {
             const auto& line=style==14 ? fourteen[bit] : style==16 ? sixteen[bit] : seven[bit];
             segment(draw,at,scale,line,shade(color,bit<state.segments ? level(d,bit) : 0));
         }
         draw->AddCircleFilled({at.x+1.25f*scale,at.y+2*scale},scale*.075f,shade(color,bits<state.segments ? level(d,bits) : 0));
         if (d==1&&colon) for (unsigned dot=0;dot<2;++dot) {
-            const float brightness=instantaneous ? ((state.colon&(1u<<dot)) ? 1.0f : 0.0f) : state.colon_brightness[dot]*count;
+            const float brightness=instantaneous ? ((state.colon&(1u<<dot)) ? 1.0f : 0.0f) : state.colon_brightness[dot]*static_cast<float>(count);
             // Center between digit 2's right edge (1.0) and digit 3's left edge (1.65).
-            draw->AddCircleFilled({at.x+(1.0f+1.65f)*.5f*scale,at.y+(.65f+.7f*dot)*scale},scale*.075f,shade(color,brightness));
+            draw->AddCircleFilled({at.x+(1.0f+1.65f)*.5f*scale,at.y+(.65f+.7f*static_cast<float>(dot))*scale},scale*.075f,shade(color,brightness));
         }
     }
     ImGui::Dummy({width,height});

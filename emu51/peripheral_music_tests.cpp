@@ -90,7 +90,7 @@ void run(bool table, bool invalidPitch = false) {
             const auto row = cpu.IRAM[0x33];
             check(row >= 1 && row <= rows && word(cpu, 0x48) == sym("SONG") + 5u * row,
                 "Player status exposes current row and next code-memory record");
-            const auto data = sym("SONG") + (row - 1) * 5;
+            const auto data = static_cast<std::uint16_t>(sym("SONG") + (row - 1) * 5);
             check(musicTicks == nextRecordTick, "Each score record holds for exactly its duration in music interrupts");
             nextRecordTick += cpu.readProg(data);
             check(cpu.IRAM[0x4a] == cpu.readProg(data), "Record duration is stored in internal RAM");
@@ -124,8 +124,8 @@ void run(bool table, bool invalidPitch = false) {
     } while (!(cpu.IRAM[0x37] && cpu.IRAM[0x33] == 1 && cpu.PC == sym("IDLE")));
     check(records == rows + 1 && nested && silent && solo1 && solo2 && mixed == std::set<unsigned>({2, 65, 128, 191, 254}),
         "Both gates, each solo voice, full mix, song loop and real interrupt preemption are exercised");
-    const double sampleHz = (outputs - 1) * 24576000.0 / (lastSampleTick - firstSampleTick);
-    const double musicHz = musicTicks * 24576000.0 / graph->ticks();
+    const double sampleHz = static_cast<double>(outputs - 1) * 24576000.0 / static_cast<double>(lastSampleTick - firstSampleTick);
+    const double musicHz = static_cast<double>(musicTicks) * 24576000.0 / static_cast<double>(graph->ticks());
     check(std::abs(sampleHz - 8000) < 1 && musicHz > 99 && musicHz < 101, "Independent timers sustain 8 kHz audio and nominal 100 Hz music");
     check(stackMax < 0x70, "Nested interrupt stack stays within reserved internal RAM");
     for (unsigned i = 0x54; i < 0x60; ++i) check(cpu.IRAM[i] == 0xa5, "Player state does not overwrite stack guard");

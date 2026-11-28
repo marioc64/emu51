@@ -113,7 +113,7 @@ void htController() {
     s.command(0x20);check(!s.g.view(s.d).programmed[0],"HT oscillator standby blanks the display");s.command(0x21);check(s.g.view(s.d).programmed[0]==0x0201,"HT standby retains display RAM");
 }
 void tmController() {
-    Serial s(true);s.command(0x40);s.start();check(s.send(0xc0),"TM address command ACK");for (uint8_t value : {1,2,4,8,16,32,64}) check(s.send(value),"TM display data ACK");s.stop();s.command(0x8f);
+    Serial s(true);s.command(0x40);s.start();check(s.send(0xc0),"TM address command ACK");for (uint8_t value : std::array<uint8_t,7>{1,2,4,8,16,32,64}) check(s.send(value),"TM display data ACK");s.stop();s.command(0x8f);
     auto frame=s.g.view(s.d);check(frame.programmed[0]==1&&frame.programmed[3]==8,"TM LSB-first burst preserves display data and ignores writes past digit five");
     check(std::abs(frame.brightness[0][0]-14.0f/96)<1e-6,"TM maximum duty is 14/16 across six scan positions");
     s.command(0x44);s.start();check(s.send(0xc1)&&s.send(3)&&s.send(7),"TM fixed-address data ACK");s.stop();check(s.g.view(s.d).programmed[1]==7,"TM fixed-address mode overwrites the selected digit");

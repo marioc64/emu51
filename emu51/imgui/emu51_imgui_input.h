@@ -5,28 +5,29 @@
 #include <cerrno>
 #include <cstdlib>
 #include <optional>
+#include <string>
+#include <string_view>
 
-inline std::optional<unsigned long> emu51ParseHexInput(const char* text, unsigned long maxInclusive)
+inline std::optional<unsigned long> emu51ParseHexInput(std::string_view text, unsigned long maxInclusive)
 {
-	if (text == nullptr)
-		return std::nullopt;
-
-	const char* p = text;
-	while (*p != '\0' && std::isspace(static_cast<unsigned char>(*p)))
-		++p;
-	if (*p == '\0')
-		return std::nullopt;
-
+	// Dialog buffers may include unused bytes after the first NUL.
+	const std::string input(text.substr(0, text.find('\0')));
+	const char* begin = input.c_str();
 	errno = 0;
 	char* end = nullptr;
-	const unsigned long value = std::strtoul(p, &end, 16);
-	if (end == p)
+	const unsigned long value = std::strtoul(begin, &end, 16);
+	if (end == begin || errno == ERANGE || value > maxInclusive)
 		return std::nullopt;
-	while (*end != '\0' && std::isspace(static_cast<unsigned char>(*end)))
-		++end;
-	if (*end != '\0')
-		return std::nullopt;
-	if (errno == ERANGE || value > maxInclusive)
-		return std::nullopt;
+	const auto trailing = std::string_view(end, static_cast<std::size_t>(begin + input.size() - end));
+	for (const char ch : trailing) {
+		if (!std::isspace(static_cast<unsigned char>(ch)))
+			return std::nullopt;
+	}
 	return value;
+}
+
+template <std::size_t Size>
+inline std::optional<unsigned long> emu51ParseHexInput(const char (&text)[Size], unsigned long maxInclusive)
+{
+	return emu51ParseHexInput(std::string_view(text, Size), maxInclusive);
 }

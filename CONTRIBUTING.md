@@ -54,6 +54,13 @@ in Release mode with warnings treated as errors, then run the full CTest
 suite on each platform. Configure a fresh build directory when changing
 compilers so CMake selects the intended toolchain.
 
+Use the `ci` workflow on a candidate branch to check a revision before merging
+or tagging it. Once manual runs are enabled on the default branch, select the
+candidate branch under **Actions → ci → Run workflow** and verify the run's
+commit SHA. Include a Windows MSVC result for that SHA. Template instantiations
+in the MSVC standard library can emit conversion warnings that a successful
+GCC or Clang build does not exercise.
+
 | Runner | Configure |
 | --- | --- |
 | Linux, GCC | `CC=gcc CXX=g++ cmake -S . -B build-prepush-gcc -DCMAKE_BUILD_TYPE=Release -DEMU51_WERROR=ON` |
@@ -86,6 +93,22 @@ Treat the first failed attempt as a finding and retain its output. Check missing
 playback, underruns, and post-pause recovery before publishing. Record any
 unavailable toolchain or runner as unverified. Run
 `python3 scripts/check_public_sources.py` from the public checkout before pushing.
+
+### Optional C++ source lint
+
+Use `clang-tidy` for static analysis of changed translation units. Generate a
+compilation database with Ninja, then pass the files you want to inspect.
+
+```sh
+cmake -S . -B build-lint -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+clang-tidy -p build-lint --checks='-*,clang-analyzer-*,bugprone-narrowing-conversions' peripheral-sdk/src/serial_devices.cpp
+```
+
+`clang-format` is the corresponding tool for whitespace and style checks when
+a formatting style is configured. Keep the strict MSVC build in the matrix for
+MSVC diagnostics such as `C4244` from `std::fill_n` assigning an `int` template
+argument to a byte. Use a byte-typed fill value such as `uint8_t{0xFF}` when the
+destination stores bytes.
 
 ## Source layout and targets
 
